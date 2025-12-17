@@ -516,10 +516,7 @@ const state: AppState = {
 
 let agentReplyTimer: number | null = null;
 
-const appRoot = document.querySelector<HTMLDivElement>("#app");
-if (!appRoot) {
-  throw new Error("Root element #app not found");
-}
+let appRoot: HTMLDivElement | null = null;
 
 function toKebab(input: string) {
   return input.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`);
@@ -952,10 +949,11 @@ function renderChatSection() {
 
 function attachEventHandlers(_params: { resolutionFill: number }) {
   if (!appRoot) return; // Defensive check (should never happen due to initialization check)
-  const sidebarToggle = appRoot.querySelector<HTMLButtonElement>('[data-action="toggle-sidebar"]');
+  const root = appRoot; // TypeScript narrowing
+  const sidebarToggle = root.querySelector<HTMLButtonElement>('[data-action="toggle-sidebar"]');
   sidebarToggle?.addEventListener("click", () => {
-    const sidebar = appRoot.querySelector<HTMLElement>('[data-role="sidebar"]');
-    const canvasToggle = appRoot.querySelector<HTMLElement>('[data-role="canvas-toggle"]');
+    const sidebar = root.querySelector<HTMLElement>('[data-role="sidebar"]');
+    const canvasToggle = root.querySelector<HTMLElement>('[data-role="canvas-toggle"]');
 
     if (!sidebar || !canvasToggle || !sidebarToggle) return;
 
@@ -983,7 +981,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
     canvasToggle.style.right = `${canvasRight}px`;
   });
 
-  const canvasButtons = appRoot.querySelectorAll<HTMLButtonElement>('[data-action="set-canvas"]');
+  const canvasButtons = root.querySelectorAll<HTMLButtonElement>('[data-action="set-canvas"]');
   canvasButtons.forEach((btn) =>
     btn.addEventListener("click", () => {
       const value = btn.dataset.value as CanvasView | undefined;
@@ -998,7 +996,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         render();
 
         // Get the element immediately after render (it exists synchronously)
-        const canvasIndicator = appRoot.querySelector<HTMLElement>('[data-role="canvas-indicator"]');
+        const canvasIndicator = root.querySelector<HTMLElement>('[data-role="canvas-indicator"]');
 
         if (!canvasIndicator) return;
 
@@ -1019,7 +1017,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
     })
   );
 
-  const modeButtons = appRoot.querySelectorAll<HTMLButtonElement>('[data-action="set-mode"]');
+  const modeButtons = root.querySelectorAll<HTMLButtonElement>('[data-action="set-mode"]');
   modeButtons.forEach((btn) =>
     btn.addEventListener("click", () => {
       const value = btn.dataset.value as Mode | undefined;
@@ -1035,8 +1033,8 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         state.mode = value;
         render();
 
-        const modeTrack = appRoot.querySelector<HTMLElement>('[data-role="mode-track"]');
-        const modeIndicator = appRoot.querySelector<HTMLElement>('[data-role="mode-indicator"]');
+        const modeTrack = root.querySelector<HTMLElement>('[data-role="mode-track"]');
+        const modeIndicator = root.querySelector<HTMLElement>('[data-role="mode-indicator"]');
 
         if (!modeTrack || !modeIndicator) return;
 
@@ -1058,7 +1056,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
     })
   );
 
-  const tabButtons = appRoot.querySelectorAll<HTMLButtonElement>('[data-action="set-tab"]');
+  const tabButtons = root.querySelectorAll<HTMLButtonElement>('[data-action="set-tab"]');
   tabButtons.forEach((btn) =>
     btn.addEventListener("click", () => {
       const value = btn.dataset.value as PanelTab | undefined;
@@ -1073,7 +1071,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         render();
 
         // Get the element immediately after render (it exists synchronously)
-        const tabTrack = appRoot.querySelector<HTMLElement>('[data-role="tab-track"]');
+        const tabTrack = root.querySelector<HTMLElement>('[data-role="tab-track"]');
 
         if (!tabTrack) return;
 
@@ -1094,7 +1092,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
     })
   );
 
-  const selectInputs = appRoot.querySelectorAll<HTMLSelectElement>('[data-action="update-select"]');
+  const selectInputs = root.querySelectorAll<HTMLSelectElement>('[data-action="update-select"]');
   selectInputs.forEach((select) =>
     select.addEventListener("change", () => {
       const key = select.dataset.key;
@@ -1127,7 +1125,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
     })
   );
 
-  const textInputs = appRoot.querySelectorAll<HTMLInputElement>('[data-action="update-input"]');
+  const textInputs = root.querySelectorAll<HTMLInputElement>('[data-action="update-input"]');
   textInputs.forEach((input) =>
     input.addEventListener("input", () => {
       const key = input.dataset.key;
@@ -1148,8 +1146,8 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
     })
   );
 
-  const resolutionInputs = appRoot.querySelectorAll<HTMLInputElement>('[data-action="set-resolution"]');
-  const resolutionValues = appRoot.querySelectorAll<HTMLElement>('[data-role="resolution-value"]');
+  const resolutionInputs = root.querySelectorAll<HTMLInputElement>('[data-action="set-resolution"]');
+  const resolutionValues = root.querySelectorAll<HTMLElement>('[data-role="resolution-value"]');
   const updateResolutionUI = (value: number) => {
     const fill = ((value - 15) / (21 - 15)) * 100;
     resolutionInputs.forEach((el) => {
@@ -1170,8 +1168,8 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
     })
   );
 
-  const chatInput = appRoot.querySelector<HTMLInputElement>('[data-action="chat-input"]');
-  const chatSend = appRoot.querySelector<HTMLButtonElement>('[data-action="chat-send"]');
+  const chatInput = root.querySelector<HTMLInputElement>('[data-action="chat-input"]');
+  const chatSend = root.querySelector<HTMLButtonElement>('[data-action="chat-send"]');
   chatInput?.addEventListener("input", () => {
     state.chatInput = chatInput.value;
   });
@@ -1209,4 +1207,18 @@ function sendChat() {
   render();
 }
 
-render();
+// Initialize the app when DOM is ready
+function init() {
+  appRoot = document.querySelector<HTMLDivElement>("#app");
+  if (!appRoot) {
+    throw new Error("Root element #app not found");
+  }
+  render();
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", init);
+} else {
+  // DOM is already ready
+  init();
+}

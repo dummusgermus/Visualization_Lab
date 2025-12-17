@@ -1,24 +1,1212 @@
-import './style.css'
-import typescriptLogo from './typescript.svg'
-import viteLogo from '/vite.svg'
-import { setupCounter } from './counter.ts'
+import "./style.css";
 
-document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
-  <div>
-    <a href="https://vite.dev" target="_blank">
-      <img src="${viteLogo}" class="logo" alt="Vite logo" />
-    </a>
-    <a href="https://www.typescriptlang.org/" target="_blank">
-      <img src="${typescriptLogo}" class="logo vanilla" alt="TypeScript logo" />
-    </a>
-    <h1>Vite + TypeScript</h1>
-    <div class="card">
-      <button id="counter" type="button"></button>
+type Mode = "Explore" | "Compare";
+type PanelTab = "Manual" | "Chat";
+type CanvasView = "map" | "chart";
+type CompareMode = "Scenarios" | "Models" | "Dates";
+
+type Style = Record<string, string | number>;
+
+const scenarios = ["Historical", "SSP245", "SSP585"];
+const models = [
+  "ACCESS-CM2",
+  "CanESM5",
+  "CESM2",
+  "CMCC-CM2-SR5",
+  "EC-Earth3",
+  "GFDL-ESM4",
+  "INM-CM5-0",
+  "IPSL-CM6A-LR",
+  "MIROC6",
+  "MPI-ESM1-2-HR",
+  "MRI-ESM2-0",
+];
+const variables = ["tas", "pr", "rsds", "hurs", "rlds", "sfcWind", "tasmin", "tasmax"];
+
+const paletteOptions = [
+  { name: "Viridis", colors: ["#440154", "#3b528b", "#21908d", "#5dc863", "#fde725"] },
+  { name: "Magma", colors: ["#000004", "#3b0f70", "#8c2981", "#de4968", "#fe9f6d"] },
+  { name: "Cividis", colors: ["#00204c", "#31456a", "#6b6d7f", "#a59c8f", "#fdea9b"] },
+  { name: "Thermal", colors: ["#04142f", "#155570", "#1fa187", "#f8c932", "#f16623"] },
+];
+
+const styles: Record<string, Style> = {
+  page: {
+    position: "relative",
+    minHeight: "100vh",
+    color: "white",
+    overflow: "hidden",
+    fontFamily: "Inter, system-ui, sans-serif",
+  },
+  bgLayer1: {
+    position: "absolute",
+    inset: 0,
+    background: "linear-gradient(135deg, #05070f, #0b1326)",
+  },
+  bgLayer2: {
+    position: "absolute",
+    inset: 0,
+    background:
+      "radial-gradient(circle at 20% 20%, rgba(56,189,248,0.12), transparent 32%), radial-gradient(circle at 80% 10%, rgba(139,92,246,0.15), transparent 30%), radial-gradient(circle at 50% 70%, rgba(34,197,94,0.08), transparent 28%)",
+  },
+  bgOverlay: {
+    position: "absolute",
+    inset: 0,
+    background: "#050505",
+    opacity: 0.35,
+  },
+  topBar: {
+    position: "fixed",
+    top: 12,
+    left: 16,
+    right: 380,
+    zIndex: 3,
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    padding: "0 2px",
+    background: "transparent",
+    border: "none",
+    boxShadow: "none",
+    backdropFilter: "none",
+    overflowX: "auto",
+    overflowY: "visible",
+    whiteSpace: "nowrap",
+  },
+  field: {
+    minWidth: 0,
+    display: "flex",
+    flexDirection: "column",
+    gap: 4,
+  },
+  fieldLabel: {
+    fontSize: 11,
+    letterSpacing: 0.5,
+    color: "rgba(255,255,255,0.72)",
+    textTransform: "uppercase",
+  },
+  mapArea: {
+    position: "absolute",
+    inset: 0,
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    textAlign: "center",
+    pointerEvents: "none",
+    zIndex: 1,
+  },
+  canvasToggle: {
+    position: "fixed",
+    top: 14,
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    pointerEvents: "auto",
+    zIndex: 100,
+    transition: "right 0.25s ease",
+  },
+  canvasSwitch: {
+    position: "relative",
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr",
+    gap: 0,
+    padding: 3,
+    borderRadius: 11,
+    background: "rgba(9,11,16,0.9)",
+    border: "1px solid rgba(255,255,255,0.12)",
+    boxShadow: "0 10px 26px rgba(0,0,0,0.45)",
+    zIndex: 101,
+  },
+  canvasIndicator: {
+    position: "absolute",
+    top: 3,
+    bottom: 3,
+    left: 3,
+    width: "calc(50% - 3px)",
+    borderRadius: 9,
+    background: "linear-gradient(135deg, rgba(125,211,252,0.2), rgba(167,139,250,0.2))",
+    boxShadow: "0 8px 20px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.08)",
+    transition: "transform 180ms ease",
+    zIndex: 0,
+    pointerEvents: "none",
+  },
+  canvasBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 9,
+    border: "1px solid transparent",
+    background: "transparent",
+    color: "rgba(255,255,255,0.82)",
+    cursor: "pointer",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    transition: "color 120ms ease",
+    position: "relative",
+    zIndex: 1,
+  },
+  canvasBtnActive: {
+    color: "white",
+  },
+  mapTitle: { fontSize: 18, fontWeight: 600 },
+  mapSubtitle: { fontSize: 14, color: "rgba(255,255,255,0.75)" },
+  sidebar: {
+    position: "fixed",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    width: 320,
+    transition: "transform 0.25s ease, box-shadow 0.2s ease",
+    zIndex: 1,
+    background: "rgba(9,11,16,0.88)",
+    borderLeft: "1px solid rgba(255,255,255,0.08)",
+    boxShadow: "-10px 0 35px rgba(0,0,0,0.55)",
+    backdropFilter: "blur(20px)",
+    overflow: "hidden",
+    display: "flex",
+    flexDirection: "column",
+  },
+  sidebarTop: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "flex-start",
+    padding: "16px 16px 46px",
+    gap: 10,
+    borderBottom: "1px solid rgba(255,255,255,0.08)",
+    background: "linear-gradient(135deg, rgba(125,211,252,0.08), rgba(167,139,250,0.06))",
+    position: "relative",
+    overflow: "hidden",
+  },
+  logoDot: {
+    width: 16,
+    height: 16,
+    background: "linear-gradient(135deg, #7dd3fc, #a78bfa, #22c55e)",
+    borderRadius: "50%",
+    boxShadow: "0 0 0 4px rgba(125,211,252,0.08)",
+  },
+  toggle: {
+    width: 44,
+    height: 44,
+    padding: 0,
+    borderRadius: "50%",
+    border: "1px solid rgba(255,255,255,0.16)",
+    background: "rgba(18,22,28,0.85)",
+    boxShadow: "0 14px 40px rgba(0,0,0,0.5)",
+    cursor: "pointer",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontSize: 14,
+    lineHeight: 1,
+    transition: "right 0.25s ease, background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease",
+  },
+  sidebarContent: {
+    padding: "28px 14px 14px",
+    display: "flex",
+    flexDirection: "column",
+    gap: 12,
+    overflow: "hidden",
+    flex: 1,
+    position: "relative",
+  },
+  tabViewport: {
+    overflow: "hidden",
+    width: "100%",
+    position: "relative",
+    flex: 1,
+    display: "flex",
+    flexDirection: "column",
+  },
+  tabTrack: {
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr",
+    width: "200%",
+    transition: "transform 220ms ease",
+    flex: 1,
+  },
+  tabPane: {
+    width: "100%",
+    display: "flex",
+    flexDirection: "column",
+    gap: 12,
+    overflow: "auto",
+    paddingRight: 4,
+  },
+  sidebarBrand: { display: "flex", alignItems: "center", gap: 10 },
+  badge: {
+    padding: "4px 8px",
+    borderRadius: 999,
+    border: "1px solid rgba(125,211,252,0.4)",
+    background: "rgba(125,211,252,0.12)",
+    color: "rgba(255,255,255,0.9)",
+    fontSize: 11.5,
+    letterSpacing: 0.6,
+  },
+  modeSwitch: {
+    position: "relative",
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr",
+    gap: 4,
+    padding: 2,
+    borderRadius: 10,
+    border: "1px solid rgba(255,255,255,0.05)",
+    background: "rgba(255,255,255,0.02)",
+    boxShadow: "none",
+  },
+  modeIndicator: {
+    position: "absolute",
+    top: 2,
+    bottom: 2,
+    left: 2,
+    width: "calc(50% - 2px)",
+    borderRadius: 8,
+    background: "linear-gradient(135deg, rgba(125,211,252,0.18), rgba(167,139,250,0.16))",
+    boxShadow: "0 6px 16px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.08)",
+    transition: "transform 200ms ease",
+    zIndex: 0,
+  },
+  modeBtn: {
+    flex: 1,
+    padding: "8px 0",
+    borderRadius: 8,
+    border: "none",
+    color: "rgba(255,255,255,0.8)",
+    cursor: "pointer",
+    transition: "all 0.15s ease",
+    background: "transparent",
+    textAlign: "center",
+    fontSize: 12.5,
+    fontWeight: 700,
+    letterSpacing: 0.2,
+    outline: "none",
+    boxShadow: "none",
+    position: "relative",
+    zIndex: 1,
+  },
+  modeBtnActive: {
+    background: "linear-gradient(135deg, rgba(125,211,252,0.22), rgba(167,139,250,0.2))",
+    border: "none",
+    color: "white",
+    boxShadow: "0 6px 16px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.08)",
+  },
+  tabSwitch: {
+    position: "absolute",
+    left: 32,
+    right: 12,
+    bottom: -8,
+    display: "flex",
+    gap: 10,
+    padding: "0 8px",
+    alignItems: "flex-end",
+    pointerEvents: "auto",
+    zIndex: 0,
+  },
+  tabBtn: {
+    borderRadius: "14px 14px 0 0",
+    padding: "12px 18px",
+    background: "rgba(255,255,255,0.08)",
+    color: "rgba(255,255,255,0.78)",
+    fontWeight: 700,
+    fontSize: 13,
+    letterSpacing: 0.35,
+    cursor: "pointer",
+    transition: "all 0.18s ease",
+    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.06), 0 8px 18px rgba(0,0,0,0.32)",
+    borderTop: "1px solid rgba(255,255,255,0.12)",
+    borderRight: "1px solid rgba(255,255,255,0.12)",
+    borderLeft: "1px solid rgba(255,255,255,0.12)",
+    borderBottom: "none",
+    transform: "translateY(4px)",
+  },
+  tabBtnActive: {
+    background: "linear-gradient(135deg, rgba(125,211,252,0.32), rgba(167,139,250,0.28))",
+    color: "white",
+    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.12), 0 12px 26px rgba(0,0,0,0.42)",
+    borderTop: "1px solid rgba(125,211,252,0.6)",
+    borderRight: "1px solid rgba(125,211,252,0.6)",
+    borderLeft: "1px solid rgba(125,211,252,0.6)",
+    borderBottom: "none",
+    transform: "translateY(-4px)",
+    zIndex: 1,
+  },
+  modeViewport: {
+    overflow: "hidden",
+    width: "100%",
+    position: "relative",
+  },
+  modeTrack: {
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr",
+    width: "200%",
+    transition: "transform 220ms ease",
+  },
+  modePane: {
+    width: "100%",
+    paddingRight: 4,
+  },
+  chatBox: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    padding: "12px 14px",
+    borderRadius: 14,
+    border: "1px solid rgba(255,255,255,0.1)",
+    background: "rgba(15,18,25,0.96)",
+    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.05), 0 8px 20px rgba(0,0,0,0.38)",
+  },
+  chatInput: {
+    flex: 1,
+    padding: "12px 0",
+    borderRadius: 8,
+    border: "none",
+    background: "transparent",
+    color: "white",
+    fontSize: 14,
+    lineHeight: 1.4,
+    outline: "none",
+    minHeight: 24,
+  },
+  chatSend: {
+    padding: "10px 14px",
+    borderRadius: 12,
+    border: "1px solid rgba(125,211,252,0.5)",
+    background: "linear-gradient(135deg, rgba(125,211,252,0.22), rgba(167,139,250,0.2))",
+    color: "white",
+    fontWeight: 700,
+    fontSize: 14,
+    letterSpacing: 0.1,
+    cursor: "pointer",
+    boxShadow: "0 10px 22px rgba(0,0,0,0.38), inset 0 1px 0 rgba(255,255,255,0.08)",
+    transition: "transform 120ms ease, box-shadow 120ms ease",
+  },
+  chatStack: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 12,
+  },
+  chatLead: {
+    fontSize: 13,
+    color: "rgba(255,255,255,0.78)",
+    lineHeight: 1.45,
+    marginTop: 10,
+  },
+  chatMessages: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 10,
+    padding: "4px 0 6px",
+  },
+  chatBubble: {
+    maxWidth: "100%",
+    width: "fit-content",
+    padding: "16px 16px",
+    borderRadius: 12,
+    fontSize: 13,
+    lineHeight: 1.4,
+    boxShadow: "0 6px 14px rgba(0,0,0,0.3)",
+  },
+  chatBubbleUser: {
+    alignSelf: "flex-end",
+    background: "linear-gradient(135deg, rgba(125,211,252,0.25), rgba(167,139,250,0.25))",
+    border: "1px solid rgba(125,211,252,0.45)",
+    color: "white",
+  },
+  chatBubbleAgent: {
+    alignSelf: "flex-start",
+    background: "rgba(20,24,31,0.95)",
+    border: "1px solid rgba(255,255,255,0.08)",
+    color: "rgba(255,255,255,0.9)",
+  },
+  sectionTitle: {
+    fontSize: 13,
+    fontWeight: 700,
+    color: "rgba(255,255,255,0.9)",
+    letterSpacing: 0.3,
+    textTransform: "uppercase",
+  },
+  paramGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 },
+  paletteGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 },
+  paletteCard: {
+    padding: "9px 10px",
+    borderRadius: 12,
+    border: "1px solid rgba(255,255,255,0.06)",
+    background: "rgba(255,255,255,0.02)",
+    cursor: "pointer",
+    color: "rgba(255,255,255,0.9)",
+    textAlign: "left",
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+    transition: "all 0.18s ease",
+  },
+  paletteCardActive: {
+    borderColor: "rgba(125,211,252,0.65)",
+    background: "linear-gradient(145deg, rgba(125,211,252,0.14), rgba(255,255,255,0.03))",
+    boxShadow: "0 10px 26px rgba(0,0,0,0.45)",
+  },
+  paletteName: { fontSize: 13, fontWeight: 700 },
+  paletteSwatches: { display: "flex", gap: 6 },
+  swatch: {
+    flex: 1,
+    height: 8,
+    borderRadius: 999,
+    boxShadow: "inset 0 0 0 1px rgba(0,0,0,0.25)",
+  },
+  range: {
+    width: "100%",
+    background: "transparent",
+    appearance: "none",
+    WebkitAppearance: "none",
+    height: 10,
+    outline: "none",
+    padding: 0,
+    margin: 0,
+  },
+  resolutionRow: { display: "flex", alignItems: "center", gap: 12 },
+  resolutionValue: { fontSize: 12.5, color: "rgba(255,255,255,0.78)", minWidth: 60, textAlign: "right" },
+  sectionText: { fontSize: 13, color: "rgba(255,255,255,0.78)" },
+  toggleIcon: { fontSize: 16, lineHeight: 1 },
+};
+
+type ChatMessage = { id: number; sender: "user" | "agent"; text: string };
+
+type AppState = {
+  mode: Mode;
+  panelTab: PanelTab;
+  sidebarOpen: boolean;
+  canvasView: CanvasView;
+  scenario: string;
+  model: string;
+  variable: string;
+  date: string;
+  palette: string;
+  resolution: number;
+  chatInput: string;
+  chatMessages: ChatMessage[];
+  compareMode: CompareMode;
+  compareModelA: string;
+  compareModelB: string;
+  compareDateStart: string;
+  compareDateEnd: string;
+};
+
+const SIDEBAR_WIDTH = 360;
+
+const state: AppState = {
+  mode: "Explore",
+  panelTab: "Manual",
+  sidebarOpen: true,
+  canvasView: "map",
+  scenario: scenarios[0],
+  model: models[0],
+  variable: variables[0],
+  date: "2025-01-01",
+  palette: paletteOptions[0].name,
+  resolution: 18,
+  chatInput: "",
+  chatMessages: [],
+  compareMode: "Scenarios",
+  compareModelA: models[0],
+  compareModelB: models[1] ?? models[0],
+  compareDateStart: "2025-01-01",
+  compareDateEnd: "2025-12-31",
+};
+
+let agentReplyTimer: number | null = null;
+
+const appRoot = document.querySelector<HTMLDivElement>("#app");
+if (!appRoot) {
+  throw new Error("Root element #app not found");
+}
+
+function toKebab(input: string) {
+  return input.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`);
+}
+
+function styleAttr(style: Style) {
+  return Object.entries(style)
+    .filter(([, value]) => value !== undefined && value !== null)
+    .map(([key, value]) => {
+      const cssKey = key.startsWith("--") ? key : toKebab(key);
+      const cssVal = typeof value === "number" ? `${value}px` : String(value);
+      return `${cssKey}:${cssVal}`;
+    })
+    .join(";");
+}
+
+function mergeStyles(...entries: Array<Style | undefined>): Style {
+  return entries.reduce<Style>((acc, entry) => {
+    if (!entry) return acc;
+    return { ...acc, ...entry };
+  }, {});
+}
+
+function render() {
+  if (!appRoot) return; // Defensive check (should never happen due to initialization check)
+  const resolutionFill = ((state.resolution - 15) / (21 - 15)) * 100;
+  const sidebarStyle = mergeStyles(styles.sidebar, {
+    width: SIDEBAR_WIDTH,
+    transform: state.sidebarOpen ? "translateX(0)" : `translateX(${SIDEBAR_WIDTH + 24}px)`,
+    pointerEvents: state.sidebarOpen ? "auto" : "none",
+  });
+
+  const toggleStyle = mergeStyles(styles.toggle, {
+    right: state.sidebarOpen ? SIDEBAR_WIDTH + 10 : 14,
+    background: state.sidebarOpen
+      ? "linear-gradient(135deg, rgba(125,211,252,0.2), rgba(167,139,250,0.18))"
+      : "rgba(18,22,28,0.85)",
+    borderColor: "rgba(255,255,255,0.16)",
+    color: "white",
+  });
+
+  const modeTransform = state.mode === "Explore" ? "translateX(0%)" : "translateX(-50%)";
+  const modeIndicatorTransform = state.mode === "Explore" ? "translateX(0%)" : "translateX(100%)";
+  const canvasIndicatorTransform = state.canvasView === "map" ? "translateX(0%)" : "translateX(100%)";
+  const tabTransform = state.panelTab === "Manual" ? "translateX(0%)" : "translateX(-50%)";
+
+  appRoot.innerHTML = `
+    <div style="${styleAttr(styles.page)}">
+      <div style="${styleAttr(styles.bgLayer1)}"></div>
+      <div style="${styleAttr(styles.bgLayer2)}"></div>
+      <div style="${styleAttr(styles.bgOverlay)}"></div>
+
+      <div style="${styleAttr(styles.mapArea)}">
+        <div style="${styleAttr(styles.mapTitle)}">
+          ${state.canvasView === "map" ? "Climate map placeholder" : "Chart placeholder"}
+        </div>
+        <div style="${styleAttr(styles.mapSubtitle)}">
+          ${
+            state.canvasView === "map"
+              ? "Data layers will render here once the feed is connected."
+              : "Chart view coming soon. Visualizations will render here."
+          }
+        </div>
+      </div>
+
+      <div style="${styleAttr(styles.topBar)}">
+        ${renderField("Scenario", renderSelect("scenario", scenarios, state.scenario))}
+        ${renderField("Model", renderSelect("model", models, state.model))}
+        ${renderField("Date", renderInput("date", state.date))}
+        ${renderField("Variable", renderSelect("variable", variables, state.variable))}
+      </div>
+
+      <aside data-role="sidebar" style="${styleAttr(sidebarStyle)}" aria-hidden="${!state.sidebarOpen}">
+        <div style="${styleAttr(styles.sidebarTop)}">
+          <div style="${styleAttr(styles.sidebarBrand)}">
+            <div style="${styleAttr(styles.logoDot)}"></div>
+          </div>
+          <div style="${styleAttr(styles.tabSwitch)}">
+            ${(["Manual", "Chat"] as const)
+              .map((value) =>
+                renderTabButton(value, state.panelTab === value ? styles.tabBtnActive : undefined, "panel-tab")
+              )
+              .join("")}
+          </div>
+        </div>
+
+        <div style="${styleAttr(styles.sidebarContent)}">
+          <div style="${styleAttr(styles.tabViewport)}">
+            <div data-role="tab-track" style="${styleAttr({ ...styles.tabTrack, transform: tabTransform })}">
+              <div style="${styleAttr(styles.tabPane)}">
+                ${renderManualSection({ modeTransform, resolutionFill, modeIndicatorTransform })}
+              </div>
+              <div style="${styleAttr(styles.tabPane)}">
+                ${renderChatSection()}
+              </div>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <div data-role="canvas-toggle" style="${styleAttr({ ...styles.canvasToggle, right: state.sidebarOpen ? SIDEBAR_WIDTH + 24 : 24 })}">
+        <div style="${styleAttr(styles.canvasSwitch)}">
+          <div data-role="canvas-indicator" style="${styleAttr({ ...styles.canvasIndicator, transform: canvasIndicatorTransform })}"></div>
+          <button
+            type="button"
+            aria-label="Show map canvas"
+            data-action="set-canvas"
+            data-value="map"
+            style="${styleAttr(mergeStyles(styles.canvasBtn, state.canvasView === "map" ? styles.canvasBtnActive : undefined))}"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+              <path d="M4 6.5 9 4l6 2.5L20 4v14l-5 2.5L9 18 4 20.5V6.5Z" />
+              <path d="m9 4v14m6-11.5v14" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            aria-label="Show chart canvas"
+            data-action="set-canvas"
+            data-value="chart"
+            style="${styleAttr(mergeStyles(styles.canvasBtn, state.canvasView === "chart" ? styles.canvasBtnActive : undefined))}"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <path d="M4 18h16" />
+              <path d="M6 18 11 9l4 5 3-6" />
+              <circle cx="6" cy="18" r="1.2" />
+              <circle cx="11" cy="9" r="1.2" />
+              <circle cx="15" cy="14" r="1.2" />
+              <circle cx="18" cy="8" r="1.2" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <button
+        type="button"
+        aria-label="${state.sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}"
+        data-action="toggle-sidebar"
+        style="${styleAttr(
+          mergeStyles(toggleStyle, { position: "fixed", top: "50%", transform: "translateY(-50%)", zIndex: 12 })
+        )}"
+      >
+        <span style="${styleAttr(styles.toggleIcon)}">${state.sidebarOpen ? "›" : "‹"}</span>
+      </button>
     </div>
-    <p class="read-the-docs">
-      Click on the Vite and TypeScript logos to learn more
-    </p>
+  `;
+
+  attachEventHandlers({ resolutionFill });
+}
+
+function renderField(label: string, controlHtml: string) {
+  return `
+    <div style="${styleAttr(styles.field)}">
+      <div style="${styleAttr(styles.fieldLabel)}">${label}</div>
+      ${controlHtml}
+    </div>
+  `;
+}
+
+function renderInput(name: string, value: string, opts?: { type?: string; dataKey?: string }) {
+  const type = opts?.type ?? "date";
+  const dataKey = opts?.dataKey ?? name;
+  return `
+    <input
+      type="${type}"
+      value="${value}"
+      data-action="update-input"
+      data-key="${dataKey}"
+    />
+  `;
+}
+
+function renderSelect(name: string, options: string[], current: string, opts?: { disabled?: boolean; dataKey?: string }) {
+  const dataKey = opts?.dataKey ?? name;
+  const disabled = opts?.disabled ? "disabled" : "";
+  return `
+    <select data-action="update-select" data-key="${dataKey}" ${disabled}>
+      ${options
+        .map(
+          (opt) => `
+            <option value="${opt}" ${opt === current ? "selected" : ""}>
+              ${opt}
+            </option>
+          `
+        )
+        .join("")}
+    </select>
+  `;
+}
+
+function renderTabButton(value: PanelTab, activeStyle?: Style, dataKey = "panel-tab") {
+  return `
+    <button
+      type="button"
+      data-action="set-tab"
+      data-key="${dataKey}"
+      data-value="${value}"
+      style="${styleAttr(mergeStyles(styles.tabBtn, activeStyle))}"
+    >
+      ${value}
+    </button>
+  `;
+}
+
+
+function renderManualSection(params: { modeTransform: string; resolutionFill: number; modeIndicatorTransform: string }) {
+  const { modeTransform, resolutionFill, modeIndicatorTransform } = params;
+  const compareParameters =
+    state.compareMode === "Models"
+      ? [
+          renderField("Scenario", renderSelect("scenario", scenarios, state.scenario)),
+          renderField("Date", renderInput("date", state.date)),
+        ]
+      : state.compareMode === "Dates"
+        ? [
+            renderField("Scenario", renderSelect("scenario", scenarios, state.scenario)),
+            renderField("Model", renderSelect("model", models, state.model)),
+          ]
+        : [
+            renderField("Model", renderSelect("model", models, state.model)),
+            renderField("Date", renderInput("date", state.date)),
+          ];
+
+  return `
+    <div style="${styleAttr(styles.modeSwitch)}">
+      <div data-role="mode-indicator" style="${styleAttr({
+        ...styles.modeIndicator,
+        transform: modeIndicatorTransform,
+      })}"></div>
+      ${(["Explore", "Compare"] as const)
+        .map((value) =>
+          `
+            <button
+              type="button"
+              class="mode-btn"
+              data-action="set-mode"
+              data-value="${value}"
+              style="${styleAttr(mergeStyles(styles.modeBtn, state.mode === value ? styles.modeBtnActive : undefined))}"
+            >
+              ${value}
+            </button>
+          `
+        )
+        .join("")}
+    </div>
+
+    <div style="${styleAttr(styles.modeViewport)}">
+      <div data-role="mode-track" style="${styleAttr({ ...styles.modeTrack, transform: modeTransform })}">
+        <div style="${styleAttr(styles.modePane)}">
+          <div style="${styleAttr({ display: "flex", flexDirection: "column", gap: 8 })}">
+            <div style="${styleAttr(styles.sectionTitle)}">Parameters</div>
+            <div style="${styleAttr(styles.paramGrid)}">
+              ${renderField("Scenario", renderSelect("scenario", scenarios, state.scenario))}
+              ${renderField("Model", renderSelect("model", models, state.model))}
+              ${renderField("Date", renderInput("date", state.date))}
+              ${renderField("Variable", renderSelect("variable", variables, state.variable))}
+            </div>
+          </div>
+
+          <div style="margin-top:14px">
+            <div style="${styleAttr({ display: "flex", flexDirection: "column", gap: 8 })}">
+              <div style="${styleAttr(styles.sectionTitle)}">Color palette</div>
+              ${renderField(
+                "Palette",
+                renderSelect("palette", paletteOptions.map((p) => p.name), state.palette, { dataKey: "palette" })
+              )}
+            </div>
+          </div>
+
+          <div style="margin-top:14px">
+            <div style="${styleAttr({ display: "flex", flexDirection: "column", gap: 8 })}">
+              <div style="${styleAttr(styles.sectionTitle)}">Resolution</div>
+              <div style="${styleAttr(styles.resolutionRow)}">
+                <input
+                  type="range"
+                  min="15"
+                  max="21"
+                  step="1"
+                  value="${state.resolution}"
+                  data-action="set-resolution"
+                  class="resolution-slider"
+                  style="${styleAttr(mergeStyles(styles.range, { "--slider-fill": `${resolutionFill}%` }))}"
+                />
+                <div data-role="resolution-value" style="${styleAttr(styles.resolutionValue)}">${state.resolution}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div style="${styleAttr(styles.modePane)}">
+          <div style="${styleAttr({ display: "flex", flexDirection: "column", gap: 14 })}">
+            <div style="${styleAttr({ display: "flex", flexDirection: "column", gap: 8 })}">
+              <div style="${styleAttr(styles.sectionTitle)}">Compare</div>
+              <div style="${styleAttr(styles.paramGrid)}">
+                ${renderField(
+                  "What do you want to compare?",
+                  renderSelect("compareMode", ["Scenarios", "Models", "Dates"], state.compareMode, {
+                    dataKey: "compareMode",
+                  })
+                )}
+              </div>
+
+              ${
+                state.compareMode === "Scenarios"
+                  ? `
+                      <div style="${styleAttr(styles.paramGrid)}">
+                        ${renderField(
+                          "Scenario A",
+                          renderSelect("compareScenarioA", ["SSP245"], "SSP245", { disabled: true })
+                        )}
+                        ${renderField(
+                          "Scenario B",
+                          renderSelect("compareScenarioB", ["SSP585"], "SSP585", { disabled: true })
+                        )}
+                      </div>
+                    `
+                  : ""
+              }
+
+              ${
+                state.compareMode === "Models"
+                  ? `
+                      <div style="${styleAttr(styles.paramGrid)}">
+                        ${renderField(
+                          "Model A",
+                          renderSelect("compareModelA", models, state.compareModelA, { dataKey: "compareModelA" })
+                        )}
+                        ${renderField(
+                          "Model B",
+                          renderSelect("compareModelB", models, state.compareModelB, { dataKey: "compareModelB" })
+                        )}
+                      </div>
+                    `
+                  : ""
+              }
+
+              ${
+                state.compareMode === "Dates"
+                  ? `
+                      <div style="${styleAttr(styles.paramGrid)}">
+                        ${renderField(
+                          "Start date",
+                          renderInput("compareDateStart", state.compareDateStart, { dataKey: "compareDateStart" })
+                        )}
+                        ${renderField(
+                          "End date",
+                          renderInput("compareDateEnd", state.compareDateEnd, { dataKey: "compareDateEnd" })
+                        )}
   </div>
 `
+                  : ""
+              }
 
-setupCounter(document.querySelector<HTMLButtonElement>('#counter')!)
+              <div style="${styleAttr(styles.paramGrid)}">
+                ${compareParameters.join("")}
+                ${renderField("Variable", renderSelect("variable", variables, state.variable))}
+              </div>
+
+              <div style="margin-top:14px">
+                <div style="${styleAttr({ display: "flex", flexDirection: "column", gap: 8 })}">
+                  <div style="${styleAttr(styles.sectionTitle)}">Color palette</div>
+                  ${renderField(
+                    "Palette",
+                    renderSelect("palette", paletteOptions.map((p) => p.name), state.palette, { dataKey: "palette" })
+                  )}
+                </div>
+              </div>
+
+              <div style="margin-top:14px">
+                <div style="${styleAttr({ display: "flex", flexDirection: "column", gap: 8 })}">
+                  <div style="${styleAttr(styles.sectionTitle)}">Resolution</div>
+                  <div style="${styleAttr(styles.resolutionRow)}">
+                    <input
+                      type="range"
+                      min="15"
+                      max="21"
+                      step="1"
+                      value="${state.resolution}"
+                      data-action="set-resolution"
+                      class="resolution-slider"
+                      style="${styleAttr(mergeStyles(styles.range, { "--slider-fill": `${resolutionFill}%` }))}"
+                    />
+                    <div data-role="resolution-value" style="${styleAttr(styles.resolutionValue)}">${state.resolution}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderChatSection() {
+  return `
+    <div style="${styleAttr({ display: "flex", flexDirection: "column", gap: 8 })}">
+      <div style="${styleAttr(styles.sectionTitle)}">Chat</div>
+      <div style="${styleAttr(styles.chatStack)}">
+        <div style="${styleAttr(styles.chatLead)}">Discuss the data with an agent, or ask questions.</div>
+
+        <div style="${styleAttr(styles.chatMessages)}">
+          ${state.chatMessages
+            .map((msg) => {
+              const bubbleStyle =
+                msg.sender === "user"
+                  ? mergeStyles(styles.chatBubble, styles.chatBubbleUser)
+                  : mergeStyles(styles.chatBubble, styles.chatBubbleAgent);
+              return `<div style="${styleAttr(bubbleStyle)}">${msg.text}</div>`;
+            })
+            .join("")}
+        </div>
+
+        <div style="${styleAttr(styles.chatBox)}">
+          <input
+            type="text"
+            value="${state.chatInput}"
+            data-action="chat-input"
+            style="${styleAttr(styles.chatInput)}"
+            placeholder="Ask a question"
+          />
+          <button type="button" data-action="chat-send" aria-label="Send chat message" style="${styleAttr(styles.chatSend)}">
+            ➤
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function attachEventHandlers(_params: { resolutionFill: number }) {
+  if (!appRoot) return; // Defensive check (should never happen due to initialization check)
+  const sidebarToggle = appRoot.querySelector<HTMLButtonElement>('[data-action="toggle-sidebar"]');
+  sidebarToggle?.addEventListener("click", () => {
+    const sidebar = appRoot.querySelector<HTMLElement>('[data-role="sidebar"]');
+    const canvasToggle = appRoot.querySelector<HTMLElement>('[data-role="canvas-toggle"]');
+
+    if (!sidebar || !canvasToggle || !sidebarToggle) return;
+
+    const nextOpen = !state.sidebarOpen;
+    state.sidebarOpen = nextOpen;
+
+    // Update sidebar visibility with smooth transition (transform already has a CSS transition)
+    const translateX = nextOpen ? "translateX(0)" : `translateX(${SIDEBAR_WIDTH + 24}px)`;
+    sidebar.style.transform = translateX;
+    sidebar.style.pointerEvents = nextOpen ? "auto" : "none";
+    sidebar.setAttribute("aria-hidden", String(!nextOpen));
+
+    // Move the toggle button alongside the sidebar
+    const toggleRight = nextOpen ? `${SIDEBAR_WIDTH + 10}px` : "14px";
+    sidebarToggle.style.right = toggleRight;
+    sidebarToggle.setAttribute("aria-label", nextOpen ? "Collapse sidebar" : "Expand sidebar");
+
+    const iconSpan = sidebarToggle.querySelector("span");
+    if (iconSpan) {
+      iconSpan.textContent = nextOpen ? "›" : "‹";
+    }
+
+    // Shift the canvas toggle so it always sits just to the left of the sidebar
+    const canvasRight = nextOpen ? SIDEBAR_WIDTH + 24 : 24;
+    canvasToggle.style.right = `${canvasRight}px`;
+  });
+
+  const canvasButtons = appRoot.querySelectorAll<HTMLButtonElement>('[data-action="set-canvas"]');
+  canvasButtons.forEach((btn) =>
+    btn.addEventListener("click", () => {
+      const value = btn.dataset.value as CanvasView | undefined;
+      if (value) {
+        if (value === state.canvasView) return;
+
+        const previousView = state.canvasView;
+        const previousIndicatorTransform = previousView === "map" ? "translateX(0%)" : "translateX(100%)";
+        const nextIndicatorTransform = value === "map" ? "translateX(0%)" : "translateX(100%)";
+
+        state.canvasView = value;
+        render();
+
+        // Get the element immediately after render (it exists synchronously)
+        const canvasIndicator = appRoot.querySelector<HTMLElement>('[data-role="canvas-indicator"]');
+
+        if (!canvasIndicator) return;
+
+        // Immediately remove transition and set to previous position before browser paints
+        canvasIndicator.style.removeProperty("transition");
+        canvasIndicator.style.transform = previousIndicatorTransform;
+
+        // Force synchronous reflow to ensure the transform is applied
+        void canvasIndicator.offsetHeight;
+        void canvasIndicator.getBoundingClientRect();
+
+        // Now animate to the new position in the next frame
+        requestAnimationFrame(() => {
+          canvasIndicator.style.transition = "transform 180ms ease";
+          canvasIndicator.style.transform = nextIndicatorTransform;
+        });
+      }
+    })
+  );
+
+  const modeButtons = appRoot.querySelectorAll<HTMLButtonElement>('[data-action="set-mode"]');
+  modeButtons.forEach((btn) =>
+    btn.addEventListener("click", () => {
+      const value = btn.dataset.value as Mode | undefined;
+      if (value) {
+        if (value === state.mode) return;
+
+        const previousMode = state.mode;
+        const previousModeTransform = previousMode === "Explore" ? "translateX(0%)" : "translateX(-50%)";
+        const previousIndicatorTransform = previousMode === "Explore" ? "translateX(0%)" : "translateX(100%)";
+        const nextModeTransform = value === "Explore" ? "translateX(0%)" : "translateX(-50%)";
+        const nextIndicatorTransform = value === "Explore" ? "translateX(0%)" : "translateX(100%)";
+
+        state.mode = value;
+        render();
+
+        const modeTrack = appRoot.querySelector<HTMLElement>('[data-role="mode-track"]');
+        const modeIndicator = appRoot.querySelector<HTMLElement>('[data-role="mode-indicator"]');
+
+        if (!modeTrack || !modeIndicator) return;
+
+        // Start from the previous position without transition, then animate to the new one
+        modeTrack.style.transition = "none";
+        modeIndicator.style.transition = "none";
+        modeTrack.style.transform = previousModeTransform;
+        modeIndicator.style.transform = previousIndicatorTransform;
+
+        // Force reflow so the browser registers the starting transforms
+        // eslint-disable-next-line @typescript-eslint/no-unused-expressions
+        modeTrack.offsetHeight;
+
+        modeTrack.style.transition = "transform 220ms ease";
+        modeIndicator.style.transition = "transform 200ms ease";
+        modeTrack.style.transform = nextModeTransform;
+        modeIndicator.style.transform = nextIndicatorTransform;
+      }
+    })
+  );
+
+  const tabButtons = appRoot.querySelectorAll<HTMLButtonElement>('[data-action="set-tab"]');
+  tabButtons.forEach((btn) =>
+    btn.addEventListener("click", () => {
+      const value = btn.dataset.value as PanelTab | undefined;
+      if (value) {
+        if (value === state.panelTab) return;
+
+        const previousTab = state.panelTab;
+        const previousTabTransform = previousTab === "Manual" ? "translateX(0%)" : "translateX(-50%)";
+        const nextTabTransform = value === "Manual" ? "translateX(0%)" : "translateX(-50%)";
+
+        state.panelTab = value;
+        render();
+
+        // Get the element immediately after render (it exists synchronously)
+        const tabTrack = appRoot.querySelector<HTMLElement>('[data-role="tab-track"]');
+
+        if (!tabTrack) return;
+
+        // Immediately remove transition and set to previous position before browser paints
+        tabTrack.style.removeProperty("transition");
+        tabTrack.style.transform = previousTabTransform;
+
+        // Force synchronous reflow to ensure the transform is applied
+        void tabTrack.offsetHeight;
+        void tabTrack.getBoundingClientRect();
+
+        // Now animate to the new position in the next frame
+        requestAnimationFrame(() => {
+          tabTrack.style.transition = "transform 220ms ease";
+          tabTrack.style.transform = nextTabTransform;
+        });
+      }
+    })
+  );
+
+  const selectInputs = appRoot.querySelectorAll<HTMLSelectElement>('[data-action="update-select"]');
+  selectInputs.forEach((select) =>
+    select.addEventListener("change", () => {
+      const key = select.dataset.key;
+      const val = select.value;
+      if (!key) return;
+      switch (key) {
+        case "scenario":
+          state.scenario = val;
+          break;
+        case "model":
+          state.model = val;
+          break;
+        case "variable":
+          state.variable = val;
+          break;
+        case "palette":
+          state.palette = val;
+          break;
+        case "compareMode":
+          state.compareMode = val as CompareMode;
+          break;
+        case "compareModelA":
+          state.compareModelA = val;
+          break;
+        case "compareModelB":
+          state.compareModelB = val;
+          break;
+      }
+      render();
+    })
+  );
+
+  const textInputs = appRoot.querySelectorAll<HTMLInputElement>('[data-action="update-input"]');
+  textInputs.forEach((input) =>
+    input.addEventListener("input", () => {
+      const key = input.dataset.key;
+      if (!key) return;
+      const value = input.value;
+      switch (key) {
+        case "date":
+          state.date = value;
+          break;
+        case "compareDateStart":
+          state.compareDateStart = value;
+          break;
+        case "compareDateEnd":
+          state.compareDateEnd = value;
+          break;
+      }
+      render();
+    })
+  );
+
+  const resolutionInputs = appRoot.querySelectorAll<HTMLInputElement>('[data-action="set-resolution"]');
+  const resolutionValues = appRoot.querySelectorAll<HTMLElement>('[data-role="resolution-value"]');
+  const updateResolutionUI = (value: number) => {
+    const fill = ((value - 15) / (21 - 15)) * 100;
+    resolutionInputs.forEach((el) => {
+      el.value = String(value);
+      el.style.setProperty("--slider-fill", `${fill}%`);
+    });
+    resolutionValues.forEach((el) => {
+      el.textContent = String(value);
+    });
+  };
+  resolutionInputs.forEach((input) =>
+    input.addEventListener("input", () => {
+      const value = Number.parseInt(input.value, 10);
+      if (!Number.isNaN(value)) {
+        state.resolution = value;
+        updateResolutionUI(value);
+      }
+    })
+  );
+
+  const chatInput = appRoot.querySelector<HTMLInputElement>('[data-action="chat-input"]');
+  const chatSend = appRoot.querySelector<HTMLButtonElement>('[data-action="chat-send"]');
+  chatInput?.addEventListener("input", () => {
+    state.chatInput = chatInput.value;
+  });
+  chatInput?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      sendChat();
+    }
+  });
+  chatSend?.addEventListener("click", sendChat);
+}
+
+function sendChat() {
+  const text = state.chatInput.trim();
+  if (!text) return;
+
+  const userMessage: ChatMessage = { id: Date.now(), sender: "user", text };
+  state.chatMessages = [...state.chatMessages, userMessage];
+  state.chatInput = "";
+
+  if (agentReplyTimer) {
+    window.clearTimeout(agentReplyTimer);
+  }
+
+  agentReplyTimer = window.setTimeout(() => {
+    const reply: ChatMessage = {
+      id: Date.now() + 1,
+      sender: "agent",
+      text: "I don't work yet.",
+    };
+    state.chatMessages = [...state.chatMessages, reply];
+    render();
+  }, 1000);
+
+  render();
+}
+
+render();

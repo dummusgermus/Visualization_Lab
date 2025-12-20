@@ -1,4 +1,12 @@
 import "./style.css";
+import {
+  fetchClimateData,
+  createDataRequest,
+  dataToArray,
+  checkApiHealth,
+  type ClimateData,
+  DataClientError,
+} from "./dataClient";
 
 type Mode = "Explore" | "Compare";
 type PanelTab = "Manual" | "Chat";
@@ -490,6 +498,10 @@ type AppState = {
   compareModelB: string;
   compareDateStart: string;
   compareDateEnd: string;
+  isLoading: boolean;
+  dataError: string | null;
+  currentData: ClimateData | null;
+  apiAvailable: boolean | null;
 };
 
 const SIDEBAR_WIDTH = 360;
@@ -502,7 +514,7 @@ const state: AppState = {
   scenario: scenarios[0],
   model: models[0],
   variable: variables[0],
-  date: "2025-01-01",
+  date: "2000-01-01",
   palette: paletteOptions[0].name,
   resolution: 18,
   chatInput: "",
@@ -510,11 +522,24 @@ const state: AppState = {
   compareMode: "Scenarios",
   compareModelA: models[0],
   compareModelB: models[1] ?? models[0],
-  compareDateStart: "2025-01-01",
-  compareDateEnd: "2025-12-31",
+  compareDateStart: "2000-01-01",
+  compareDateEnd: "2000-12-31",
+  isLoading: false,
+  dataError: null,
+  currentData: null,
+  apiAvailable: null,
 };
 
 let agentReplyTimer: number | null = null;
+let mapCanvas: HTMLCanvasElement | null = null;
+let mapZoom = 1.0;
+let mapPanX = 0;
+let mapPanY = 0;
+let isDragging = false;
+let dragStartX = 0;
+let dragStartY = 0;
+let dragStartPanX = 0;
+let dragStartPanY = 0;
 
 let appRoot: HTMLDivElement | null = null;
 
@@ -538,6 +563,269 @@ function mergeStyles(...entries: Array<Style | undefined>): Style {
     if (!entry) return acc;
     return { ...acc, ...entry };
   }, {});
+}
+
+async function checkApiAvailability() {
+  try {
+    const available = await checkApiHealth();
+    state.apiAvailable = available;
+  } catch {
+    state.apiAvailable = false;
+  }
+}
+
+async function loadClimateData() {
+  if (state.canvasView !== "map" || state.mode !== "Explore") {
+    return;
+  }
+
+  state.isLoading = true;
+  state.dataError = null;
+
+  try {
+    const request = createDataRequest({
+      variable: state.variable,
+      date: state.date,
+      model: state.model,
+      scenario: state.scenario,
+      resolution: state.resolution,
+    });
+
+    const data = await fetchClimateData(request);
+    state.currentData = data;
+    state.isLoading = false;
+    
+    render();
+    
+    if (appRoot) {
+      const canvas = appRoot.querySelector<HTMLCanvasElement>("#map-canvas");
+      if (canvas) {
+        mapCanvas = canvas;
+        setupMapInteractions(canvas);
+        const rect = canvas.getBoundingClientRect();
+        if (rect && data.shape) {
+          const [height, width] = data.shape;
+          const minZoomWidth = rect.width / width;
+          const minZoomHeight = rect.height / height;
+          const minZoom = Math.min(minZoomWidth, minZoomHeight);
+          mapZoom = minZoom;
+          mapPanX = 0;
+          mapPanY = 0;
+        }
+        renderMapData(data);
+      }
+    }
+  } catch (error) {
+    if (error instanceof DataClientError && error.statusCode) {
+      state.dataError = error.message;
+    } else {
+      state.dataError = error instanceof Error ? error.message : String(error);
+    }
+    state.isLoading = false;
+    state.currentData = null;
+    render();
+  }
+}
+
+function setupMapInteractions(canvas: HTMLCanvasElement) {
+  canvas.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+    
+    const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
+    const newZoom = mapZoom * zoomFactor;
+    
+    if (state.currentData) {
+      const [height, width] = state.currentData.shape;
+      const minZoomWidth = rect.width / width;
+      const minZoomHeight = rect.height / height;
+      const minZoom = Math.min(minZoomWidth, minZoomHeight);
+      const maxZoom = 5.0;
+      
+      if (newZoom >= minZoom && newZoom <= maxZoom) {
+        const worldX = (mouseX + mapPanX) / mapZoom;
+        const worldY = (mouseY + mapPanY) / mapZoom;
+        
+        mapZoom = newZoom;
+        mapPanX = worldX * mapZoom - mouseX;
+        mapPanY = worldY * mapZoom - mouseY;
+        
+        renderMapData(state.currentData);
+      }
+    }
+  }, { passive: false });
+  
+  canvas.addEventListener("mousedown", (e) => {
+    if (e.button === 0) {
+      isDragging = true;
+      dragStartX = e.clientX;
+      dragStartY = e.clientY;
+      dragStartPanX = mapPanX;
+      dragStartPanY = mapPanY;
+      canvas.style.cursor = "grabbing";
+    }
+  });
+  
+  canvas.addEventListener("mousemove", (e) => {
+    if (isDragging && state.currentData) {
+      const deltaX = e.clientX - dragStartX;
+      const deltaY = e.clientY - dragStartY;
+      
+      mapPanX = dragStartPanX - deltaX;
+      mapPanY = dragStartPanY - deltaY;
+      
+      const [height, width] = state.currentData.shape;
+      const rect = canvas.getBoundingClientRect();
+      const scaledHeight = height * mapZoom;
+      const minZoomWidth = rect.width / width;
+      const minZoomHeight = rect.height / height;
+      const minZoom = Math.min(minZoomWidth, minZoomHeight);
+      const isAtMinZoom = Math.abs(mapZoom - minZoom) < 0.001;
+      
+      if (!isAtMinZoom && scaledHeight > rect.height) {
+        const maxPanY = scaledHeight - rect.height;
+        mapPanY = Math.max(0, Math.min(mapPanY, maxPanY));
+      }
+      
+      renderMapData(state.currentData);
+    }
+  });
+  
+  canvas.addEventListener("mouseup", () => {
+    if (isDragging) {
+      isDragging = false;
+      canvas.style.cursor = "grab";
+    }
+  });
+  
+  canvas.addEventListener("mouseleave", () => {
+    if (isDragging) {
+      isDragging = false;
+      canvas.style.cursor = "grab";
+    }
+  });
+  
+  canvas.style.cursor = "grab";
+}
+
+async function renderMapData(data: ClimateData) {
+  if (!mapCanvas) return;
+
+  const arrayData = dataToArray(data);
+  if (!arrayData) {
+    console.warn("No data to render");
+    return;
+  }
+
+  const ctx = mapCanvas.getContext("2d");
+  if (!ctx) return;
+
+  const [height, width] = data.shape;
+  const rect = mapCanvas.getBoundingClientRect();
+  mapCanvas.width = rect.width * window.devicePixelRatio;
+  mapCanvas.height = rect.height * window.devicePixelRatio;
+  ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+  
+  ctx.clearRect(0, 0, rect.width, rect.height);
+  
+  ctx.save();
+  
+  const viewWidth = rect.width;
+  const viewHeight = rect.height;
+  
+  const minZoomWidth = viewWidth / width;
+  const minZoomHeight = viewHeight / height;
+  const minZoom = Math.min(minZoomWidth, minZoomHeight);
+  
+  if (mapZoom < minZoom) {
+    mapZoom = minZoom;
+  }
+  
+  const scaledHeight = height * mapZoom;
+  
+  const isAtMinZoom = Math.abs(mapZoom - minZoom) < 0.001;
+  if (isAtMinZoom) {
+    if (scaledHeight < viewHeight) {
+      mapPanY = (viewHeight - scaledHeight) / 2;
+    } else {
+      mapPanY = 0;
+    }
+  } else {
+    const maxPanY = Math.max(0, scaledHeight - viewHeight);
+    mapPanY = Math.max(0, Math.min(mapPanY, maxPanY));
+  }
+  
+  let min = Infinity;
+  let max = -Infinity;
+  for (let i = 0; i < arrayData.length; i++) {
+    const val = arrayData[i];
+    if (isFinite(val)) {
+      min = Math.min(min, val);
+      max = Math.max(max, val);
+    }
+  }
+
+  const palette = paletteOptions.find((p) => p.name === state.palette) || paletteOptions[0];
+  const colors = palette.colors;
+
+  ctx.translate(0, -mapPanY);
+  ctx.scale(mapZoom, mapZoom);
+  
+  const normalizedPanX = ((mapPanX % (width * mapZoom)) + (width * mapZoom)) % (width * mapZoom);
+  const wrapOffset = -normalizedPanX / mapZoom;
+  const wrapCount = Math.ceil((normalizedPanX + viewWidth) / (width * mapZoom)) + 1;
+  const startWrap = -1;
+  
+  for (let wrap = startWrap; wrap < startWrap + wrapCount; wrap++) {
+    ctx.save();
+    ctx.translate(wrap * width + wrapOffset, 0);
+    
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const flippedY = height - 1 - y;
+        const idx = flippedY * width + x;
+        const value = arrayData[idx];
+
+        if (!isFinite(value)) {
+          continue;
+        }
+
+        const normalized = (value - min) / (max - min);
+
+        const colorIdx = Math.floor(normalized * (colors.length - 1));
+        const color1 = colors[Math.min(colorIdx, colors.length - 1)];
+        const color2 = colors[Math.min(colorIdx + 1, colors.length - 1)];
+        const t = normalized * (colors.length - 1) - colorIdx;
+
+        const c1 = hexToRgb(color1);
+        const c2 = hexToRgb(color2);
+        
+        const r = Math.round(c1.r + (c2.r - c1.r) * t);
+        const g = Math.round(c1.g + (c2.g - c1.g) * t);
+        const b = Math.round(c1.b + (c2.b - c1.b) * t);
+        
+        ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+        ctx.fillRect(x, y, 1, 1);
+      }
+    }
+    
+    ctx.restore();
+  }
+  
+  ctx.restore();
+}
+
+function hexToRgb(hex: string): { r: number; g: number; b: number } {
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  return result
+    ? {
+        r: parseInt(result[1], 16),
+        g: parseInt(result[2], 16),
+        b: parseInt(result[3], 16),
+      }
+    : { r: 0, g: 0, b: 0 };
 }
 
 function render() {
@@ -570,16 +858,58 @@ function render() {
       <div style="${styleAttr(styles.bgOverlay)}"></div>
 
       <div style="${styleAttr(styles.mapArea)}">
-        <div style="${styleAttr(styles.mapTitle)}">
-          ${state.canvasView === "map" ? "Climate map placeholder" : "Chart placeholder"}
-        </div>
-        <div style="${styleAttr(styles.mapSubtitle)}">
-          ${
-            state.canvasView === "map"
-              ? "Data layers will render here once the feed is connected."
-              : "Chart view coming soon. Visualizations will render here."
-          }
-        </div>
+        ${
+          state.canvasView === "map"
+            ? `
+              <canvas
+                id="map-canvas"
+                style="position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; pointer-events: auto;"
+              ></canvas>
+              ${
+                state.isLoading
+                  ? `<div style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.7); z-index: 10;">
+                      <div style="text-align: center;">
+                        <div style="${styleAttr(styles.mapTitle)}">Loading climate data...</div>
+                        <div style="${styleAttr(styles.mapSubtitle)}">Fetching data from API</div>
+                      </div>
+                    </div>`
+                  : ""
+              }
+              ${
+                state.dataError
+                  ? `<div style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.8); z-index: 10;">
+                      <div style="text-align: center; max-width: 600px; padding: 20px;">
+                        <div style="${styleAttr(styles.mapTitle)}">Error loading data</div>
+                        <div style="${styleAttr(styles.mapSubtitle)}">${state.dataError}</div>
+                        ${
+                          state.apiAvailable === false
+                            ? `<div style="${styleAttr(mergeStyles(styles.mapSubtitle, { marginTop: 12, fontSize: 12 }))}">
+                                Make sure the Python API server is running. Check the terminal for connection details.
+                              </div>`
+                            : ""
+                        }
+                      </div>
+                    </div>`
+                  : ""
+              }
+              ${
+                !state.isLoading && !state.dataError && !state.currentData
+                  ? `<div style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.5); z-index: 5;">
+                      <div style="text-align: center;">
+                        <div style="${styleAttr(styles.mapTitle)}">No data loaded</div>
+                        <div style="${styleAttr(styles.mapSubtitle)}">
+                          Adjust parameters to load climate data
+                        </div>
+                      </div>
+                    </div>`
+                  : ""
+              }
+            `
+            : `<div style="text-align: center;">
+                <div style="${styleAttr(styles.mapTitle)}">Chart placeholder</div>
+                <div style="${styleAttr(styles.mapSubtitle)}">Chart view coming soon. Visualizations will render here.</div>
+              </div>`
+        }
       </div>
 
       <div style="${styleAttr(styles.topBar)}">
@@ -665,6 +995,15 @@ function render() {
   `;
 
   attachEventHandlers({ resolutionFill });
+  
+  mapCanvas = appRoot.querySelector<HTMLCanvasElement>("#map-canvas");
+  
+  if (mapCanvas) {
+    setupMapInteractions(mapCanvas);
+    if (state.currentData && !state.isLoading && !state.dataError) {
+      renderMapData(state.currentData);
+    }
+  }
 }
 
 function renderField(label: string, controlHtml: string) {
@@ -994,21 +1333,21 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
 
         state.canvasView = value;
         render();
+        
+        if (value === "map") {
+          loadClimateData();
+        }
 
-        // Get the element immediately after render (it exists synchronously)
         const canvasIndicator = root.querySelector<HTMLElement>('[data-role="canvas-indicator"]');
 
         if (!canvasIndicator) return;
 
-        // Immediately remove transition and set to previous position before browser paints
         canvasIndicator.style.removeProperty("transition");
         canvasIndicator.style.transform = previousIndicatorTransform;
 
-        // Force synchronous reflow to ensure the transform is applied
         void canvasIndicator.offsetHeight;
         void canvasIndicator.getBoundingClientRect();
 
-        // Now animate to the new position in the next frame
         requestAnimationFrame(() => {
           canvasIndicator.style.transition = "transform 180ms ease";
           canvasIndicator.style.transform = nextIndicatorTransform;
@@ -1070,20 +1409,16 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         state.panelTab = value;
         render();
 
-        // Get the element immediately after render (it exists synchronously)
         const tabTrack = root.querySelector<HTMLElement>('[data-role="tab-track"]');
 
         if (!tabTrack) return;
 
-        // Immediately remove transition and set to previous position before browser paints
         tabTrack.style.removeProperty("transition");
         tabTrack.style.transform = previousTabTransform;
 
-        // Force synchronous reflow to ensure the transform is applied
         void tabTrack.offsetHeight;
         void tabTrack.getBoundingClientRect();
 
-        // Now animate to the new position in the next frame
         requestAnimationFrame(() => {
           tabTrack.style.transition = "transform 220ms ease";
           tabTrack.style.transform = nextTabTransform;
@@ -1110,7 +1445,15 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
           break;
         case "palette":
           state.palette = val;
-          break;
+          render();
+          if (state.currentData && appRoot) {
+            const canvas = appRoot.querySelector<HTMLCanvasElement>("#map-canvas");
+            if (canvas) {
+              mapCanvas = canvas;
+              renderMapData(state.currentData);
+            }
+          }
+          return;
         case "compareMode":
           state.compareMode = val as CompareMode;
           break;
@@ -1122,6 +1465,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
           break;
       }
       render();
+      loadClimateData();
     })
   );
 
@@ -1143,6 +1487,9 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
           break;
       }
       render();
+      if (key === "date") {
+        loadClimateData();
+      }
     })
   );
 
@@ -1164,6 +1511,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
       if (!Number.isNaN(value)) {
         state.resolution = value;
         updateResolutionUI(value);
+        loadClimateData();
       }
     })
   );
@@ -1207,13 +1555,21 @@ function sendChat() {
   render();
 }
 
-// Initialize the app when DOM is ready
-function init() {
+async function init() {
   appRoot = document.querySelector<HTMLDivElement>("#app");
   if (!appRoot) {
     throw new Error("Root element #app not found");
   }
+  
   render();
+  
+  checkApiAvailability().then(() => {
+    render();
+  });
+  
+  if (state.canvasView === "map" && state.mode === "Explore") {
+    loadClimateData();
+  }
 }
 
 if (document.readyState === "loading") {

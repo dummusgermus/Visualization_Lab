@@ -1,10 +1,9 @@
 import {
-  checkApiHealth,
   type ClimateData,
   createDataRequest,
   DataClientError,
   dataToArray,
-  fetchClimateData,
+  fetchClimateData
 } from "./dataClient";
 import "./style.css";
 
@@ -12,8 +11,6 @@ type Mode = "Explore" | "Compare";
 type PanelTab = "Manual" | "Chat";
 type CanvasView = "map" | "chart";
 type CompareMode = "Scenarios" | "Models" | "Dates";
-
-type Style = Record<string, string | number>;
 
 const scenarios = ["Historical", "SSP245", "SSP585"];
 const models = [
@@ -37,446 +34,6 @@ const paletteOptions = [
   { name: "Cividis", colors: ["#00204c", "#31456a", "#6b6d7f", "#a59c8f", "#fdea9b"] },
   { name: "Thermal", colors: ["#04142f", "#155570", "#1fa187", "#f8c932", "#f16623"] },
 ];
-
-const styles: Record<string, Style> = {
-  page: {
-    position: "relative",
-    minHeight: "100vh",
-    color: "white",
-    overflow: "hidden",
-    fontFamily: "Inter, system-ui, sans-serif",
-  },
-  bgLayer1: {
-    position: "absolute",
-    inset: 0,
-    background: "linear-gradient(135deg, #05070f, #0b1326)",
-  },
-  bgLayer2: {
-    position: "absolute",
-    inset: 0,
-    background:
-      "radial-gradient(circle at 20% 20%, rgba(56,189,248,0.12), transparent 32%), radial-gradient(circle at 80% 10%, rgba(139,92,246,0.15), transparent 30%), radial-gradient(circle at 50% 70%, rgba(34,197,94,0.08), transparent 28%)",
-  },
-  bgOverlay: {
-    position: "absolute",
-    inset: 0,
-    background: "#050505",
-    opacity: 0.35,
-  },
-  topBar: {
-    position: "fixed",
-    top: 12,
-    left: 16,
-    right: 380,
-    zIndex: 3,
-    display: "flex",
-    alignItems: "center",
-    gap: 8,
-    padding: "0 2px",
-    background: "transparent",
-    border: "none",
-    boxShadow: "none",
-    backdropFilter: "none",
-    overflowX: "auto",
-    overflowY: "visible",
-    whiteSpace: "nowrap",
-  },
-  field: {
-    minWidth: 0,
-    display: "flex",
-    flexDirection: "column",
-    gap: 4,
-  },
-  fieldLabel: {
-    fontSize: 11,
-    letterSpacing: 0.5,
-    color: "rgba(255,255,255,0.72)",
-    textTransform: "uppercase",
-  },
-  mapArea: {
-    position: "absolute",
-    inset: 0,
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 10,
-    textAlign: "center",
-    pointerEvents: "none",
-    zIndex: 1,
-  },
-  canvasToggle: {
-    position: "fixed",
-    top: 14,
-    display: "flex",
-    alignItems: "center",
-    gap: 8,
-    pointerEvents: "auto",
-    zIndex: 100,
-    transition: "right 0.25s ease",
-  },
-  canvasSwitch: {
-    position: "relative",
-    display: "grid",
-    gridTemplateColumns: "1fr 1fr",
-    gap: 0,
-    padding: 3,
-    borderRadius: 11,
-    background: "rgba(9,11,16,0.9)",
-    border: "1px solid rgba(255,255,255,0.12)",
-    boxShadow: "0 10px 26px rgba(0,0,0,0.45)",
-    zIndex: 101,
-  },
-  canvasIndicator: {
-    position: "absolute",
-    top: 3,
-    bottom: 3,
-    left: 3,
-    width: "calc(50% - 3px)",
-    borderRadius: 9,
-    background: "linear-gradient(135deg, rgba(125,211,252,0.2), rgba(167,139,250,0.2))",
-    boxShadow: "0 8px 20px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.08)",
-    transition: "transform 180ms ease",
-    zIndex: 0,
-    pointerEvents: "none",
-  },
-  canvasBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 9,
-    border: "1px solid transparent",
-    background: "transparent",
-    color: "rgba(255,255,255,0.82)",
-    cursor: "pointer",
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    transition: "color 120ms ease",
-    position: "relative",
-    zIndex: 1,
-  },
-  canvasBtnActive: {
-    color: "white",
-  },
-  mapTitle: { fontSize: 18, fontWeight: 600 },
-  mapSubtitle: { fontSize: 14, color: "rgba(255,255,255,0.75)" },
-  sidebar: {
-    position: "fixed",
-    top: 0,
-    right: 0,
-    bottom: 0,
-    width: 320,
-    transition: "transform 0.25s ease, box-shadow 0.2s ease",
-    zIndex: 1,
-    background: "rgba(9,11,16,0.88)",
-    borderLeft: "1px solid rgba(255,255,255,0.08)",
-    boxShadow: "-10px 0 35px rgba(0,0,0,0.55)",
-    backdropFilter: "blur(20px)",
-    overflow: "hidden",
-    display: "flex",
-    flexDirection: "column",
-  },
-  sidebarTop: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "flex-start",
-    padding: "16px 16px 46px",
-    gap: 10,
-    borderBottom: "1px solid rgba(255,255,255,0.08)",
-    background: "linear-gradient(135deg, rgba(125,211,252,0.08), rgba(167,139,250,0.06))",
-    position: "relative",
-    overflow: "hidden",
-  },
-  logoDot: {
-    width: 16,
-    height: 16,
-    background: "linear-gradient(135deg, #7dd3fc, #a78bfa, #22c55e)",
-    borderRadius: "50%",
-    boxShadow: "0 0 0 4px rgba(125,211,252,0.08)",
-  },
-  toggle: {
-    width: 44,
-    height: 44,
-    padding: 0,
-    borderRadius: "50%",
-    border: "1px solid rgba(255,255,255,0.16)",
-    background: "rgba(18,22,28,0.85)",
-    boxShadow: "0 14px 40px rgba(0,0,0,0.5)",
-    cursor: "pointer",
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    fontSize: 14,
-    lineHeight: 1,
-    transition: "right 0.25s ease, background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease",
-  },
-  sidebarContent: {
-    padding: "28px 14px 14px",
-    display: "flex",
-    flexDirection: "column",
-    gap: 12,
-    overflow: "hidden",
-    flex: 1,
-    position: "relative",
-  },
-  tabViewport: {
-    overflow: "hidden",
-    width: "100%",
-    position: "relative",
-    flex: 1,
-    display: "flex",
-    flexDirection: "column",
-  },
-  tabTrack: {
-    display: "grid",
-    gridTemplateColumns: "1fr 1fr",
-    width: "200%",
-    transition: "transform 220ms ease",
-    flex: 1,
-  },
-  tabPane: {
-    width: "100%",
-    display: "flex",
-    flexDirection: "column",
-    gap: 12,
-    overflow: "auto",
-    paddingRight: 4,
-  },
-  sidebarBrand: { display: "flex", alignItems: "center", gap: 10 },
-  badge: {
-    padding: "4px 8px",
-    borderRadius: 999,
-    border: "1px solid rgba(125,211,252,0.4)",
-    background: "rgba(125,211,252,0.12)",
-    color: "rgba(255,255,255,0.9)",
-    fontSize: 11.5,
-    letterSpacing: 0.6,
-  },
-  modeSwitch: {
-    position: "relative",
-    display: "grid",
-    gridTemplateColumns: "1fr 1fr",
-    gap: 4,
-    padding: 2,
-    borderRadius: 10,
-    border: "1px solid rgba(255,255,255,0.05)",
-    background: "rgba(255,255,255,0.02)",
-    boxShadow: "none",
-  },
-  modeIndicator: {
-    position: "absolute",
-    top: 2,
-    bottom: 2,
-    left: 2,
-    width: "calc(50% - 2px)",
-    borderRadius: 8,
-    background: "linear-gradient(135deg, rgba(125,211,252,0.18), rgba(167,139,250,0.16))",
-    boxShadow: "0 6px 16px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.08)",
-    transition: "transform 200ms ease",
-    zIndex: 0,
-  },
-  modeBtn: {
-    flex: 1,
-    padding: "8px 0",
-    borderRadius: 8,
-    border: "none",
-    color: "rgba(255,255,255,0.8)",
-    cursor: "pointer",
-    transition: "all 0.15s ease",
-    background: "transparent",
-    textAlign: "center",
-    fontSize: 12.5,
-    fontWeight: 700,
-    letterSpacing: 0.2,
-    outline: "none",
-    boxShadow: "none",
-    position: "relative",
-    zIndex: 1,
-  },
-  modeBtnActive: {
-    background: "linear-gradient(135deg, rgba(125,211,252,0.22), rgba(167,139,250,0.2))",
-    border: "none",
-    color: "white",
-    boxShadow: "0 6px 16px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.08)",
-  },
-  tabSwitch: {
-    position: "absolute",
-    left: 32,
-    right: 12,
-    bottom: -8,
-    display: "flex",
-    gap: 10,
-    padding: "0 8px",
-    alignItems: "flex-end",
-    pointerEvents: "auto",
-    zIndex: 0,
-  },
-  tabBtn: {
-    borderRadius: "14px 14px 0 0",
-    padding: "12px 18px",
-    background: "rgba(255,255,255,0.08)",
-    color: "rgba(255,255,255,0.78)",
-    fontWeight: 700,
-    fontSize: 13,
-    letterSpacing: 0.35,
-    cursor: "pointer",
-    transition: "all 0.18s ease",
-    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.06), 0 8px 18px rgba(0,0,0,0.32)",
-    borderTop: "1px solid rgba(255,255,255,0.12)",
-    borderRight: "1px solid rgba(255,255,255,0.12)",
-    borderLeft: "1px solid rgba(255,255,255,0.12)",
-    borderBottom: "none",
-    transform: "translateY(4px)",
-  },
-  tabBtnActive: {
-    background: "linear-gradient(135deg, rgba(125,211,252,0.32), rgba(167,139,250,0.28))",
-    color: "white",
-    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.12), 0 12px 26px rgba(0,0,0,0.42)",
-    borderTop: "1px solid rgba(125,211,252,0.6)",
-    borderRight: "1px solid rgba(125,211,252,0.6)",
-    borderLeft: "1px solid rgba(125,211,252,0.6)",
-    borderBottom: "none",
-    transform: "translateY(-4px)",
-    zIndex: 1,
-  },
-  modeViewport: {
-    overflow: "hidden",
-    width: "100%",
-    position: "relative",
-  },
-  modeTrack: {
-    display: "grid",
-    gridTemplateColumns: "1fr 1fr",
-    width: "200%",
-    transition: "transform 220ms ease",
-  },
-  modePane: {
-    width: "100%",
-    paddingRight: 4,
-  },
-  chatBox: {
-    display: "flex",
-    alignItems: "center",
-    gap: 10,
-    padding: "12px 14px",
-    borderRadius: 14,
-    border: "1px solid rgba(255,255,255,0.1)",
-    background: "rgba(15,18,25,0.96)",
-    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.05), 0 8px 20px rgba(0,0,0,0.38)",
-  },
-  chatInput: {
-    flex: 1,
-    padding: "12px 0",
-    borderRadius: 8,
-    border: "none",
-    background: "transparent",
-    color: "white",
-    fontSize: 14,
-    lineHeight: 1.4,
-    outline: "none",
-    minHeight: 24,
-  },
-  chatSend: {
-    padding: "10px 14px",
-    borderRadius: 12,
-    border: "1px solid rgba(125,211,252,0.5)",
-    background: "linear-gradient(135deg, rgba(125,211,252,0.22), rgba(167,139,250,0.2))",
-    color: "white",
-    fontWeight: 700,
-    fontSize: 14,
-    letterSpacing: 0.1,
-    cursor: "pointer",
-    boxShadow: "0 10px 22px rgba(0,0,0,0.38), inset 0 1px 0 rgba(255,255,255,0.08)",
-    transition: "transform 120ms ease, box-shadow 120ms ease",
-  },
-  chatStack: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 12,
-  },
-  chatLead: {
-    fontSize: 13,
-    color: "rgba(255,255,255,0.78)",
-    lineHeight: 1.45,
-    marginTop: 10,
-  },
-  chatMessages: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 10,
-    padding: "4px 0 6px",
-  },
-  chatBubble: {
-    maxWidth: "100%",
-    width: "fit-content",
-    padding: "16px 16px",
-    borderRadius: 12,
-    fontSize: 13,
-    lineHeight: 1.4,
-    boxShadow: "0 6px 14px rgba(0,0,0,0.3)",
-  },
-  chatBubbleUser: {
-    alignSelf: "flex-end",
-    background: "linear-gradient(135deg, rgba(125,211,252,0.25), rgba(167,139,250,0.25))",
-    border: "1px solid rgba(125,211,252,0.45)",
-    color: "white",
-  },
-  chatBubbleAgent: {
-    alignSelf: "flex-start",
-    background: "rgba(20,24,31,0.95)",
-    border: "1px solid rgba(255,255,255,0.08)",
-    color: "rgba(255,255,255,0.9)",
-  },
-  sectionTitle: {
-    fontSize: 13,
-    fontWeight: 700,
-    color: "rgba(255,255,255,0.9)",
-    letterSpacing: 0.3,
-    textTransform: "uppercase",
-  },
-  paramGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 },
-  paletteGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 },
-  paletteCard: {
-    padding: "9px 10px",
-    borderRadius: 12,
-    border: "1px solid rgba(255,255,255,0.06)",
-    background: "rgba(255,255,255,0.02)",
-    cursor: "pointer",
-    color: "rgba(255,255,255,0.9)",
-    textAlign: "left",
-    display: "flex",
-    flexDirection: "column",
-    gap: 6,
-    transition: "all 0.18s ease",
-  },
-  paletteCardActive: {
-    borderColor: "rgba(125,211,252,0.65)",
-    background: "linear-gradient(145deg, rgba(125,211,252,0.14), rgba(255,255,255,0.03))",
-    boxShadow: "0 10px 26px rgba(0,0,0,0.45)",
-  },
-  paletteName: { fontSize: 13, fontWeight: 700 },
-  paletteSwatches: { display: "flex", gap: 6 },
-  swatch: {
-    flex: 1,
-    height: 8,
-    borderRadius: 999,
-    boxShadow: "inset 0 0 0 1px rgba(0,0,0,0.25)",
-  },
-  range: {
-    width: "100%",
-    background: "transparent",
-    appearance: "none",
-    WebkitAppearance: "none",
-    height: 10,
-    outline: "none",
-    padding: 0,
-    margin: 0,
-  },
-  resolutionRow: { display: "flex", alignItems: "center", gap: 12 },
-  resolutionValue: { fontSize: 12.5, color: "rgba(255,255,255,0.78)", minWidth: 60, textAlign: "right" },
-  sectionText: { fontSize: 13, color: "rgba(255,255,255,0.78)" },
-  toggleIcon: { fontSize: 16, lineHeight: 1 },
-};
 
 type ChatMessage = { id: number; sender: "user" | "agent"; text: string };
 
@@ -542,92 +99,6 @@ let dragStartPanX = 0;
 let dragStartPanY = 0;
 
 let appRoot: HTMLDivElement | null = null;
-
-function toKebab(input: string) {
-  return input.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`);
-}
-
-function styleAttr(style: Style) {
-  return Object.entries(style)
-    .filter(([, value]) => value !== undefined && value !== null)
-    .map(([key, value]) => {
-      const cssKey = key.startsWith("--") ? key : toKebab(key);
-      const cssVal = typeof value === "number" ? `${value}px` : String(value);
-      return `${cssKey}:${cssVal}`;
-    })
-    .join(";");
-}
-
-function mergeStyles(...entries: Array<Style | undefined>): Style {
-  return entries.reduce<Style>((acc, entry) => {
-    if (!entry) return acc;
-    return { ...acc, ...entry };
-  }, {});
-}
-
-async function checkApiAvailability() {
-  try {
-    const available = await checkApiHealth();
-    state.apiAvailable = available;
-  } catch {
-    state.apiAvailable = false;
-  }
-}
-
-async function loadClimateData() {
-  console.log("fetching")
-  if (state.canvasView !== "map" || state.mode !== "Explore") {
-    return;
-  }
-
-  state.isLoading = true;
-
-  state.dataError = null;
-
-  try {
-    const request = createDataRequest({
-      variable: state.variable,
-      date: state.date,
-      model: state.model,
-      scenario: state.scenario,
-      resolution: state.resolution,
-    });
-
-    const data = await fetchClimateData(request);
-    state.currentData = data;
-    state.isLoading = false;
-    
-    render();
-    
-    if (appRoot) {
-      const canvas = appRoot.querySelector<HTMLCanvasElement>("#map-canvas");
-      if (canvas) {
-        mapCanvas = canvas;
-        setupMapInteractions(canvas);
-        const rect = canvas.getBoundingClientRect();
-        if (rect && data.shape) {
-          const [height, width] = data.shape;
-          const minZoomWidth = rect.width / width;
-          const minZoomHeight = rect.height / height;
-          const minZoom = Math.min(minZoomWidth, minZoomHeight);
-          mapZoom = minZoom;
-          mapPanX = 0;
-          mapPanY = 0;
-        }
-        renderMapData(data);
-      }
-    }
-  } catch (error) {
-    if (error instanceof DataClientError && error.statusCode) {
-      state.dataError = error.message;
-    } else {
-      state.dataError = error instanceof Error ? error.message : String(error);
-    }
-    state.isLoading = false;
-    state.currentData = null;
-    render();
-  }
-}
 
 function setupMapInteractions(canvas: HTMLCanvasElement) {
   canvas.addEventListener("wheel", (e) => {
@@ -710,6 +181,61 @@ function setupMapInteractions(canvas: HTMLCanvasElement) {
   });
   
   canvas.style.cursor = "grab";
+}
+
+async function loadClimateData() {
+  console.log("fetching")
+  if (state.canvasView !== "map" || state.mode !== "Explore") {
+    return;
+  }
+
+  state.isLoading = true;
+
+  state.dataError = null;
+
+  try {
+    const request = createDataRequest({
+      variable: state.variable,
+      date: state.date,
+      model: state.model,
+      scenario: state.scenario,
+      resolution: state.resolution,
+    });
+
+    const data = await fetchClimateData(request);
+    state.currentData = data;
+    state.isLoading = false;
+    
+    render();
+    
+    if (appRoot) {
+      const canvas = appRoot.querySelector<HTMLCanvasElement>("#map-canvas");
+      if (canvas) {
+        mapCanvas = canvas;
+        setupMapInteractions(canvas);
+        const rect = canvas.getBoundingClientRect();
+        if (rect && data.shape) {
+          const [height, width] = data.shape;
+          const minZoomWidth = rect.width / width;
+          const minZoomHeight = rect.height / height;
+          const minZoom = Math.min(minZoomWidth, minZoomHeight);
+          mapZoom = minZoom;
+          mapPanX = 0;
+          mapPanY = 0;
+        }
+        renderMapData(data);
+      }
+    }
+  } catch (error) {
+    if (error instanceof DataClientError && error.statusCode) {
+      state.dataError = error.message;
+    } else {
+      state.dataError = error instanceof Error ? error.message : String(error);
+    }
+    state.isLoading = false;
+    state.currentData = null;
+    render();
+  }
 }
 
 async function renderMapData(data: ClimateData) {
@@ -846,62 +372,39 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } {
 }
 
 function render() {
-  if (!appRoot) return; // Defensive check (should never happen due to initialization check)
-  const resolutionFill = ((state.resolution - 15) / (21 - 15)) * 100;
-  const sidebarStyle = mergeStyles(styles.sidebar, {
-    width: SIDEBAR_WIDTH,
-    transform: state.sidebarOpen ? "translateX(0)" : `translateX(${SIDEBAR_WIDTH + 24}px)`,
-    pointerEvents: state.sidebarOpen ? "auto" : "none",
-  });
-
-  const toggleStyle = mergeStyles(styles.toggle, {
-    right: state.sidebarOpen ? SIDEBAR_WIDTH + 10 : 14,
-    background: state.sidebarOpen
-      ? "linear-gradient(135deg, rgba(125,211,252,0.2), rgba(167,139,250,0.18))"
-      : "rgba(18,22,28,0.85)",
-    borderColor: "rgba(255,255,255,0.16)",
-    color: "white",
-  });
-
-  const modeTransform = state.mode === "Explore" ? "translateX(0%)" : "translateX(-50%)";
-  const modeIndicatorTransform = state.mode === "Explore" ? "translateX(0%)" : "translateX(100%)";
-  const canvasIndicatorTransform = state.canvasView === "map" ? "translateX(0%)" : "translateX(100%)";
-  const tabTransform = state.panelTab === "Manual" ? "translateX(0%)" : "translateX(-50%)";
-
+  if (!appRoot) return;
+  
   appRoot.innerHTML = `
-    <div style="${styleAttr(styles.page)}">
-      <div style="${styleAttr(styles.bgLayer1)}"></div>
-      <div style="${styleAttr(styles.bgLayer2)}"></div>
-      <div style="${styleAttr(styles.bgOverlay)}"></div>
+    <div class="page">
+      <div class="bg-layer-1"></div>
+      <div class="bg-layer-2"></div>
+      <div class="bg-overlay"></div>
 
-      <div style="${styleAttr(styles.mapArea)}">
+      <div class="map-area">
         ${
           state.canvasView === "map"
             ? `
-              <canvas
-                id="map-canvas"
-                style="position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; pointer-events: auto;"
-              ></canvas>
+              <canvas id="map-canvas" class="map-canvas"></canvas>
               ${
                 state.isLoading
-                  ? `<div style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.7); z-index: 10;">
-                      <div style="text-align: center;">
-                        <div style="${styleAttr(styles.mapTitle)}">Loading climate data...</div>
-                        <div style="${styleAttr(styles.mapSubtitle)}">Fetching data from API</div>
+                  ? `<div class="map-overlay">
+                      <div>
+                        <div class="map-title">Loading climate data...</div>
+                        <div class="map-subtitle">Fetching data from API</div>
                       </div>
                     </div>`
                   : ""
               }
               ${
                 state.dataError
-                  ? `<div style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.8); z-index: 10;">
-                      <div style="text-align: center; max-width: 600px; padding: 20px;">
-                        <div style="${styleAttr(styles.mapTitle)}">Error loading data</div>
-                        <div style="${styleAttr(styles.mapSubtitle)}">${state.dataError}</div>
+                  ? `<div class="map-overlay">
+                      <div >
+                        <div class="map-title">Error loading data</div>
+                        <div class="map-subtitle">${state.dataError}</div>
                         ${
                           state.apiAvailable === false
-                            ? `<div style="${styleAttr(mergeStyles(styles.mapSubtitle, { marginTop: 12, fontSize: 12 }))}">
-                                Make sure the Python API server is running. Check the terminal for connection details.
+                            ? `<div class="map-subtitle">
+                                Make sure the Python API server is running.
                               </div>`
                             : ""
                         }
@@ -911,52 +414,46 @@ function render() {
               }
               ${
                 !state.isLoading && !state.dataError && !state.currentData
-                  ? `<div style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.5); z-index: 5;">
-                      <div style="text-align: center;">
-                        <div style="${styleAttr(styles.mapTitle)}">No data loaded</div>
-                        <div style="${styleAttr(styles.mapSubtitle)}">
-                          Adjust parameters to load climate data
-                        </div>
+                  ? `<div class="map-overlay" >
+                      <div>
+                        <div class="map-title">No data loaded</div>
+                        <div class="map-subtitle">Adjust parameters to load climate data</div>
                       </div>
                     </div>`
                   : ""
               }
             `
-            : `<div style="text-align: center;">
-                <div style="${styleAttr(styles.mapTitle)}">Chart placeholder</div>
-                <div style="${styleAttr(styles.mapSubtitle)}">Chart view coming soon. Visualizations will render here.</div>
+            : `<div>
+                <div class="map-title">Chart placeholder</div>
+                <div class="map-subtitle">Chart view coming soon.</div>
               </div>`
         }
       </div>
 
-      <div style="${styleAttr(styles.topBar)}">
+      <div class="top-bar">
         ${renderField("Scenario", renderSelect("scenario", scenarios, state.scenario))}
         ${renderField("Model", renderSelect("model", models, state.model))}
         ${renderField("Date", renderInput("date", state.date))}
         ${renderField("Variable", renderSelect("variable", variables, state.variable))}
       </div>
 
-      <aside data-role="sidebar" style="${styleAttr(sidebarStyle)}" aria-hidden="${!state.sidebarOpen}">
-        <div style="${styleAttr(styles.sidebarTop)}">
-          <div style="${styleAttr(styles.sidebarBrand)}">
-            <div style="${styleAttr(styles.logoDot)}"></div>
-          </div>
-          <div style="${styleAttr(styles.tabSwitch)}">
+      <aside class="sidebar" style="transform: ${state.sidebarOpen ? 'translateX(0)' : `translateX(${SIDEBAR_WIDTH + 24}px)`}; pointer-events: ${state.sidebarOpen ? 'auto' : 'none'};">
+        <div class="sidebar-top">
+          <div class="logo-dot"></div>
+          <div class="tab-switch">
             ${(["Manual", "Chat"] as const)
-              .map((value) =>
-                renderTabButton(value, state.panelTab === value ? styles.tabBtnActive : undefined, "panel-tab")
-              )
+              .map((value) => `<button type="button" class="tab-btn ${state.panelTab === value ? 'active' : ''}" data-action="set-tab" data-value="${value}">${value}</button>`)
               .join("")}
           </div>
         </div>
 
-        <div style="${styleAttr(styles.sidebarContent)}">
-          <div style="${styleAttr(styles.tabViewport)}">
-            <div data-role="tab-track" style="${styleAttr({ ...styles.tabTrack, transform: tabTransform })}">
-              <div style="${styleAttr(styles.tabPane)}">
-                ${renderManualSection({ modeTransform, resolutionFill, modeIndicatorTransform })}
+        <div class="sidebar-content">
+          <div class="tab-viewport">
+            <div class="tab-track" style="transform: ${state.panelTab === 'Manual' ? 'translateX(0%)' : 'translateX(-50%)'};">
+              <div class="tab-pane">
+                ${renderManualSection()}
               </div>
-              <div style="${styleAttr(styles.tabPane)}">
+              <div class="tab-pane">
                 ${renderChatSection()}
               </div>
             </div>
@@ -964,31 +461,18 @@ function render() {
         </div>
       </aside>
 
-      <div data-role="canvas-toggle" style="${styleAttr({ ...styles.canvasToggle, right: state.sidebarOpen ? SIDEBAR_WIDTH + 24 : 24 })}">
-        <div style="${styleAttr(styles.canvasSwitch)}">
-          <div data-role="canvas-indicator" style="${styleAttr({ ...styles.canvasIndicator, transform: canvasIndicatorTransform })}"></div>
-          <button
-            type="button"
-            aria-label="Show map canvas"
-            data-action="set-canvas"
-            data-value="map"
-            style="${styleAttr(mergeStyles(styles.canvasBtn, state.canvasView === "map" ? styles.canvasBtnActive : undefined))}"
-          >
+      <div class="canvas-toggle" style="right: ${state.sidebarOpen ? SIDEBAR_WIDTH + 24 : 24}px;">
+        <div class="canvas-switch">
+          <div class="canvas-indicator" style="transform: ${state.canvasView === 'map' ? 'translateX(0%)' : 'translateX(100%)'}"></div>
+          <button type="button" class="canvas-btn ${state.canvasView === 'map' ? 'active' : ''}" data-action="set-canvas" data-value="map">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
               <path d="M4 6.5 9 4l6 2.5L20 4v14l-5 2.5L9 18 4 20.5V6.5Z" />
               <path d="m9 4v14m6-11.5v14" />
             </svg>
           </button>
-          <button
-            type="button"
-            aria-label="Show chart canvas"
-            data-action="set-canvas"
-            data-value="chart"
-            style="${styleAttr(mergeStyles(styles.canvasBtn, state.canvasView === "chart" ? styles.canvasBtnActive : undefined))}"
-          >
+          <button type="button" class="canvas-btn ${state.canvasView === 'chart' ? 'active' : ''}" data-action="set-canvas" data-value="chart">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-              <path d="M4 18h16" />
-              <path d="M6 18 11 9l4 5 3-6" />
+              <path d="M4 18h16M6 18 11 9l4 5 3-6" />
               <circle cx="6" cy="18" r="1.2" />
               <circle cx="11" cy="9" r="1.2" />
               <circle cx="15" cy="14" r="1.2" />
@@ -998,21 +482,13 @@ function render() {
         </div>
       </div>
 
-      <button
-        type="button"
-        aria-label="${state.sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}"
-        data-action="toggle-sidebar"
-        style="${styleAttr(
-          mergeStyles(toggleStyle, { position: "fixed", top: "50%", transform: "translateY(-50%)", zIndex: 12 })
-        )}"
-      >
-        <span style="${styleAttr(styles.toggleIcon)}">${state.sidebarOpen ? "›" : "‹"}</span>
+      <button type="button" class="sidebar-toggle" style="position: fixed; top: 50%; transform: translateY(-50%); right: ${state.sidebarOpen ? SIDEBAR_WIDTH + 10 : 14}px; z-index: 12;" data-action="toggle-sidebar">
+        <span>${state.sidebarOpen ? "›" : "‹"}</span>
       </button>
     </div>
   `;
 
-  attachEventHandlers({ resolutionFill });
-  
+  attachEventHandlers();
   mapCanvas = appRoot.querySelector<HTMLCanvasElement>("#map-canvas");
   
   if (mapCanvas) {
@@ -1025,8 +501,8 @@ function render() {
 
 function renderField(label: string, controlHtml: string) {
   return `
-    <div style="${styleAttr(styles.field)}">
-      <div style="${styleAttr(styles.fieldLabel)}">${label}</div>
+    <div class="field">
+      <div class="field-label">${label}</div>
       ${controlHtml}
     </div>
   `;
@@ -1063,23 +539,9 @@ function renderSelect(name: string, options: string[], current: string, opts?: {
   `;
 }
 
-function renderTabButton(value: PanelTab, activeStyle?: Style, dataKey = "panel-tab") {
-  return `
-    <button
-      type="button"
-      data-action="set-tab"
-      data-key="${dataKey}"
-      data-value="${value}"
-      style="${styleAttr(mergeStyles(styles.tabBtn, activeStyle))}"
-    >
-      ${value}
-    </button>
-  `;
-}
-
-
-function renderManualSection(params: { modeTransform: string; resolutionFill: number; modeIndicatorTransform: string }) {
-  const { modeTransform, resolutionFill, modeIndicatorTransform } = params;
+function renderManualSection() {
+  const resolutionFill = ((state.resolution - 15) / (21 - 15)) * 100;
+  const modeIndicatorTransform = state.mode === 'Explore' ? 'translateX(0%)' : 'translateX(100%)';
   const compareParameters =
     state.compareMode === "Models"
       ? [
@@ -1097,20 +559,16 @@ function renderManualSection(params: { modeTransform: string; resolutionFill: nu
           ];
 
   return `
-    <div style="${styleAttr(styles.modeSwitch)}">
-      <div data-role="mode-indicator" style="${styleAttr({
-        ...styles.modeIndicator,
-        transform: modeIndicatorTransform,
-      })}"></div>
+    <div class="mode-switch">
+      <div data-role="mode-indicator" class="mode-indicator" style="transform: ${modeIndicatorTransform};"></div>
       ${(["Explore", "Compare"] as const)
         .map((value) =>
           `
             <button
               type="button"
-              class="mode-btn"
+              class="mode-btn ${state.mode === value ? 'active' : ''}"
               data-action="set-mode"
               data-value="${value}"
-              style="${styleAttr(mergeStyles(styles.modeBtn, state.mode === value ? styles.modeBtnActive : undefined))}"
             >
               ${value}
             </button>
@@ -1119,146 +577,132 @@ function renderManualSection(params: { modeTransform: string; resolutionFill: nu
         .join("")}
     </div>
 
-    <div style="${styleAttr(styles.modeViewport)}">
-      <div data-role="mode-track" style="${styleAttr({ ...styles.modeTrack, transform: modeTransform })}">
-        <div style="${styleAttr(styles.modePane)}">
-          <div style="${styleAttr({ display: "flex", flexDirection: "column", gap: 8 })}">
-            <div style="${styleAttr(styles.sectionTitle)}">Parameters</div>
-            <div style="${styleAttr(styles.paramGrid)}">
-              ${renderField("Scenario", renderSelect("scenario", scenarios, state.scenario))}
-              ${renderField("Model", renderSelect("model", models, state.model))}
-              ${renderField("Date", renderInput("date", state.date))}
-              ${renderField("Variable", renderSelect("variable", variables, state.variable))}
-            </div>
+    <div class="mode-viewport">
+      <div data-role="mode-track" class="mode-track" style="transform: ${state.mode === 'Explore' ? 'translateX(0%)' : 'translateX(-50%)'};">
+        <div class="mode-pane">
+          <div class="section-title">Parameters</div>
+          <div class="param-grid">
+            ${renderField("Scenario", renderSelect("scenario", scenarios, state.scenario))}
+            ${renderField("Model", renderSelect("model", models, state.model))}
+            ${renderField("Date", renderInput("date", state.date))}
+            ${renderField("Variable", renderSelect("variable", variables, state.variable))}
           </div>
 
-          <div style="margin-top:14px">
-            <div style="${styleAttr({ display: "flex", flexDirection: "column", gap: 8 })}">
-              <div style="${styleAttr(styles.sectionTitle)}">Color palette</div>
-              ${renderField(
-                "Palette",
-                renderSelect("palette", paletteOptions.map((p) => p.name), state.palette, { dataKey: "palette" })
-              )}
-            </div>
+          <div>
+            <div class="section-title">Color palette</div>
+            ${renderField(
+              "Palette",
+              renderSelect("palette", paletteOptions.map((p) => p.name), state.palette, { dataKey: "palette" })
+            )}
           </div>
 
-          <div style="margin-top:14px">
-            <div style="${styleAttr({ display: "flex", flexDirection: "column", gap: 8 })}">
-              <div style="${styleAttr(styles.sectionTitle)}">Resolution</div>
-              <div style="${styleAttr(styles.resolutionRow)}">
-                <input
-                  type="range"
-                  min="15"
-                  max="21"
-                  step="1"
-                  value="${state.resolution}"
-                  data-action="set-resolution"
-                  class="resolution-slider"
-                  style="${styleAttr(mergeStyles(styles.range, { "--slider-fill": `${resolutionFill}%` }))}"
-                />
-                <div data-role="resolution-value" style="${styleAttr(styles.resolutionValue)}">${state.resolution}</div>
-              </div>
+          <div>
+            <div class="section-title">Resolution</div>
+            <div class="resolution-row">
+              <input
+                type="range"
+                min="15"
+                max="21"
+                step="1"
+                value="${state.resolution}"
+                data-action="set-resolution"
+                class="resolution-slider"
+                style="--slider-fill: ${resolutionFill}%"
+              />
+              <div data-role="resolution-value" class="resolution-value">${state.resolution}</div>
             </div>
           </div>
         </div>
 
-        <div style="${styleAttr(styles.modePane)}">
-          <div style="${styleAttr({ display: "flex", flexDirection: "column", gap: 14 })}">
-            <div style="${styleAttr({ display: "flex", flexDirection: "column", gap: 8 })}">
-              <div style="${styleAttr(styles.sectionTitle)}">Compare</div>
-              <div style="${styleAttr(styles.paramGrid)}">
-                ${renderField(
-                  "What do you want to compare?",
-                  renderSelect("compareMode", ["Scenarios", "Models", "Dates"], state.compareMode, {
-                    dataKey: "compareMode",
-                  })
-                )}
-              </div>
+        <div class="mode-pane">
+          <div class="section-title">Compare</div>
+          <div>
+            ${renderField(
+              "What do you want to compare",
+              renderSelect("compareMode", ["Scenarios", "Models", "Dates"], state.compareMode, {
+                dataKey: "compareMode",
+              })
+            )}
+          </div>
 
-              ${
-                state.compareMode === "Scenarios"
-                  ? `
-                      <div style="${styleAttr(styles.paramGrid)}">
-                        ${renderField(
-                          "Scenario A",
-                          renderSelect("compareScenarioA", ["SSP245"], "SSP245", { disabled: true })
-                        )}
-                        ${renderField(
-                          "Scenario B",
-                          renderSelect("compareScenarioB", ["SSP585"], "SSP585", { disabled: true })
-                        )}
-                      </div>
-                    `
-                  : ""
-              }
+          ${
+            state.compareMode === "Scenarios"
+              ? `
+                  <div class="param-grid">
+                    ${renderField(
+                      "Scenario A",
+                      renderSelect("compareScenarioA", ["SSP245"], "SSP245", { disabled: true })
+                    )}
+                    ${renderField(
+                      "Scenario B",
+                      renderSelect("compareScenarioB", ["SSP585"], "SSP585", { disabled: true })
+                    )}
+                  </div>
+                `
+              : ""
+          }
 
-              ${
-                state.compareMode === "Models"
-                  ? `
-                      <div style="${styleAttr(styles.paramGrid)}">
-                        ${renderField(
-                          "Model A",
-                          renderSelect("compareModelA", models, state.compareModelA, { dataKey: "compareModelA" })
-                        )}
-                        ${renderField(
-                          "Model B",
-                          renderSelect("compareModelB", models, state.compareModelB, { dataKey: "compareModelB" })
-                        )}
-                      </div>
-                    `
-                  : ""
-              }
+          ${
+            state.compareMode === "Models"
+              ? `
+                  <div class="param-grid">
+                    ${renderField(
+                      "Model A",
+                      renderSelect("compareModelA", models, state.compareModelA, { dataKey: "compareModelA" })
+                    )}
+                    ${renderField(
+                      "Model B",
+                      renderSelect("compareModelB", models, state.compareModelB, { dataKey: "compareModelB" })
+                    )}
+                  </div>
+                `
+              : ""
+          }
 
-              ${
-                state.compareMode === "Dates"
-                  ? `
-                      <div style="${styleAttr(styles.paramGrid)}">
-                        ${renderField(
-                          "Start date",
-                          renderInput("compareDateStart", state.compareDateStart, { dataKey: "compareDateStart" })
-                        )}
-                        ${renderField(
-                          "End date",
-                          renderInput("compareDateEnd", state.compareDateEnd, { dataKey: "compareDateEnd" })
-                        )}
+          ${
+            state.compareMode === "Dates"
+              ? `
+                  <div class="param-grid">
+                    ${renderField(
+                      "Start date",
+                      renderInput("compareDateStart", state.compareDateStart, { dataKey: "compareDateStart" })
+                    )}
+                    ${renderField(
+                      "End date",
+                      renderInput("compareDateEnd", state.compareDateEnd, { dataKey: "compareDateEnd" })
+                    )}
   </div>
 `
-                  : ""
-              }
+              : ""
+          }
 
-              <div style="${styleAttr(styles.paramGrid)}">
-                ${compareParameters.join("")}
-                ${renderField("Variable", renderSelect("variable", variables, state.variable))}
-              </div>
+          <div class="param-grid">
+            ${compareParameters.join("")}
+            ${renderField("Variable", renderSelect("variable", variables, state.variable))}
+          </div>
 
-              <div style="margin-top:14px">
-                <div style="${styleAttr({ display: "flex", flexDirection: "column", gap: 8 })}">
-                  <div style="${styleAttr(styles.sectionTitle)}">Color palette</div>
-                  ${renderField(
-                    "Palette",
-                    renderSelect("palette", paletteOptions.map((p) => p.name), state.palette, { dataKey: "palette" })
-                  )}
-                </div>
-              </div>
+          <div>
+            <div class="section-title">Color palette</div>
+            ${renderField(
+              "Palette",
+              renderSelect("palette", paletteOptions.map((p) => p.name), state.palette, { dataKey: "palette" })
+            )}
+          </div>
 
-              <div style="margin-top:14px">
-                <div style="${styleAttr({ display: "flex", flexDirection: "column", gap: 8 })}">
-                  <div style="${styleAttr(styles.sectionTitle)}">Resolution</div>
-                  <div style="${styleAttr(styles.resolutionRow)}">
-                    <input
-                      type="range"
-                      min="15"
-                      max="21"
-                      step="1"
-                      value="${state.resolution}"
-                      data-action="set-resolution"
-                      class="resolution-slider"
-                      style="${styleAttr(mergeStyles(styles.range, { "--slider-fill": `${resolutionFill}%` }))}"
-                    />
-                    <div data-role="resolution-value" style="${styleAttr(styles.resolutionValue)}">${state.resolution}</div>
-                  </div>
-                </div>
-              </div>
+          <div >
+            <div class="section-title">Resolution</div>
+            <div class="resolution-row">
+              <input
+                type="range"
+                min="15"
+                max="21"
+                step="1"
+                value="${state.resolution}"
+                data-action="set-resolution"
+                class="resolution-slider"
+                style="--slider-fill: ${resolutionFill}%"
+              />
+              <div data-role="resolution-value" class="resolution-value">${state.resolution}</div>
             </div>
           </div>
         </div>
@@ -1269,32 +713,29 @@ function renderManualSection(params: { modeTransform: string; resolutionFill: nu
 
 function renderChatSection() {
   return `
-    <div style="${styleAttr({ display: "flex", flexDirection: "column", gap: 8 })}">
-      <div style="${styleAttr(styles.sectionTitle)}">Chat</div>
-      <div style="${styleAttr(styles.chatStack)}">
-        <div style="${styleAttr(styles.chatLead)}">Discuss the data with an agent, or ask questions.</div>
+    <div >
+      <div class="section-title">Chat</div>
+      <div class="chat-stack">
+        <div class="chat-lead">Discuss the data with an agent, or ask questions.</div>
 
-        <div style="${styleAttr(styles.chatMessages)}">
+        <div class="chat-messages">
           ${state.chatMessages
             .map((msg) => {
-              const bubbleStyle =
-                msg.sender === "user"
-                  ? mergeStyles(styles.chatBubble, styles.chatBubbleUser)
-                  : mergeStyles(styles.chatBubble, styles.chatBubbleAgent);
-              return `<div style="${styleAttr(bubbleStyle)}">${msg.text}</div>`;
+              const bubbleClass = msg.sender === "user" ? "chat-bubble user" : "chat-bubble agent";
+              return `<div class="${bubbleClass}">${msg.text}</div>`;
             })
             .join("")}
         </div>
 
-        <div style="${styleAttr(styles.chatBox)}">
+        <div class="chat-box">
           <input
             type="text"
             value="${state.chatInput}"
             data-action="chat-input"
-            style="${styleAttr(styles.chatInput)}"
+            class="chat-input"
             placeholder="Ask a question"
           />
-          <button type="button" data-action="chat-send" aria-label="Send chat message" style="${styleAttr(styles.chatSend)}">
+          <button type="button" data-action="chat-send" aria-label="Send chat message" class="chat-send">
             ➤
           </button>
         </div>
@@ -1303,7 +744,7 @@ function renderChatSection() {
   `;
 }
 
-function attachEventHandlers(_params: { resolutionFill: number }) {
+function attachEventHandlers() {
   if (!appRoot) return; // Defensive check (should never happen due to initialization check)
   const root = appRoot; // TypeScript narrowing
   const sidebarToggle = root.querySelector<HTMLButtonElement>('[data-action="toggle-sidebar"]');
@@ -1489,7 +930,9 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
   const textInputs = root.querySelectorAll<HTMLInputElement>('[data-action="update-input"]');
   textInputs.forEach((input) =>
     input.addEventListener("input", () => {
+      
       const key = input.dataset.key;
+      console.log(input);
       if (!key) return;
       const value = input.value;
       switch (key) {
@@ -1570,6 +1013,15 @@ function sendChat() {
   }, 1000);
 
   render();
+}
+
+async function checkApiAvailability() {
+  try {
+    const response = await fetch('http://localhost:8123/health');
+    state.apiAvailable = response.ok;
+  } catch (error) {
+    state.apiAvailable = false;
+  }
 }
 
 async function init() {

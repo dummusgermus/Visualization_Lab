@@ -1,12 +1,12 @@
-import "./style.css";
 import {
-  fetchClimateData,
-  createDataRequest,
-  dataToArray,
   checkApiHealth,
   type ClimateData,
+  createDataRequest,
   DataClientError,
+  dataToArray,
+  fetchClimateData,
 } from "./dataClient";
+import "./style.css";
 
 type Mode = "Explore" | "Compare";
 type PanelTab = "Manual" | "Chat";
@@ -575,11 +575,13 @@ async function checkApiAvailability() {
 }
 
 async function loadClimateData() {
+  console.log("fetching")
   if (state.canvasView !== "map" || state.mode !== "Explore") {
     return;
   }
 
   state.isLoading = true;
+
   state.dataError = null;
 
   try {
@@ -642,7 +644,7 @@ function setupMapInteractions(canvas: HTMLCanvasElement) {
       const minZoomWidth = rect.width / width;
       const minZoomHeight = rect.height / height;
       const minZoom = Math.min(minZoomWidth, minZoomHeight);
-      const maxZoom = 5.0;
+      const maxZoom = 10.0;
       
       if (newZoom >= minZoom && newZoom <= maxZoom) {
         const worldX = (mouseX + mapPanX) / mapZoom;
@@ -718,7 +720,7 @@ async function renderMapData(data: ClimateData) {
     console.warn("No data to render");
     return;
   }
-
+ 
   const ctx = mapCanvas.getContext("2d");
   if (!ctx) return;
 
@@ -770,6 +772,50 @@ async function renderMapData(data: ClimateData) {
   const palette = paletteOptions.find((p) => p.name === state.palette) || paletteOptions[0];
   const colors = palette.colors;
 
+  // Pre-compute RGB values for palette
+  const paletteRgb = colors.map(hexToRgb);
+
+  // We use imageData instead of filling pixels because filling pixels individually is slow
+  const imageData = ctx.createImageData(width, height);
+  const pixels = imageData.data;
+  console.log("Rendering map data...");
+  // Fill ImageData with colored pixels
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const flippedY = height - 1 - y;
+      const idx = flippedY * width + x;
+      const value = arrayData[idx];
+
+      const pixelIdx = (y * width + x) * 4;
+
+      if (!isFinite(value)) {
+        // Transparent pixel for invalid data
+        pixels[pixelIdx + 3] = 0;
+        continue;
+      }
+
+      const normalized = (value - min) / (max - min);
+      const colorIdx = Math.floor(normalized * (paletteRgb.length - 1));
+      const c1 = paletteRgb[Math.min(colorIdx, paletteRgb.length - 1)];
+      const c2 = paletteRgb[Math.min(colorIdx + 1, paletteRgb.length - 1)];
+      const t = normalized * (paletteRgb.length - 1) - colorIdx;
+
+      pixels[pixelIdx] = Math.round(c1.r + (c2.r - c1.r) * t);     // R
+      pixels[pixelIdx + 1] = Math.round(c1.g + (c2.g - c1.g) * t); // G
+      pixels[pixelIdx + 2] = Math.round(c1.b + (c2.b - c1.b) * t); // B
+      pixels[pixelIdx + 3] = 255; // Alpha
+    }
+  }
+
+  // Create an offscreen canvas to hold the ImageData (See: https://developer.mozilla.org/en-US/docs/Web/API/Canvas_API/Tutorial/Optimizing_canvas)
+  const offscreen = document.createElement('canvas');
+  offscreen.width = width;
+  offscreen.height = height;
+  const offscreenCtx = offscreen.getContext('2d');
+  if (!offscreenCtx) return;
+  offscreenCtx.putImageData(imageData, 0, 0);
+
+  // Now render with transforms
   ctx.translate(0, -mapPanY);
   ctx.scale(mapZoom, mapZoom);
   
@@ -778,40 +824,11 @@ async function renderMapData(data: ClimateData) {
   const wrapCount = Math.ceil((normalizedPanX + viewWidth) / (width * mapZoom)) + 1;
   const startWrap = -1;
   
+  // Disable image smoothing for crisp pixels
+  ctx.imageSmoothingEnabled = false;
+  
   for (let wrap = startWrap; wrap < startWrap + wrapCount; wrap++) {
-    ctx.save();
-    ctx.translate(wrap * width + wrapOffset, 0);
-    
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        const flippedY = height - 1 - y;
-        const idx = flippedY * width + x;
-        const value = arrayData[idx];
-
-        if (!isFinite(value)) {
-          continue;
-        }
-
-        const normalized = (value - min) / (max - min);
-
-        const colorIdx = Math.floor(normalized * (colors.length - 1));
-        const color1 = colors[Math.min(colorIdx, colors.length - 1)];
-        const color2 = colors[Math.min(colorIdx + 1, colors.length - 1)];
-        const t = normalized * (colors.length - 1) - colorIdx;
-
-        const c1 = hexToRgb(color1);
-        const c2 = hexToRgb(color2);
-        
-        const r = Math.round(c1.r + (c2.r - c1.r) * t);
-        const g = Math.round(c1.g + (c2.g - c1.g) * t);
-        const b = Math.round(c1.b + (c2.b - c1.b) * t);
-        
-        ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
-        ctx.fillRect(x, y, 1, 1);
-      }
-    }
-    
-    ctx.restore();
+    ctx.drawImage(offscreen, wrap * width + wrapOffset, 0);
   }
   
   ctx.restore();

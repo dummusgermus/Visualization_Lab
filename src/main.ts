@@ -4,6 +4,7 @@ import {
     createDataRequest,
     DataClientError,
     fetchClimateData,
+    fetchMetadata,
 } from "./dataClient";
 import { renderMapData, setupMapInteractions } from "./map";
 import "./style.css";
@@ -29,6 +30,7 @@ const models = [
     "MPI-ESM1-2-HR",
     "MRI-ESM2-0",
 ];
+
 const variables = [
     "tas",
     "pr",
@@ -537,6 +539,7 @@ export type AppState = {
     resolution: number;
     chatInput: string;
     chatMessages: ChatMessage[];
+    availableModels: string[];
     compareMode: CompareMode;
     compareModelA: string;
     compareModelB: string;
@@ -548,6 +551,7 @@ export type AppState = {
     apiAvailable: boolean | null;
 };
 
+//TODO set 0 from available models to active model and so on
 const state: AppState = {
     mode: "Explore",
     panelTab: "Manual",
@@ -562,6 +566,7 @@ const state: AppState = {
     chatInput: "",
     chatMessages: [],
     compareMode: "Scenarios",
+    availableModels: [],
     compareModelA: models[0],
     compareModelB: models[1] ?? models[0],
     compareDateStart: "2000-01-01",
@@ -629,6 +634,9 @@ async function loadClimateData() {
         });
 
         const data = await fetchClimateData(request);
+        const metaData = await fetchMetadata();
+        console.log(metaData);
+        state.availableModels = metaData.models;
         state.currentData = data;
         state.isLoading = false;
 
@@ -638,12 +646,7 @@ async function loadClimateData() {
             const canvas =
                 appRoot.querySelector<HTMLCanvasElement>("#map-canvas");
             if (canvas) {
-                setupMapInteractions(
-                    canvas,
-                    state.currentData,
-                    paletteOptions,
-                    state.palette
-                );
+                setupMapInteractions(canvas, state.currentData);
             }
         }
     } catch (error) {
@@ -905,12 +908,7 @@ function render() {
     mapCanvas = appRoot.querySelector<HTMLCanvasElement>("#map-canvas");
 
     if (mapCanvas) {
-        setupMapInteractions(
-            mapCanvas,
-            state.currentData,
-            paletteOptions,
-            state.palette
-        );
+        setupMapInteractions(mapCanvas, state.currentData);
 
         if (state.currentData && !state.isLoading && !state.dataError) {
             renderMapData(

@@ -3,9 +3,9 @@ import {
     type ClimateData,
     createDataRequest,
     DataClientError,
-    dataToArray,
     fetchClimateData,
 } from "./dataClient";
+import { renderMapData, setupMapInteractions } from "./map";
 import "./style.css";
 
 type Mode = "Explore" | "Compare";
@@ -522,7 +522,9 @@ const styles: Record<string, Style> = {
 
 type ChatMessage = { id: number; sender: "user" | "agent"; text: string };
 
-type AppState = {
+const SIDEBAR_WIDTH = 360;
+
+export type AppState = {
     mode: Mode;
     panelTab: PanelTab;
     sidebarOpen: boolean;
@@ -545,8 +547,6 @@ type AppState = {
     currentData: ClimateData | null;
     apiAvailable: boolean | null;
 };
-
-const SIDEBAR_WIDTH = 360;
 
 const state: AppState = {
     mode: "Explore",
@@ -574,14 +574,6 @@ const state: AppState = {
 
 let agentReplyTimer: number | null = null;
 let mapCanvas: HTMLCanvasElement | null = null;
-let mapZoom = 1.0;
-let mapPanX = 0;
-let mapPanY = 0;
-let isDragging = false;
-let dragStartX = 0;
-let dragStartY = 0;
-let dragStartPanX = 0;
-let dragStartPanY = 0;
 
 let appRoot: HTMLDivElement | null = null;
 
@@ -646,19 +638,12 @@ async function loadClimateData() {
             const canvas =
                 appRoot.querySelector<HTMLCanvasElement>("#map-canvas");
             if (canvas) {
-                mapCanvas = canvas;
-                setupMapInteractions(canvas);
-                const rect = canvas.getBoundingClientRect();
-                if (rect && data.shape) {
-                    const [height, width] = data.shape;
-                    const minZoomWidth = rect.width / width;
-                    const minZoomHeight = rect.height / height;
-                    const minZoom = Math.min(minZoomWidth, minZoomHeight);
-                    mapZoom = minZoom;
-                    mapPanX = 0;
-                    mapPanY = 0;
-                }
-                renderMapData(data);
+                setupMapInteractions(
+                    canvas,
+                    state.currentData,
+                    paletteOptions,
+                    state.palette
+                );
             }
         }
     } catch (error) {
@@ -672,231 +657,6 @@ async function loadClimateData() {
         state.currentData = null;
         render();
     }
-}
-
-function setupMapInteractions(canvas: HTMLCanvasElement) {
-    canvas.addEventListener(
-        "wheel",
-        (e) => {
-            e.preventDefault();
-            const rect = canvas.getBoundingClientRect();
-            const mouseX = e.clientX - rect.left;
-            const mouseY = e.clientY - rect.top;
-
-            const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
-            const newZoom = mapZoom * zoomFactor;
-
-            if (state.currentData) {
-                const [height, width] = state.currentData.shape;
-                const minZoomWidth = rect.width / width;
-                const minZoomHeight = rect.height / height;
-                const minZoom = Math.min(minZoomWidth, minZoomHeight);
-                const maxZoom = 10.0;
-
-                if (newZoom >= minZoom && newZoom <= maxZoom) {
-                    const worldX = (mouseX + mapPanX) / mapZoom;
-                    const worldY = (mouseY + mapPanY) / mapZoom;
-
-                    mapZoom = newZoom;
-                    mapPanX = worldX * mapZoom - mouseX;
-                    mapPanY = worldY * mapZoom - mouseY;
-
-                    renderMapData(state.currentData);
-                }
-            }
-        },
-        { passive: false }
-    );
-
-    canvas.addEventListener("mousedown", (e) => {
-        if (e.button === 0) {
-            isDragging = true;
-            dragStartX = e.clientX;
-            dragStartY = e.clientY;
-            dragStartPanX = mapPanX;
-            dragStartPanY = mapPanY;
-            canvas.style.cursor = "grabbing";
-        }
-    });
-
-    canvas.addEventListener("mousemove", (e) => {
-        if (isDragging && state.currentData) {
-            const deltaX = e.clientX - dragStartX;
-            const deltaY = e.clientY - dragStartY;
-
-            mapPanX = dragStartPanX - deltaX;
-            mapPanY = dragStartPanY - deltaY;
-
-            const [height, width] = state.currentData.shape;
-            const rect = canvas.getBoundingClientRect();
-            const scaledHeight = height * mapZoom;
-            const minZoomWidth = rect.width / width;
-            const minZoomHeight = rect.height / height;
-            const minZoom = Math.min(minZoomWidth, minZoomHeight);
-            const isAtMinZoom = Math.abs(mapZoom - minZoom) < 0.001;
-
-            if (!isAtMinZoom && scaledHeight > rect.height) {
-                const maxPanY = scaledHeight - rect.height;
-                mapPanY = Math.max(0, Math.min(mapPanY, maxPanY));
-            }
-
-            renderMapData(state.currentData);
-        }
-    });
-
-    canvas.addEventListener("mouseup", () => {
-        if (isDragging) {
-            isDragging = false;
-            canvas.style.cursor = "grab";
-        }
-    });
-
-    canvas.addEventListener("mouseleave", () => {
-        if (isDragging) {
-            isDragging = false;
-            canvas.style.cursor = "grab";
-        }
-    });
-
-    canvas.style.cursor = "grab";
-}
-
-async function renderMapData(data: ClimateData) {
-    if (!mapCanvas) return;
-
-    const arrayData = dataToArray(data);
-    if (!arrayData) {
-        console.warn("No data to render");
-        return;
-    }
-
-    const ctx = mapCanvas.getContext("2d");
-    if (!ctx) return;
-
-    const [height, width] = data.shape;
-    const rect = mapCanvas.getBoundingClientRect();
-    mapCanvas.width = rect.width * window.devicePixelRatio;
-    mapCanvas.height = rect.height * window.devicePixelRatio;
-    ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
-
-    ctx.clearRect(0, 0, rect.width, rect.height);
-
-    ctx.save();
-
-    const viewWidth = rect.width;
-    const viewHeight = rect.height;
-
-    const minZoomWidth = viewWidth / width;
-    const minZoomHeight = viewHeight / height;
-    const minZoom = Math.min(minZoomWidth, minZoomHeight);
-
-    if (mapZoom < minZoom) {
-        mapZoom = minZoom;
-    }
-
-    const scaledHeight = height * mapZoom;
-
-    const isAtMinZoom = Math.abs(mapZoom - minZoom) < 0.001;
-    if (isAtMinZoom) {
-        if (scaledHeight < viewHeight) {
-            mapPanY = (viewHeight - scaledHeight) / 2;
-        } else {
-            mapPanY = 0;
-        }
-    } else {
-        const maxPanY = Math.max(0, scaledHeight - viewHeight);
-        mapPanY = Math.max(0, Math.min(mapPanY, maxPanY));
-    }
-
-    let min = Infinity;
-    let max = -Infinity;
-    for (let i = 0; i < arrayData.length; i++) {
-        const val = arrayData[i];
-        if (isFinite(val)) {
-            min = Math.min(min, val);
-            max = Math.max(max, val);
-        }
-    }
-
-    const palette =
-        paletteOptions.find((p) => p.name === state.palette) ||
-        paletteOptions[0];
-    const colors = palette.colors;
-
-    // Pre-compute RGB values for palette
-    const paletteRgb = colors.map(hexToRgb);
-
-    // We use imageData instead of filling pixels because filling pixels individually is slow
-    const imageData = ctx.createImageData(width, height);
-    const pixels = imageData.data;
-    console.log("Rendering map data...");
-    // Fill ImageData with colored pixels
-    for (let y = 0; y < height; y++) {
-        for (let x = 0; x < width; x++) {
-            const flippedY = height - 1 - y;
-            const idx = flippedY * width + x;
-            const value = arrayData[idx];
-
-            const pixelIdx = (y * width + x) * 4;
-
-            if (!isFinite(value)) {
-                // Transparent pixel for invalid data
-                pixels[pixelIdx + 3] = 0;
-                continue;
-            }
-
-            const normalized = (value - min) / (max - min);
-            const colorIdx = Math.floor(normalized * (paletteRgb.length - 1));
-            const c1 = paletteRgb[Math.min(colorIdx, paletteRgb.length - 1)];
-            const c2 =
-                paletteRgb[Math.min(colorIdx + 1, paletteRgb.length - 1)];
-            const t = normalized * (paletteRgb.length - 1) - colorIdx;
-
-            pixels[pixelIdx] = Math.round(c1.r + (c2.r - c1.r) * t); // R
-            pixels[pixelIdx + 1] = Math.round(c1.g + (c2.g - c1.g) * t); // G
-            pixels[pixelIdx + 2] = Math.round(c1.b + (c2.b - c1.b) * t); // B
-            pixels[pixelIdx + 3] = 255; // Alpha
-        }
-    }
-
-    // Create an offscreen canvas to hold the ImageData (See: https://developer.mozilla.org/en-US/docs/Web/API/Canvas_API/Tutorial/Optimizing_canvas)
-    const offscreen = document.createElement("canvas");
-    offscreen.width = width;
-    offscreen.height = height;
-    const offscreenCtx = offscreen.getContext("2d");
-    if (!offscreenCtx) return;
-    offscreenCtx.putImageData(imageData, 0, 0);
-
-    // Now render with transforms
-    ctx.translate(0, -mapPanY);
-    ctx.scale(mapZoom, mapZoom);
-
-    const normalizedPanX =
-        ((mapPanX % (width * mapZoom)) + width * mapZoom) % (width * mapZoom);
-    const wrapOffset = -normalizedPanX / mapZoom;
-    const wrapCount =
-        Math.ceil((normalizedPanX + viewWidth) / (width * mapZoom)) + 1;
-    const startWrap = -1;
-
-    // Disable image smoothing for crisp pixels
-    ctx.imageSmoothingEnabled = false;
-
-    for (let wrap = startWrap; wrap < startWrap + wrapCount; wrap++) {
-        ctx.drawImage(offscreen, wrap * width + wrapOffset, 0);
-    }
-
-    ctx.restore();
-}
-
-function hexToRgb(hex: string): { r: number; g: number; b: number } {
-    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-    return result
-        ? {
-              r: parseInt(result[1], 16),
-              g: parseInt(result[2], 16),
-              b: parseInt(result[3], 16),
-          }
-        : { r: 0, g: 0, b: 0 };
 }
 
 function render() {
@@ -1106,7 +866,7 @@ function render() {
                 )
             )}"
           >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={currentColor} stroke-width="1.8">
               <path d="M4 18h16" />
               <path d="M6 18 11 9l4 5 3-6" />
               <circle cx="6" cy="18" r="1.2" />
@@ -1145,9 +905,20 @@ function render() {
     mapCanvas = appRoot.querySelector<HTMLCanvasElement>("#map-canvas");
 
     if (mapCanvas) {
-        setupMapInteractions(mapCanvas);
+        setupMapInteractions(
+            mapCanvas,
+            state.currentData,
+            paletteOptions,
+            state.palette
+        );
+
         if (state.currentData && !state.isLoading && !state.dataError) {
-            renderMapData(state.currentData);
+            renderMapData(
+                state.currentData,
+                mapCanvas,
+                paletteOptions,
+                state.palette
+            );
         }
     }
 }
@@ -1794,7 +1565,12 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                             );
                         if (canvas) {
                             mapCanvas = canvas;
-                            renderMapData(state.currentData);
+                            renderMapData(
+                                state.currentData,
+                                mapCanvas,
+                                paletteOptions,
+                                state.palette
+                            );
                         }
                     }
                     return;

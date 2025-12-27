@@ -15,12 +15,10 @@ let dragStartPanY = 0;
 // Cache for pre-rendered map
 let cachedMapCanvas: HTMLCanvasElement | null = null;
 let cachedDataHash: string | null = null;
-let cachedCanvasWidth = 0;
-let cachedCanvasHeight = 0;
 
 export function setupMapInteractions(
     canvas: HTMLCanvasElement,
-    currentData: ClimateData | null
+    currentData: ClimateData | null,
 ): void {
     canvas.addEventListener(
         "wheel",
@@ -45,7 +43,6 @@ export function setupMapInteractions(
                 mapPanY = worldY * mapZoom - mouseY;
 
                 if (currentData) {
-                    // Just redraw the cached image with new transform
                     redrawCachedMap(canvas);
                 }
             }
@@ -72,7 +69,6 @@ export function setupMapInteractions(
             mapPanX = dragStartPanX - deltaX;
             mapPanY = dragStartPanY - deltaY;
 
-            // Just redraw the cached image with new pan
             redrawCachedMap(canvas);
         }
     });
@@ -130,38 +126,29 @@ export async function renderMapData(
         return;
     }
 
-    // Create a hash to detect if we need to re-render
-    const dataHash = `${data}_${currentPalette}_${data.shape[0]}_${data.shape[1]}`;
+    // Create a hash using actual data properties including the resolution from the API
+    const dataHash = `${data.time}_${data.model}_${data.scenario}_${data.resolution}_${currentPalette}_${data.shape[0]}_${data.shape[1]}`;
+
+    // If cache exists and data hasn't changed, just redraw with current transform
+    if (cachedMapCanvas && cachedDataHash === dataHash) {
+        redrawCachedMap(mapCanvas);
+        return;
+    }
+
+    console.log("Rendering map data (full render)");
 
     const ctx = mapCanvas.getContext("2d");
     if (!ctx) return;
 
     const [height, width] = data.shape;
     const rect = mapCanvas.getBoundingClientRect();
-
-    // Check if resolution changed and adjust pan/zoom accordingly
-    if (cachedCanvasWidth > 0 && cachedCanvasHeight > 0) {
-        const widthRatio = rect.width / cachedCanvasWidth;
-        const heightRatio = rect.height / cachedCanvasHeight;
-
-        // Adjust pan to maintain the same relative position
-        mapPanX *= widthRatio;
-        mapPanY *= heightRatio;
-    }
-
-    // Store current dimensions
-    cachedCanvasWidth = rect.width;
-    cachedCanvasHeight = rect.height;
-
-    // If cache exists and data hasn't changed, just redraw
-    if (cachedMapCanvas && cachedDataHash === dataHash) {
-        redrawCachedMap(mapCanvas);
-        return;
-    }
-
     mapCanvas.width = rect.width * window.devicePixelRatio;
     mapCanvas.height = rect.height * window.devicePixelRatio;
     ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+
+    ctx.clearRect(0, 0, rect.width, rect.height);
+
+    ctx.save();
 
     const viewWidth = rect.width;
     const viewHeight = rect.height;
@@ -204,7 +191,7 @@ export async function renderMapData(
     const imageData = offscreenCtx.createImageData(viewWidth, viewHeight);
     const pixels = imageData.data;
 
-    console.log("Rendering map data (full render)");
+    console.log("Rendering map data");
 
     // Pre-calculate cell size
     const cellSize = Math.max(viewWidth / width, viewHeight / height) * 0.8;

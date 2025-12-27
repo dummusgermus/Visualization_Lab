@@ -12,11 +12,12 @@ let dragStartY = 0;
 let dragStartPanX = 0;
 let dragStartPanY = 0;
 
+// Cache for pre-rendered map
+let cachedMapCanvas: HTMLCanvasElement | null = null;
+
 export function setupMapInteractions(
     canvas: HTMLCanvasElement,
-    currentData: ClimateData | null,
-    paletteOptions: Array<{ name: string; colors: string[] }>,
-    palette: string
+    currentData: ClimateData | null
 ): void {
     canvas.addEventListener(
         "wheel",
@@ -29,7 +30,7 @@ export function setupMapInteractions(
             const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
             const newZoom = mapZoom * zoomFactor;
 
-            const minZoom = 0.5;
+            const minZoom = 0.8;
             const maxZoom = 10.0;
 
             if (newZoom >= minZoom && newZoom <= maxZoom) {
@@ -41,12 +42,7 @@ export function setupMapInteractions(
                 mapPanY = worldY * mapZoom - mouseY;
 
                 if (currentData) {
-                    renderMapData(
-                        currentData,
-                        canvas,
-                        paletteOptions,
-                        palette
-                    );
+                    redrawCachedMap(canvas);
                 }
             }
         },
@@ -72,7 +68,7 @@ export function setupMapInteractions(
             mapPanX = dragStartPanX - deltaX;
             mapPanY = dragStartPanY - deltaY;
 
-            renderMapData(currentData, canvas, paletteOptions, palette);
+            redrawCachedMap(canvas);
         }
     });
 
@@ -93,6 +89,28 @@ export function setupMapInteractions(
     canvas.style.cursor = "grab";
 }
 
+// Fast redraw function that just transforms the cached image
+function redrawCachedMap(canvas: HTMLCanvasElement): void {
+    if (!cachedMapCanvas) return;
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const rect = canvas.getBoundingClientRect();
+
+    ctx.clearRect(0, 0, rect.width, rect.height);
+    ctx.save();
+
+    ctx.translate(-mapPanX, -mapPanY);
+    ctx.scale(mapZoom, mapZoom);
+
+    // Draw the cached pre-rendered map
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(cachedMapCanvas, 0, 0);
+
+    ctx.restore();
+}
+
 export async function renderMapData(
     data: ClimateData,
     mapCanvas: HTMLCanvasElement | null,
@@ -106,6 +124,8 @@ export async function renderMapData(
         console.warn("No data to render");
         return;
     }
+
+    console.log("Rendering map data (full render)");
 
     const ctx = mapCanvas.getContext("2d");
     if (!ctx) return;
@@ -219,13 +239,6 @@ export async function renderMapData(
     // Fill screen at end
     offscreenCtx.putImageData(imageData, 0, 0);
 
-    ctx.translate(-mapPanX, -mapPanY);
-    ctx.scale(mapZoom, mapZoom);
-
-    // Draw the projected map (D3 projection already handles fitting to viewport)
-    ctx.imageSmoothingEnabled = true;
-    ctx.drawImage(offscreen, 0, 0);
-
     // Draw world sphere outline for reference
     const spherePath = d3.geoPath(projection);
     const sphere = { type: "Sphere" as const };
@@ -233,10 +246,23 @@ export async function renderMapData(
 
     if (pathStr) {
         const path2d = new Path2D(pathStr);
-        ctx.strokeStyle = "rgba(255, 255, 255, 0.3)";
-        ctx.lineWidth = 1.5;
-        ctx.stroke(path2d);
+        offscreenCtx.strokeStyle = "rgba(255, 255, 255, 0.3)";
+        offscreenCtx.lineWidth = 1.5;
+        offscreenCtx.stroke(path2d);
     }
+
+    // Cache this rendered map
+    cachedMapCanvas = offscreen;
+
+    // Now draw the cached map with current transform
+    ctx.clearRect(0, 0, rect.width, rect.height);
+    ctx.save();
+
+    ctx.translate(-mapPanX, -mapPanY);
+    ctx.scale(mapZoom, mapZoom);
+
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(cachedMapCanvas, 0, 0);
 
     ctx.restore();
 }

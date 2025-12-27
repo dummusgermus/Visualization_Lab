@@ -4,6 +4,7 @@ import {
     createDataRequest,
     DataClientError,
     fetchClimateData,
+    fetchMetadata,
 } from "./dataClient";
 import { renderMapData, setupMapInteractions } from "./map";
 import "./style.css";
@@ -29,6 +30,7 @@ const models = [
     "MPI-ESM1-2-HR",
     "MRI-ESM2-0",
 ];
+
 const variables = [
     "tas",
     "pr",
@@ -537,6 +539,7 @@ export type AppState = {
     resolution: number;
     chatInput: string;
     chatMessages: ChatMessage[];
+    availableModels: string[];
     compareMode: CompareMode;
     compareModelA: string;
     compareModelB: string;
@@ -548,6 +551,7 @@ export type AppState = {
     apiAvailable: boolean | null;
 };
 
+//TODO set 0 from available models to active model and so on
 const state: AppState = {
     mode: "Explore",
     panelTab: "Manual",
@@ -558,10 +562,11 @@ const state: AppState = {
     variable: variables[0],
     date: "2000-01-01",
     palette: paletteOptions[0].name,
-    resolution: 18,
+    resolution: 2,
     chatInput: "",
     chatMessages: [],
     compareMode: "Scenarios",
+    availableModels: [],
     compareModelA: models[0],
     compareModelB: models[1] ?? models[0],
     compareDateStart: "2000-01-01",
@@ -629,6 +634,9 @@ async function loadClimateData() {
         });
 
         const data = await fetchClimateData(request);
+        const metaData = await fetchMetadata();
+        console.log(metaData);
+        state.availableModels = metaData.models;
         state.currentData = data;
         state.isLoading = false;
 
@@ -638,12 +646,7 @@ async function loadClimateData() {
             const canvas =
                 appRoot.querySelector<HTMLCanvasElement>("#map-canvas");
             if (canvas) {
-                setupMapInteractions(
-                    canvas,
-                    state.currentData,
-                    paletteOptions,
-                    state.palette
-                );
+                setupMapInteractions(canvas, state.currentData);
             }
         }
     } catch (error) {
@@ -661,7 +664,7 @@ async function loadClimateData() {
 
 function render() {
     if (!appRoot) return; // Defensive check (should never happen due to initialization check)
-    const resolutionFill = ((state.resolution - 15) / (21 - 15)) * 100;
+    const resolutionFill = ((state.resolution - 1) / (3 - 1)) * 100;
     const sidebarStyle = mergeStyles(styles.sidebar, {
         width: SIDEBAR_WIDTH,
         transform: state.sidebarOpen
@@ -905,14 +908,8 @@ function render() {
     mapCanvas = appRoot.querySelector<HTMLCanvasElement>("#map-canvas");
 
     if (mapCanvas) {
-        setupMapInteractions(
-            mapCanvas,
-            state.currentData,
-            paletteOptions,
-            state.palette
-        );
-
         if (state.currentData && !state.isLoading && !state.dataError) {
+            setupMapInteractions(mapCanvas, state.currentData);
             renderMapData(
                 state.currentData,
                 mapCanvas,
@@ -1111,8 +1108,8 @@ function renderManualSection(params: {
               <div style="${styleAttr(styles.resolutionRow)}">
                 <input
                   type="range"
-                  min="15"
-                  max="21"
+                  min="1"
+                  max="3"
                   step="1"
                   value="${state.resolution}"
                   data-action="set-resolution"
@@ -1125,7 +1122,13 @@ function renderManualSection(params: {
                 />
                 <div data-role="resolution-value" style="${styleAttr(
                     styles.resolutionValue
-                )}">${state.resolution}</div>
+                )}">${
+        state.resolution === 1
+            ? "Low"
+            : state.resolution === 2
+            ? "Medium"
+            : "High"
+    }</div>
               </div>
             </div>
           </div>
@@ -1277,8 +1280,8 @@ function renderManualSection(params: {
                   <div style="${styleAttr(styles.resolutionRow)}">
                     <input
                       type="range"
-                      min="15"
-                      max="21"
+                      min="1"
+                      max="3"
                       step="1"
                       value="${state.resolution}"
                       data-action="set-resolution"
@@ -1291,7 +1294,13 @@ function renderManualSection(params: {
                     />
                     <div data-role="resolution-value" style="${styleAttr(
                         styles.resolutionValue
-                    )}">${state.resolution}</div>
+                    )}">${
+        state.resolution === 1
+            ? "Low"
+            : state.resolution === 2
+            ? "Medium"
+            : "High"
+    }</div>
                   </div>
                 </div>
               </div>
@@ -1663,13 +1672,14 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         '[data-role="resolution-value"]'
     );
     const updateResolutionUI = (value: number) => {
-        const fill = ((value - 15) / (21 - 15)) * 100;
+        const fill = ((value - 1) / (3 - 1)) * 100;
+        const label = value === 1 ? "Low" : value === 2 ? "Medium" : "High";
         resolutionInputs.forEach((el) => {
             el.value = String(value);
             el.style.setProperty("--slider-fill", `${fill}%`);
         });
         resolutionValues.forEach((el) => {
-            el.textContent = String(value);
+            el.textContent = label;
         });
     };
     resolutionInputs.forEach((input) =>

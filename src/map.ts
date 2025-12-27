@@ -30,7 +30,7 @@ export function setupMapInteractions(
             const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
             const newZoom = mapZoom * zoomFactor;
 
-            const minZoom = 0.5;
+            const minZoom = 0.8;
             const maxZoom = 10.0;
 
             if (newZoom >= minZoom && newZoom <= maxZoom) {

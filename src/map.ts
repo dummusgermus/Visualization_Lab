@@ -18,7 +18,7 @@ let cachedDataHash: string | null = null;
 
 export function setupMapInteractions(
     canvas: HTMLCanvasElement,
-    currentData: ClimateData | null,
+    currentData: ClimateData | null
 ): void {
     canvas.addEventListener(
         "wheel",
@@ -126,8 +126,8 @@ export async function renderMapData(
         return;
     }
 
-    // Create a hash using actual data properties including the resolution from the API
-    const dataHash = `${data.time}_${data.model}_${data.scenario}_${data.resolution}_${currentPalette}_${data.shape[0]}_${data.shape[1]}`;
+    // Create a hash using actual data properties including the resolution from the API (we should replace these with the state variables instead so the map does not look weird while loading)
+    const dataHash = `${data.time}_${data.variable}_${data.model}_${data.scenario}_${data.resolution}_${currentPalette}_${data.shape[0]}_${data.shape[1]}`;
 
     // If cache exists and data hasn't changed, just redraw with current transform
     if (cachedMapCanvas && cachedDataHash === dataHash) {

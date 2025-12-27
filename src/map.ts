@@ -14,7 +14,6 @@ let dragStartPanY = 0;
 
 // Cache for pre-rendered map
 let cachedMapCanvas: HTMLCanvasElement | null = null;
-let cachedDataHash: string | null = null;
 
 export function setupMapInteractions(
     canvas: HTMLCanvasElement,
@@ -123,15 +122,6 @@ export async function renderMapData(
     const arrayData = dataToArray(data);
     if (!arrayData) {
         console.warn("No data to render");
-        return;
-    }
-
-    // Create a hash using actual data properties including the resolution from the API (we should replace these with the state variables instead so the map does not look weird while loading)
-    const dataHash = `${data.time}_${data.variable}_${data.model}_${data.scenario}_${data.resolution}_${currentPalette}_${data.shape[0]}_${data.shape[1]}`;
-
-    // If cache exists and data hasn't changed, just redraw with current transform
-    if (cachedMapCanvas && cachedDataHash === dataHash) {
-        redrawCachedMap(mapCanvas);
         return;
     }
 
@@ -263,7 +253,6 @@ export async function renderMapData(
 
     // Cache this rendered map
     cachedMapCanvas = offscreen;
-    cachedDataHash = dataHash;
 
     // Now draw the cached map with current transform
     ctx.clearRect(0, 0, rect.width, rect.height);

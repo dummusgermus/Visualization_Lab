@@ -111,12 +111,14 @@ function redrawCachedMap(canvas: HTMLCanvasElement): void {
     ctx.restore();
 }
 
-export async function renderMapData(
+export function renderMapData(
     data: ClimateData,
     mapCanvas: HTMLCanvasElement | null,
     paletteOptions: Array<{ name: string; colors: string[] }>,
-    currentPalette: string
-): Promise<void> {
+    currentPalette: string,
+    min: number,
+    max: number
+): void {
     if (!mapCanvas) return;
 
     const arrayData = dataToArray(data);
@@ -142,16 +144,6 @@ export async function renderMapData(
 
     const viewWidth = rect.width;
     const viewHeight = rect.height;
-
-    let min = Infinity;
-    let max = -Infinity;
-    for (let i = 0; i < arrayData.length; i++) {
-        const val = arrayData[i];
-        if (isFinite(val)) {
-            min = Math.min(min, val);
-            max = Math.max(max, val);
-        }
-    }
 
     const palette =
         paletteOptions.find((p) => p.name === currentPalette) ||

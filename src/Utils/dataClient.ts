@@ -33,12 +33,18 @@ export interface ClimateData {
     };
 }
 
+type VariableMetadata = {
+    name: string;
+    unit: string;
+    description: string;
+};
+
 export interface Metadata {
     variables: string[];
     models: string[];
     scenarios: string[];
     resolutions: string[];
-    variable_metadata: Record<string, any>;
+    variable_metadata: Record<string, VariableMetadata>;
     scenario_metadata: Record<string, any>;
     time_range: {
         start: string;

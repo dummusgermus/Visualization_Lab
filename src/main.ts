@@ -1,9 +1,10 @@
-import { renderMapData, setupMapInteractions } from "./MapView/map";
 import {
     attachSidebarHandlers,
     renderSidebarToggle,
     SIDEBAR_WIDTH,
 } from "./Components/sidebar";
+import { drawLegendGradient, renderMapLegend } from "./MapView/legend";
+import { renderMapData, setupMapInteractions } from "./MapView/map";
 import {
     attachTimeSliderHandlers,
     renderTimeSlider,
@@ -15,8 +16,10 @@ import {
     type ClimateData,
     createDataRequest,
     DataClientError,
+    dataToArray,
     fetchClimateData,
     fetchMetadata,
+    type Metadata,
 } from "./Utils/dataClient";
 
 type Mode = "Explore" | "Compare";
@@ -472,6 +475,9 @@ export type AppState = {
     dataError: string | null;
     currentData: ClimateData | null;
     apiAvailable: boolean | null;
+    metaData?: Metadata;
+    dataMin: number | null;
+    dataMax: number | null;
     timeRange: {
         start: string;
         end: string;
@@ -502,7 +508,10 @@ const state: AppState = {
     dataError: null,
     currentData: null,
     apiAvailable: null,
+    dataMin: null,
+    dataMax: null,
     timeRange: null,
+    metaData: undefined,
 };
 
 let agentReplyTimer: number | null = null;
@@ -563,7 +572,7 @@ async function loadClimateData() {
 
         const data = await fetchClimateData(request);
         const metaData = await fetchMetadata();
-        console.log(metaData);
+        state.metaData = metaData;
         state.availableModels = metaData.models;
         state.timeRange = metaData.time_range
             ? {
@@ -572,6 +581,23 @@ async function loadClimateData() {
               }
             : { start: "1950-01-01", end: "2100-12-31" };
         state.currentData = data;
+
+        // Calculate min/max from data
+        const arrayData = dataToArray(data);
+        if (arrayData) {
+            let min = Infinity;
+            let max = -Infinity;
+            for (let i = 0; i < arrayData.length; i++) {
+                const val = arrayData[i];
+                if (isFinite(val)) {
+                    min = Math.min(min, val);
+                    max = Math.max(max, val);
+                }
+            }
+            state.dataMin = min;
+            state.dataMax = max;
+        }
+
         state.isLoading = false;
 
         render();
@@ -614,7 +640,16 @@ function render() {
       <div style="${styleAttr(styles.bgLayer1)}"></div>
       <div style="${styleAttr(styles.bgLayer2)}"></div>
       <div style="${styleAttr(styles.bgOverlay)}"></div>
-
+        ${
+            state.dataMin !== null && state.dataMax !== null
+                ? renderMapLegend(
+                      state.variable,
+                      state.dataMin,
+                      state.dataMax,
+                      state.metaData
+                  )
+                : ""
+        }
       <div style="${styleAttr(styles.mapArea)}">
         ${
             state.canvasView === "map"
@@ -816,14 +851,28 @@ function render() {
     mapCanvas = appRoot.querySelector<HTMLCanvasElement>("#map-canvas");
 
     if (mapCanvas) {
-        if (state.currentData && !state.isLoading && !state.dataError) {
+        if (
+            state.currentData &&
+            !state.isLoading &&
+            !state.dataError &&
+            state.dataMin !== null &&
+            state.dataMax !== null
+        ) {
             setupMapInteractions(mapCanvas, state.currentData);
             renderMapData(
                 state.currentData,
                 mapCanvas,
                 paletteOptions,
-                state.palette
+                state.palette,
+                state.dataMin,
+                state.dataMax
             );
+
+            // Draw the gradient on the legend canvas
+            const palette =
+                paletteOptions.find((p) => p.name === state.palette) ||
+                paletteOptions[0];
+            drawLegendGradient("legend-gradient-canvas", palette.colors);
         }
     }
 }
@@ -1428,7 +1477,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         '[data-action="update-select"]'
     );
     selectInputs.forEach((select) =>
-        select.addEventListener("change", () => {
+        select.addEventListener("change", async () => {
             const key = select.dataset.key;
             const val = select.value;
             if (!key) return;
@@ -1445,7 +1494,12 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                 case "palette":
                     state.palette = val;
                     render();
-                    if (state.currentData && appRoot) {
+                    if (
+                        state.currentData &&
+                        appRoot &&
+                        state.dataMin !== null &&
+                        state.dataMax !== null
+                    ) {
                         const canvas =
                             appRoot.querySelector<HTMLCanvasElement>(
                                 "#map-canvas"
@@ -1456,7 +1510,19 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                                 state.currentData,
                                 mapCanvas,
                                 paletteOptions,
-                                state.palette
+                                state.palette,
+                                state.dataMin,
+                                state.dataMax
+                            );
+
+                            // Redraw gradient with new palette
+                            const palette =
+                                paletteOptions.find(
+                                    (p) => p.name === state.palette
+                                ) || paletteOptions[0];
+                            drawLegendGradient(
+                                "legend-gradient-canvas",
+                                palette.colors
                             );
                         }
                     }

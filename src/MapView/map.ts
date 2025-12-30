@@ -1,7 +1,7 @@
 import * as d3 from "d3";
 import { geoNaturalEarth1 } from "d3-geo";
-import { hexToRgb } from "./colorUtils";
-import { dataToArray, type ClimateData } from "./dataClient";
+import { hexToRgb } from "../Utils/colorUtils";
+import { dataToArray, type ClimateData } from "../Utils/dataClient";
 
 let mapZoom = 1;
 let mapPanX = 0;

@@ -12,6 +12,7 @@ export function renderMapLegend(
     const unit = variableMeta?.unit || "";
     const name = variableMeta?.name || variable;
 
+    //TODO Legend still looks weird for some variables like "precipitation" because values are just 0.00
     return `
       <div class="map-legend">
         <div class="legend-title">${name}</div>

@@ -606,7 +606,12 @@ async function loadClimateData() {
             const canvas =
                 appRoot.querySelector<HTMLCanvasElement>("#map-canvas");
             if (canvas) {
-                setupMapInteractions(canvas, state.currentData);
+                setupMapInteractions(
+                    canvas,
+                    state.currentData,
+                    state.metaData?.variable_metadata[state.variable]?.unit ||
+                        ""
+                );
             }
         }
     } catch (error) {
@@ -858,7 +863,11 @@ function render() {
             state.dataMin !== null &&
             state.dataMax !== null
         ) {
-            setupMapInteractions(mapCanvas, state.currentData);
+            setupMapInteractions(
+                mapCanvas,
+                state.currentData,
+                state.metaData?.variable_metadata[state.variable]?.unit || ""
+            );
             renderMapData(
                 state.currentData,
                 mapCanvas,

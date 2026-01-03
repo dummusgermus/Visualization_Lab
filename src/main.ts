@@ -1,13 +1,26 @@
 import {
+    attachSidebarHandlers,
+    renderSidebarToggle,
+    SIDEBAR_WIDTH,
+} from "./Components/sidebar";
+import { drawLegendGradient, renderMapLegend } from "./MapView/legend";
+import { renderMapData, setupMapInteractions } from "./MapView/map";
+import {
+    attachTimeSliderHandlers,
+    renderTimeSlider,
+    updateTimeSliderPosition,
+} from "./MapView/timeSlider";
+import "./style.css";
+import {
     checkApiHealth,
     type ClimateData,
     createDataRequest,
     DataClientError,
+    dataToArray,
     fetchClimateData,
     fetchMetadata,
-} from "./dataClient";
-import { renderMapData, setupMapInteractions } from "./map";
-import "./style.css";
+    type Metadata,
+} from "./Utils/dataClient";
 
 type Mode = "Explore" | "Compare";
 type PanelTab = "Manual" | "Chat";
@@ -85,24 +98,6 @@ const styles: Record<string, Style> = {
         inset: 0,
         background: "#050505",
         opacity: 0.35,
-    },
-    topBar: {
-        position: "fixed",
-        top: 12,
-        left: 16,
-        right: 380,
-        zIndex: 3,
-        display: "flex",
-        alignItems: "center",
-        gap: 8,
-        padding: "0 2px",
-        background: "transparent",
-        border: "none",
-        boxShadow: "none",
-        backdropFilter: "none",
-        overflowX: "auto",
-        overflowY: "visible",
-        whiteSpace: "nowrap",
     },
     field: {
         minWidth: 0,
@@ -185,91 +180,6 @@ const styles: Record<string, Style> = {
     },
     mapTitle: { fontSize: 18, fontWeight: 600 },
     mapSubtitle: { fontSize: 14, color: "rgba(255,255,255,0.75)" },
-    sidebar: {
-        position: "fixed",
-        top: 0,
-        right: 0,
-        bottom: 0,
-        width: 320,
-        transition: "transform 0.25s ease, box-shadow 0.2s ease",
-        zIndex: 1,
-        background: "rgba(9,11,16,0.88)",
-        borderLeft: "1px solid rgba(255,255,255,0.08)",
-        boxShadow: "-10px 0 35px rgba(0,0,0,0.55)",
-        backdropFilter: "blur(20px)",
-        overflow: "hidden",
-        display: "flex",
-        flexDirection: "column",
-    },
-    sidebarTop: {
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "flex-start",
-        padding: "16px 16px 46px",
-        gap: 10,
-        borderBottom: "1px solid rgba(255,255,255,0.08)",
-        background:
-            "linear-gradient(135deg, rgba(125,211,252,0.08), rgba(167,139,250,0.06))",
-        position: "relative",
-        overflow: "hidden",
-    },
-    logoDot: {
-        width: 16,
-        height: 16,
-        background: "linear-gradient(135deg, #7dd3fc, #a78bfa, #22c55e)",
-        borderRadius: "50%",
-        boxShadow: "0 0 0 4px rgba(125,211,252,0.08)",
-    },
-    toggle: {
-        width: 44,
-        height: 44,
-        padding: 0,
-        borderRadius: "50%",
-        border: "1px solid rgba(255,255,255,0.16)",
-        background: "rgba(18,22,28,0.85)",
-        boxShadow: "0 14px 40px rgba(0,0,0,0.5)",
-        cursor: "pointer",
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        fontSize: 14,
-        lineHeight: 1,
-        transition:
-            "right 0.25s ease, background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease",
-    },
-    sidebarContent: {
-        padding: "28px 14px 14px",
-        display: "flex",
-        flexDirection: "column",
-        gap: 12,
-        overflow: "hidden",
-        flex: 1,
-        position: "relative",
-    },
-    tabViewport: {
-        overflow: "hidden",
-        width: "100%",
-        position: "relative",
-        flex: 1,
-        display: "flex",
-        flexDirection: "column",
-    },
-    tabTrack: {
-        display: "grid",
-        gridTemplateColumns: "1fr 1fr",
-        width: "200%",
-        transition: "transform 220ms ease",
-        flex: 1,
-    },
-    tabPane: {
-        width: "100%",
-        display: "flex",
-        flexDirection: "column",
-        gap: 12,
-        overflow: "auto",
-        paddingRight: 4,
-    },
-    sidebarBrand: { display: "flex", alignItems: "center", gap: 10 },
     badge: {
         padding: "4px 8px",
         borderRadius: 999,
@@ -524,8 +434,6 @@ const styles: Record<string, Style> = {
 
 type ChatMessage = { id: number; sender: "user" | "agent"; text: string };
 
-const SIDEBAR_WIDTH = 360;
-
 export type AppState = {
     mode: Mode;
     panelTab: PanelTab;
@@ -549,6 +457,13 @@ export type AppState = {
     dataError: string | null;
     currentData: ClimateData | null;
     apiAvailable: boolean | null;
+    metaData?: Metadata;
+    dataMin: number | null;
+    dataMax: number | null;
+    timeRange: {
+        start: string;
+        end: string;
+    } | null;
 };
 
 //TODO set 0 from available models to active model and so on
@@ -575,6 +490,10 @@ const state: AppState = {
     dataError: null,
     currentData: null,
     apiAvailable: null,
+    dataMin: null,
+    dataMax: null,
+    timeRange: null,
+    metaData: undefined,
 };
 
 let agentReplyTimer: number | null = null;
@@ -635,9 +554,32 @@ async function loadClimateData() {
 
         const data = await fetchClimateData(request);
         const metaData = await fetchMetadata();
-        console.log(metaData);
+        state.metaData = metaData;
         state.availableModels = metaData.models;
+        state.timeRange = metaData.time_range
+            ? {
+                  start: metaData.time_range.start,
+                  end: metaData.time_range.historical_end,
+              }
+            : { start: "1950-01-01", end: "2100-12-31" };
         state.currentData = data;
+
+        // Calculate min/max from data
+        const arrayData = dataToArray(data);
+        if (arrayData) {
+            let min = Infinity;
+            let max = -Infinity;
+            for (let i = 0; i < arrayData.length; i++) {
+                const val = arrayData[i];
+                if (isFinite(val)) {
+                    min = Math.min(min, val);
+                    max = Math.max(max, val);
+                }
+            }
+            state.dataMin = min;
+            state.dataMax = max;
+        }
+
         state.isLoading = false;
 
         render();
@@ -646,7 +588,12 @@ async function loadClimateData() {
             const canvas =
                 appRoot.querySelector<HTMLCanvasElement>("#map-canvas");
             if (canvas) {
-                setupMapInteractions(canvas, state.currentData);
+                setupMapInteractions(
+                    canvas,
+                    state.currentData,
+                    state.metaData?.variable_metadata[state.variable]?.unit ||
+                        ""
+                );
             }
         }
     } catch (error) {
@@ -665,22 +612,6 @@ async function loadClimateData() {
 function render() {
     if (!appRoot) return; // Defensive check (should never happen due to initialization check)
     const resolutionFill = ((state.resolution - 1) / (3 - 1)) * 100;
-    const sidebarStyle = mergeStyles(styles.sidebar, {
-        width: SIDEBAR_WIDTH,
-        transform: state.sidebarOpen
-            ? "translateX(0)"
-            : `translateX(${SIDEBAR_WIDTH + 24}px)`,
-        pointerEvents: state.sidebarOpen ? "auto" : "none",
-    });
-
-    const toggleStyle = mergeStyles(styles.toggle, {
-        right: state.sidebarOpen ? SIDEBAR_WIDTH + 10 : 14,
-        background: state.sidebarOpen
-            ? "linear-gradient(135deg, rgba(125,211,252,0.2), rgba(167,139,250,0.18))"
-            : "rgba(18,22,28,0.85)",
-        borderColor: "rgba(255,255,255,0.16)",
-        color: "white",
-    });
 
     const modeTransform =
         state.mode === "Explore" ? "translateX(0%)" : "translateX(-50%)";
@@ -696,7 +627,16 @@ function render() {
       <div style="${styleAttr(styles.bgLayer1)}"></div>
       <div style="${styleAttr(styles.bgLayer2)}"></div>
       <div style="${styleAttr(styles.bgOverlay)}"></div>
-
+        ${
+            state.dataMin !== null && state.dataMax !== null
+                ? renderMapLegend(
+                      state.variable,
+                      state.dataMin,
+                      state.dataMax,
+                      state.metaData
+                  )
+                : ""
+        }
       <div style="${styleAttr(styles.mapArea)}">
         ${
             state.canvasView === "map"
@@ -771,27 +711,18 @@ function render() {
         }
       </div>
 
-      <div style="${styleAttr(styles.topBar)}">
-        ${renderField(
-            "Scenario",
-            renderSelect("scenario", scenarios, state.scenario)
-        )}
-        ${renderField("Model", renderSelect("model", models, state.model))}
-        ${renderField("Date", renderInput("date", state.date))}
-        ${renderField(
-            "Variable",
-            renderSelect("variable", variables, state.variable)
-        )}
-      </div>
-
-      <aside data-role="sidebar" style="${styleAttr(
-          sidebarStyle
-      )}" aria-hidden="${!state.sidebarOpen}">
-        <div style="${styleAttr(styles.sidebarTop)}">
-          <div style="${styleAttr(styles.sidebarBrand)}">
-            <div style="${styleAttr(styles.logoDot)}"></div>
+      <aside data-role="sidebar" class="sidebar" style="width: ${SIDEBAR_WIDTH}px; transform: ${
+        state.sidebarOpen
+            ? "translateX(0)"
+            : `translateX(${SIDEBAR_WIDTH + 24}px)`
+    }; pointer-events: ${
+        state.sidebarOpen ? "auto" : "none"
+    }" aria-hidden="${!state.sidebarOpen}">
+        <div class="sidebar-top">
+          <div class="sidebar-brand">
+            <div class="logo-dot"></div>
           </div>
-          <div style="${styleAttr(styles.tabSwitch)}">
+          <div class="tab-switch" style="${styleAttr(styles.tabSwitch)}">
             ${(["Manual", "Chat"] as const)
                 .map((value) =>
                     renderTabButton(
@@ -806,20 +737,17 @@ function render() {
           </div>
         </div>
 
-        <div style="${styleAttr(styles.sidebarContent)}">
-          <div style="${styleAttr(styles.tabViewport)}">
-            <div data-role="tab-track" style="${styleAttr({
-                ...styles.tabTrack,
-                transform: tabTransform,
-            })}">
-              <div style="${styleAttr(styles.tabPane)}">
+        <div class="sidebar-content">
+          <div class="tab-viewport">
+            <div data-role="tab-track" class="tab-track" style="transform: ${tabTransform}">
+              <div class="tab-pane">
                 ${renderManualSection({
                     modeTransform,
                     resolutionFill,
                     modeIndicatorTransform,
                 })}
               </div>
-              <div style="${styleAttr(styles.tabPane)}">
+              <div class="tab-pane">
                 ${renderChatSection()}
               </div>
             </div>
@@ -850,7 +778,7 @@ function render() {
                 )
             )}"
           >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.6">
               <path d="M4 6.5 9 4l6 2.5L20 4v14l-5 2.5L9 18 4 20.5V6.5Z" />
               <path d="m9 4v14m6-11.5v14" />
             </svg>
@@ -869,7 +797,7 @@ function render() {
                 )
             )}"
           >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={currentColor} stroke-width="1.8">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.8">
               <path d="M4 18h16" />
               <path d="M6 18 11 9l4 5 3-6" />
               <circle cx="6" cy="18" r="1.2" />
@@ -881,25 +809,14 @@ function render() {
         </div>
       </div>
 
-      <button
-        type="button"
-        aria-label="${
-            state.sidebarOpen ? "Collapse sidebar" : "Expand sidebar"
-        }"
-        data-action="toggle-sidebar"
-        style="${styleAttr(
-            mergeStyles(toggleStyle, {
-                position: "fixed",
-                top: "50%",
-                transform: "translateY(-50%)",
-                zIndex: 12,
-            })
-        )}"
-      >
-        <span style="${styleAttr(styles.toggleIcon)}">${
-        state.sidebarOpen ? "›" : "‹"
-    }</span>
-      </button>
+      ${renderSidebarToggle(state.sidebarOpen)}
+
+      ${renderTimeSlider({
+          date: state.date,
+          timeRange: state.timeRange,
+          sidebarOpen: state.sidebarOpen,
+          sidebarWidth: SIDEBAR_WIDTH,
+      })}
     </div>
   `;
 
@@ -908,14 +825,32 @@ function render() {
     mapCanvas = appRoot.querySelector<HTMLCanvasElement>("#map-canvas");
 
     if (mapCanvas) {
-        if (state.currentData && !state.isLoading && !state.dataError) {
-            setupMapInteractions(mapCanvas, state.currentData);
+        if (
+            state.currentData &&
+            !state.isLoading &&
+            !state.dataError &&
+            state.dataMin !== null &&
+            state.dataMax !== null
+        ) {
+            setupMapInteractions(
+                mapCanvas,
+                state.currentData,
+                state.metaData?.variable_metadata[state.variable]?.unit || ""
+            );
             renderMapData(
                 state.currentData,
                 mapCanvas,
                 paletteOptions,
-                state.palette
+                state.palette,
+                state.dataMin,
+                state.dataMax
             );
+
+            // Draw the gradient on the legend canvas
+            const palette =
+                paletteOptions.find((p) => p.name === state.palette) ||
+                paletteOptions[0];
+            drawLegendGradient("legend-gradient-canvas", palette.colors);
         }
     }
 }
@@ -1365,48 +1300,18 @@ function renderChatSection() {
 }
 
 function attachEventHandlers(_params: { resolutionFill: number }) {
-    if (!appRoot) return; // Defensive check (should never happen due to initialization check)
-    const root = appRoot; // TypeScript narrowing
-    const sidebarToggle = root.querySelector<HTMLButtonElement>(
-        '[data-action="toggle-sidebar"]'
-    );
-    sidebarToggle?.addEventListener("click", () => {
-        const sidebar = root.querySelector<HTMLElement>(
-            '[data-role="sidebar"]'
-        );
-        const canvasToggle = root.querySelector<HTMLElement>(
-            '[data-role="canvas-toggle"]'
-        );
+    if (!appRoot) return;
+    const root = appRoot;
 
-        if (!sidebar || !canvasToggle || !sidebarToggle) return;
-
-        const nextOpen = !state.sidebarOpen;
-        state.sidebarOpen = nextOpen;
-
-        // Update sidebar visibility with smooth transition (transform already has a CSS transition)
-        const translateX = nextOpen
-            ? "translateX(0)"
-            : `translateX(${SIDEBAR_WIDTH + 24}px)`;
-        sidebar.style.transform = translateX;
-        sidebar.style.pointerEvents = nextOpen ? "auto" : "none";
-        sidebar.setAttribute("aria-hidden", String(!nextOpen));
-
-        // Move the toggle button alongside the sidebar
-        const toggleRight = nextOpen ? `${SIDEBAR_WIDTH + 10}px` : "14px";
-        sidebarToggle.style.right = toggleRight;
-        sidebarToggle.setAttribute(
-            "aria-label",
-            nextOpen ? "Collapse sidebar" : "Expand sidebar"
-        );
-
-        const iconSpan = sidebarToggle.querySelector("span");
-        if (iconSpan) {
-            iconSpan.textContent = nextOpen ? "›" : "‹";
-        }
-
-        // Shift the canvas toggle so it always sits just to the left of the sidebar
-        const canvasRight = nextOpen ? SIDEBAR_WIDTH + 24 : 24;
-        canvasToggle.style.right = `${canvasRight}px`;
+    attachSidebarHandlers({
+        root,
+        getSidebarOpen: () => state.sidebarOpen,
+        setSidebarOpen: (isOpen) => {
+            state.sidebarOpen = isOpen;
+        },
+        onTimeSliderUpdate: (isOpen) => {
+            updateTimeSliderPosition(isOpen, SIDEBAR_WIDTH);
+        },
     });
 
     const canvasButtons = root.querySelectorAll<HTMLButtonElement>(
@@ -1550,7 +1455,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         '[data-action="update-select"]'
     );
     selectInputs.forEach((select) =>
-        select.addEventListener("change", () => {
+        select.addEventListener("change", async () => {
             const key = select.dataset.key;
             const val = select.value;
             if (!key) return;
@@ -1567,7 +1472,12 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                 case "palette":
                     state.palette = val;
                     render();
-                    if (state.currentData && appRoot) {
+                    if (
+                        state.currentData &&
+                        appRoot &&
+                        state.dataMin !== null &&
+                        state.dataMax !== null
+                    ) {
                         const canvas =
                             appRoot.querySelector<HTMLCanvasElement>(
                                 "#map-canvas"
@@ -1578,7 +1488,19 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                                 state.currentData,
                                 mapCanvas,
                                 paletteOptions,
-                                state.palette
+                                state.palette,
+                                state.dataMin,
+                                state.dataMax
+                            );
+
+                            // Redraw gradient with new palette
+                            const palette =
+                                paletteOptions.find(
+                                    (p) => p.name === state.palette
+                                ) || paletteOptions[0];
+                            drawLegendGradient(
+                                "legend-gradient-canvas",
+                                palette.colors
                             );
                         }
                     }
@@ -1692,6 +1614,15 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             }
         })
     );
+
+    attachTimeSliderHandlers({
+        root,
+        getTimeRange: () => state.timeRange,
+        onDateChange: (date) => {
+            state.date = date;
+            loadClimateData();
+        },
+    });
 
     const chatInput = root.querySelector<HTMLInputElement>(
         '[data-action="chat-input"]'

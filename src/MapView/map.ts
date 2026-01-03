@@ -1,7 +1,8 @@
 import * as d3 from "d3";
-import { geoNaturalEarth1 } from "d3-geo";
-import { hexToRgb } from "./colorUtils";
-import { dataToArray, type ClimateData } from "./dataClient";
+import { geoEquirectangular } from "d3-geo";
+import { hexToRgb } from "../Utils/colorUtils";
+import { dataToArray, type ClimateData } from "../Utils/dataClient";
+import { hideTooltip, setDataRange, showTooltip } from "./tooltip";
 
 let mapZoom = 1;
 let mapPanX = 0;
@@ -15,9 +16,43 @@ let dragStartPanY = 0;
 // Cache for pre-rendered map
 let cachedMapCanvas: HTMLCanvasElement | null = null;
 
+// Cache for hover functionality
+let cachedData: ClimateData | null = null;
+let cachedValueLookup: (Float32Array | Float64Array | null)[] | null = null;
+
+// Helper function to convert grid indices to lat/lon
+function gridToLatLon(
+    x: number,
+    y: number,
+    width: number,
+    height: number
+): [number, number] {
+    const lonStep = 360 / width;
+    const latStep = 180 / height;
+    const lon = -180 + x * lonStep + lonStep / 2;
+    const lat = 90 - y * latStep - latStep / 2;
+    return [lon, lat];
+}
+
+// Helper function to get data value at grid position
+function getDataValue(
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    arrayData: Float32Array | Float64Array
+): number | null {
+    if (x < 0 || x >= width || y < 0 || y >= height) return null;
+    const flippedY = height - 1 - y;
+    const idx = flippedY * width + x;
+    const value = arrayData[idx];
+    return isFinite(value) ? value : null;
+}
+
 export function setupMapInteractions(
     canvas: HTMLCanvasElement,
-    currentData: ClimateData | null
+    currentData: ClimateData | null,
+    unit: string
 ): void {
     canvas.addEventListener(
         "wheel",
@@ -69,13 +104,25 @@ export function setupMapInteractions(
             mapPanY = dragStartPanY - deltaY;
 
             redrawCachedMap(canvas);
+
+            // Hide tooltip while dragging
+            hideTooltip();
+        } else if (
+            !isDragging &&
+            cachedData &&
+            cachedValueLookup &&
+            cachedMapCanvas
+        ) {
+            // Show tooltip with hover value using d3.pointer
+            const [mouseX, mouseY] = d3.pointer(e, canvas);
+            updateTooltip(e.clientX, e.clientY, mouseX, mouseY, unit);
         }
     });
 
     canvas.addEventListener("mouseup", () => {
         if (isDragging) {
             isDragging = false;
-            canvas.style.cursor = "grab";
+            canvas.style.cursor = "auto";
         }
     });
 
@@ -84,9 +131,11 @@ export function setupMapInteractions(
             isDragging = false;
             canvas.style.cursor = "grab";
         }
+        // Hide tooltip when leaving canvas
+        hideTooltip();
     });
 
-    canvas.style.cursor = "grab";
+    canvas.style.cursor = "auto";
 }
 
 // Fast redraw function that just transforms the cached image
@@ -104,19 +153,34 @@ function redrawCachedMap(canvas: HTMLCanvasElement): void {
     ctx.translate(-mapPanX, -mapPanY);
     ctx.scale(mapZoom, mapZoom);
 
-    // Draw the cached pre-rendered map
+    // Draw the cached pre-rendered map multiple times for horizontal wrapping
     ctx.imageSmoothingEnabled = true;
-    ctx.drawImage(cachedMapCanvas, 0, 0);
+    const mapWidth = cachedMapCanvas.width;
+
+    // Calculate visible range in world coordinates
+    const viewLeft = mapPanX / mapZoom;
+    const viewRight = (mapPanX + rect.width) / mapZoom;
+
+    // Calculate which tiles we need to cover the visible area
+    const startTile = Math.floor(viewLeft / mapWidth) - 1;
+    const endTile = Math.ceil(viewRight / mapWidth) + 1;
+
+    for (let i = startTile; i <= endTile; i++) {
+        // Add tiny overlap to prevent gaps between tiles
+        ctx.drawImage(cachedMapCanvas, i * mapWidth - 0.5, 0);
+    }
 
     ctx.restore();
 }
 
-export async function renderMapData(
+export function renderMapData(
     data: ClimateData,
     mapCanvas: HTMLCanvasElement | null,
     paletteOptions: Array<{ name: string; colors: string[] }>,
-    currentPalette: string
-): Promise<void> {
+    currentPalette: string,
+    min: number,
+    max: number
+): void {
     if (!mapCanvas) return;
 
     const arrayData = dataToArray(data);
@@ -143,15 +207,14 @@ export async function renderMapData(
     const viewWidth = rect.width;
     const viewHeight = rect.height;
 
-    let min = Infinity;
-    let max = -Infinity;
-    for (let i = 0; i < arrayData.length; i++) {
-        const val = arrayData[i];
-        if (isFinite(val)) {
-            min = Math.min(min, val);
-            max = Math.max(max, val);
-        }
-    }
+    // Cache for hover functionality
+    cachedData = data;
+    const valueLookup = new Array(viewHeight)
+        .fill(null)
+        .map(() => new Float32Array(viewWidth).fill(NaN));
+
+    // Set data range for tooltip/legend indicator
+    setDataRange(min, max);
 
     const palette =
         paletteOptions.find((p) => p.name === currentPalette) ||
@@ -161,14 +224,11 @@ export async function renderMapData(
     // Pre-compute RGB values for palette
     const paletteRgb = colors.map(hexToRgb);
 
-    // Setup D3 geographic projection (Natural Earth is good for climate data)
-    const projection = geoNaturalEarth1()
-        .fitSize([viewWidth, viewHeight], { type: "Sphere" })
+    // Setup D3 geographic projection for seamless horizontal wrapping
+    // Use equirectangular with explicit scale to ensure full width coverage
+    const projection = geoEquirectangular()
+        .scale(viewWidth / (2 * Math.PI))
         .translate([viewWidth / 2, viewHeight / 2]);
-
-    // Calculate lat/lon step sizes
-    const lonStep = 360 / width;
-    const latStep = 180 / height;
 
     // Create an offscreen canvas for the projected data
     const offscreen = document.createElement("canvas");
@@ -190,15 +250,11 @@ export async function renderMapData(
     // Render each data point with lat/lon projection
     for (let y = 0; y < height; y++) {
         for (let x = 0; x < width; x++) {
-            const flippedY = height - 1 - y;
-            const idx = flippedY * width + x;
-            const value = arrayData[idx];
+            const value = getDataValue(x, y, width, height, arrayData);
+            if (value === null) continue;
 
-            if (!isFinite(value)) continue;
-
-            // Convert grid indices to lat/lon (this is based on regular lat/lon grid, which NEX-GDDP uses)
-            const lon = -180 + x * lonStep + lonStep / 2;
-            const lat = 90 - y * latStep - latStep / 2;
+            // Convert grid indices to lat/lon
+            const [lon, lat] = gridToLatLon(x, y, width, height);
 
             // Project to canvas coordinates
             const coords = projection([lon, lat]);
@@ -231,38 +287,74 @@ export async function renderMapData(
                     pixels[pixelIdx + 1] = g;
                     pixels[pixelIdx + 2] = b;
                     pixels[pixelIdx + 3] = 255;
+                    // Store value for hover lookup
+                    valueLookup[iy][ix] = value;
                 }
             }
         }
     }
 
-    // Fill screen at end
     offscreenCtx.putImageData(imageData, 0, 0);
-
-    // Draw world sphere outline for reference
-    const spherePath = d3.geoPath(projection);
-    const sphere = { type: "Sphere" as const };
-    const pathStr = spherePath(sphere);
-
-    if (pathStr) {
-        const path2d = new Path2D(pathStr);
-        offscreenCtx.strokeStyle = "rgba(255, 255, 255, 0.3)";
-        offscreenCtx.lineWidth = 1.5;
-        offscreenCtx.stroke(path2d);
-    }
-
-    // Cache this rendered map
     cachedMapCanvas = offscreen;
+    cachedValueLookup = valueLookup;
 
-    // Now draw the cached map with current transform
+    // draw the cached map with current transform
     ctx.clearRect(0, 0, rect.width, rect.height);
     ctx.save();
 
     ctx.translate(-mapPanX, -mapPanY);
     ctx.scale(mapZoom, mapZoom);
 
+    // horizontal wrapping
     ctx.imageSmoothingEnabled = true;
-    ctx.drawImage(cachedMapCanvas, 0, 0);
+    const mapWidth = cachedMapCanvas.width;
+    const viewLeft = mapPanX / mapZoom;
+    const viewRight = (mapPanX + rect.width) / mapZoom;
+    const startTile = Math.floor(viewLeft / mapWidth) - 1;
+    const endTile = Math.ceil(viewRight / mapWidth) + 1;
+
+    for (let i = startTile; i <= endTile; i++) {
+        ctx.drawImage(cachedMapCanvas, i * mapWidth, 0);
+    }
 
     ctx.restore();
+}
+
+function updateTooltip(
+    clientX: number,
+    clientY: number,
+    mouseX: number,
+    mouseY: number,
+    unit: string
+): void {
+    if (!cachedValueLookup || !cachedMapCanvas) return;
+
+    // Convert mouse position to world coordinates (accounting for zoom and pan)
+    let worldX = (mouseX + mapPanX) / mapZoom;
+    const worldY = (mouseY + mapPanY) / mapZoom;
+
+    // Normalize worldX to be within the map width (for repeating tiles)
+    const mapWidth = cachedMapCanvas.width;
+    const mapHeight = cachedMapCanvas.height;
+    worldX = ((worldX % mapWidth) + mapWidth) % mapWidth;
+
+    // Direct pixel lookup
+    const px = Math.floor(worldX);
+    const py = Math.floor(worldY);
+
+    if (px >= 0 && px < mapWidth && py >= 0 && py < mapHeight) {
+        const value = cachedValueLookup?.[py]?.[px] ?? 0;
+
+        if (isFinite(value)) {
+            // Calculate lat/lon for display
+            const lon = (worldX / mapWidth) * 360 - 180;
+            const lat = 90 - (worldY / mapHeight) * 180;
+
+            showTooltip(clientX, clientY, lat, lon, value, unit);
+        } else {
+            hideTooltip();
+        }
+    } else {
+        hideTooltip();
+    }
 }

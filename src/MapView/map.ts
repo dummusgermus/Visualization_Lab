@@ -20,6 +20,31 @@ let cachedMapCanvas: HTMLCanvasElement | null = null;
 let cachedData: ClimateData | null = null;
 let cachedValueLookup: (Float32Array | Float64Array | null)[] | null = null;
 
+// Helper function to setup canvas with proper DPI scaling
+function setupCanvas(
+    canvas: HTMLCanvasElement
+): {
+    ctx: CanvasRenderingContext2D;
+    rect: DOMRect;
+    viewWidth: number;
+    viewHeight: number;
+} | null {
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = rect.width * window.devicePixelRatio;
+    canvas.height = rect.height * window.devicePixelRatio;
+    ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+
+    return {
+        ctx,
+        rect,
+        viewWidth: rect.width,
+        viewHeight: rect.height,
+    };
+}
+
 // Helper function to convert grid indices to lat/lon
 function gridToLatLon(
     x: number,
@@ -113,7 +138,6 @@ export function setupMapInteractions(
             cachedValueLookup &&
             cachedMapCanvas
         ) {
-            // Show tooltip with hover value using d3.pointer
             const [mouseX, mouseY] = d3.pointer(e, canvas);
             updateTooltip(e.clientX, e.clientY, mouseX, mouseY, unit);
         }
@@ -191,21 +215,16 @@ export function renderMapData(
 
     console.log("Rendering map data (full render)");
 
-    const ctx = mapCanvas.getContext("2d");
-    if (!ctx) return;
+    const setup = setupCanvas(mapCanvas);
+    if (!setup) return;
+
+    const { ctx, rect, viewWidth, viewHeight } = setup;
 
     const [height, width] = data.shape;
-    const rect = mapCanvas.getBoundingClientRect();
-    mapCanvas.width = rect.width * window.devicePixelRatio;
-    mapCanvas.height = rect.height * window.devicePixelRatio;
-    ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
 
     ctx.clearRect(0, 0, rect.width, rect.height);
 
     ctx.save();
-
-    const viewWidth = rect.width;
-    const viewHeight = rect.height;
 
     // Cache for hover functionality
     cachedData = data;

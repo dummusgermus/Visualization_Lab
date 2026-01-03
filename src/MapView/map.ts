@@ -2,6 +2,7 @@ import * as d3 from "d3";
 import { geoEquirectangular } from "d3-geo";
 import { hexToRgb } from "../Utils/colorUtils";
 import { dataToArray, type ClimateData } from "../Utils/dataClient";
+import { hideTooltip, setDataRange, showTooltip } from "./tooltip";
 
 let mapZoom = 1;
 let mapPanX = 0;
@@ -17,31 +18,7 @@ let cachedMapCanvas: HTMLCanvasElement | null = null;
 
 // Cache for hover functionality
 let cachedData: ClimateData | null = null;
-let cachedArrayData: Float32Array | Float64Array | null = null;
-let cachedProjection: d3.GeoProjection | null = null;
-
-// Tooltip element
-let tooltipElement: HTMLDivElement | null = null;
-
-function getOrCreateTooltip(): HTMLDivElement {
-    if (!tooltipElement) {
-        tooltipElement = document.createElement("div");
-        tooltipElement.style.position = "fixed";
-        tooltipElement.style.background = "rgba(9, 11, 16, 0.95)";
-        tooltipElement.style.color = "white";
-        tooltipElement.style.padding = "8px 12px";
-        tooltipElement.style.borderRadius = "6px";
-        tooltipElement.style.fontSize = "12px";
-        tooltipElement.style.pointerEvents = "none";
-        tooltipElement.style.zIndex = "1000";
-        tooltipElement.style.border = "1px solid rgba(255, 255, 255, 0.12)";
-        tooltipElement.style.boxShadow = "0 4px 12px rgba(0, 0, 0, 0.4)";
-        tooltipElement.style.display = "none";
-        tooltipElement.style.whiteSpace = "nowrap";
-        document.body.appendChild(tooltipElement);
-    }
-    return tooltipElement;
-}
+let cachedValueLookup: (Float32Array | Float64Array | null)[] | null = null;
 
 // Helper function to convert grid indices to lat/lon
 function gridToLatLon(
@@ -55,20 +32,6 @@ function gridToLatLon(
     const lon = -180 + x * lonStep + lonStep / 2;
     const lat = 90 - y * latStep - latStep / 2;
     return [lon, lat];
-}
-
-// Helper function to convert lat/lon to grid indices
-function latLonToGrid(
-    lon: number,
-    lat: number,
-    width: number,
-    height: number
-): [number, number] {
-    const lonStep = 360 / width;
-    const latStep = 180 / height;
-    const x = Math.floor((lon + 180) / lonStep);
-    const y = Math.floor((90 - lat) / latStep);
-    return [x, y];
 }
 
 // Helper function to get data value at grid position
@@ -143,19 +106,15 @@ export function setupMapInteractions(
             redrawCachedMap(canvas);
 
             // Hide tooltip while dragging
-            const tooltip = getOrCreateTooltip();
-            tooltip.style.display = "none";
+            hideTooltip();
         } else if (
             !isDragging &&
             cachedData &&
-            cachedArrayData &&
-            cachedProjection
+            cachedValueLookup &&
+            cachedMapCanvas
         ) {
-            // Show tooltip with hover value
-            const rect = canvas.getBoundingClientRect();
-            const mouseX = e.clientX - rect.left;
-            const mouseY = e.clientY - rect.top;
-
+            // Show tooltip with hover value using d3.pointer
+            const [mouseX, mouseY] = d3.pointer(e, canvas);
             updateTooltip(e.clientX, e.clientY, mouseX, mouseY, unit);
         }
     });
@@ -173,8 +132,7 @@ export function setupMapInteractions(
             canvas.style.cursor = "grab";
         }
         // Hide tooltip when leaving canvas
-        const tooltip = getOrCreateTooltip();
-        tooltip.style.display = "none";
+        hideTooltip();
     });
 
     canvas.style.cursor = "auto";
@@ -251,7 +209,12 @@ export function renderMapData(
 
     // Cache for hover functionality
     cachedData = data;
-    cachedArrayData = arrayData;
+    const valueLookup = new Array(viewHeight)
+        .fill(null)
+        .map(() => new Float32Array(viewWidth).fill(NaN));
+
+    // Set data range for tooltip/legend indicator
+    setDataRange(min, max);
 
     const palette =
         paletteOptions.find((p) => p.name === currentPalette) ||
@@ -266,10 +229,6 @@ export function renderMapData(
     const projection = geoEquirectangular()
         .scale(viewWidth / (2 * Math.PI))
         .translate([viewWidth / 2, viewHeight / 2]);
-
-    // Cache projection for hover functionality
-    // Cache projection for hover functionality
-    cachedProjection = projection;
 
     // Create an offscreen canvas for the projected data
     const offscreen = document.createElement("canvas");
@@ -328,6 +287,8 @@ export function renderMapData(
                     pixels[pixelIdx + 1] = g;
                     pixels[pixelIdx + 2] = b;
                     pixels[pixelIdx + 3] = 255;
+                    // Store value for hover lookup
+                    valueLookup[iy][ix] = value;
                 }
             }
         }
@@ -335,6 +296,7 @@ export function renderMapData(
 
     offscreenCtx.putImageData(imageData, 0, 0);
     cachedMapCanvas = offscreen;
+    cachedValueLookup = valueLookup;
 
     // draw the cached map with current transform
     ctx.clearRect(0, 0, rect.width, rect.height);
@@ -365,62 +327,34 @@ function updateTooltip(
     mouseY: number,
     unit: string
 ): void {
-    if (!cachedData || !cachedArrayData || !cachedProjection) return;
-
-    const tooltip = getOrCreateTooltip();
+    if (!cachedValueLookup || !cachedMapCanvas) return;
 
     // Convert mouse position to world coordinates (accounting for zoom and pan)
     let worldX = (mouseX + mapPanX) / mapZoom;
     const worldY = (mouseY + mapPanY) / mapZoom;
 
     // Normalize worldX to be within the map width (for repeating tiles)
-    if (cachedMapCanvas) {
-        const mapWidth = cachedMapCanvas.width;
-        // Use modulo to wrap worldX to the original map coordinates
-        worldX = ((worldX % mapWidth) + mapWidth) % mapWidth;
-    }
+    const mapWidth = cachedMapCanvas.width;
+    const mapHeight = cachedMapCanvas.height;
+    worldX = ((worldX % mapWidth) + mapWidth) % mapWidth;
 
-    // Use the inverse projection to get lat/lon
-    const coords = cachedProjection.invert?.([worldX, worldY]);
-    if (!coords) {
-        tooltip.style.display = "none";
-        return;
-    }
+    // Direct pixel lookup
+    const px = Math.floor(worldX);
+    const py = Math.floor(worldY);
 
-    const [lon, lat] = coords;
+    if (px >= 0 && px < mapWidth && py >= 0 && py < mapHeight) {
+        const value = cachedValueLookup?.[py]?.[px] ?? 0;
 
-    // Verify the point is actually on the visible map by projecting it back
-    const projected = cachedProjection([lon, lat]);
-    if (!projected) {
-        tooltip.style.display = "none";
-        return;
-    }
+        if (isFinite(value)) {
+            // Calculate lat/lon for display
+            const lon = (worldX / mapWidth) * 360 - 180;
+            const lat = 90 - (worldY / mapHeight) * 180;
 
-    // Check if the projected point is reasonably close to our normalized mouse position
-    const [projX, projY] = projected;
-    const distance = Math.sqrt(
-        Math.pow(projX - worldX, 2) + Math.pow(projY - worldY, 2)
-    );
-    if (distance > 5) {
-        tooltip.style.display = "none";
-        return;
-    }
-
-    // Convert lat/lon to grid indices
-    const [height, width] = cachedData.shape;
-    const [x, y] = latLonToGrid(lon, lat, width, height);
-
-    // Get the value from the data array
-    const value = getDataValue(x, y, width, height, cachedArrayData);
-
-    if (value !== null) {
-        tooltip.textContent = `Lat: ${lat.toFixed(2)}, Lon: ${lon.toFixed(
-            2
-        )}, Value: ${value.toFixed(2)} ${unit}`;
-        tooltip.style.display = "block";
-        tooltip.style.left = `${clientX + 10}px`;
-        tooltip.style.top = `${clientY + 10}px`;
+            showTooltip(clientX, clientY, lat, lon, value, unit);
+        } else {
+            hideTooltip();
+        }
     } else {
-        tooltip.style.display = "none";
+        hideTooltip();
     }
 }

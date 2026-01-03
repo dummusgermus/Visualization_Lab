@@ -99,24 +99,6 @@ const styles: Record<string, Style> = {
         background: "#050505",
         opacity: 0.35,
     },
-    topBar: {
-        position: "fixed",
-        top: 12,
-        left: 16,
-        right: 380,
-        zIndex: 3,
-        display: "flex",
-        alignItems: "center",
-        gap: 8,
-        padding: "0 2px",
-        background: "transparent",
-        border: "none",
-        boxShadow: "none",
-        backdropFilter: "none",
-        overflowX: "auto",
-        overflowY: "visible",
-        whiteSpace: "nowrap",
-    },
     field: {
         minWidth: 0,
         display: "flex",
@@ -727,19 +709,6 @@ function render() {
                 )}">Chart view coming soon. Visualizations will render here.</div>
               </div>`
         }
-      </div>
-
-      <div style="${styleAttr(styles.topBar)}">
-        ${renderField(
-            "Scenario",
-            renderSelect("scenario", scenarios, state.scenario)
-        )}
-        ${renderField("Model", renderSelect("model", models, state.model))}
-        ${renderField("Date", renderInput("date", state.date))}
-        ${renderField(
-            "Variable",
-            renderSelect("variable", variables, state.variable)
-        )}
       </div>
 
       <aside data-role="sidebar" class="sidebar" style="width: ${SIDEBAR_WIDTH}px; transform: ${

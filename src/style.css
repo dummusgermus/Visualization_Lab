@@ -8,7 +8,6 @@
         monospace;
 
     /* Color system */
-    --white: white;
     --text-primary: rgba(255, 255, 255, 0.9);
     --text-secondary: rgba(255, 255, 255, 0.75);
     --text-icon: rgba(255, 255, 255, 0.94);

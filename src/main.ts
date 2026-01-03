@@ -78,7 +78,7 @@ const styles: Record<string, Style> = {
     page: {
         position: "relative",
         minHeight: "100vh",
-        color: "var(--white)",
+        color: "white",
         overflow: "hidden",
         fontFamily: "Inter, system-ui, sans-serif",
     },
@@ -174,7 +174,7 @@ const styles: Record<string, Style> = {
         zIndex: 1,
     },
     canvasBtnActive: {
-        color: "var(--white)",
+        color: "white",
     },
     mapTitle: { fontSize: 18, fontWeight: 600 },
     mapSubtitle: { fontSize: 14, color: "var(--text-secondary)" },
@@ -231,7 +231,7 @@ const styles: Record<string, Style> = {
     modeBtnActive: {
         background: "var(--gradient-primary)",
         border: "none",
-        color: "var(--white)",
+        color: "white",
         boxShadow: "var(--shadow-combined)",
     },
     tabSwitch: {
@@ -266,7 +266,7 @@ const styles: Record<string, Style> = {
     },
     tabBtnActive: {
         background: "var(--gradient-tab-active)",
-        color: "var(--white)",
+        color: "white",
         boxShadow:
             "inset 0 1px 0 rgba(255,255,255,0.12), 0 12px 26px rgba(0,0,0,0.42)",
         borderTop: "var(--border-active)",
@@ -308,7 +308,7 @@ const styles: Record<string, Style> = {
         borderRadius: 8,
         border: "none",
         background: "var(--bg-transparent)",
-        color: "var(--white)",
+        color: "white",
         fontSize: 14,
         lineHeight: 1.4,
         outline: "none",
@@ -319,7 +319,7 @@ const styles: Record<string, Style> = {
         borderRadius: 12,
         border: "1px solid var(--accent-border-strong)",
         background: "var(--gradient-primary)",
-        color: "var(--white)",
+        color: "white",
         fontWeight: 700,
         fontSize: 14,
         letterSpacing: 0.1,
@@ -357,7 +357,7 @@ const styles: Record<string, Style> = {
         alignSelf: "flex-end",
         background: "var(--gradient-chat-user)",
         border: "1px solid rgba(125,211,252,0.45)",
-        color: "var(--white)",
+        color: "white",
     },
     chatBubbleAgent: {
         alignSelf: "flex-start",

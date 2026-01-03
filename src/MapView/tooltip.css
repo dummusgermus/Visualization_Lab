@@ -1,7 +1,7 @@
 .map-tooltip {
     position: fixed;
     background: var(--dark-bg-strong);
-    color: var(--white);
+    color: white;
     padding: 8px 12px;
     border-radius: 6px;
     font-size: 12px;

@@ -6,9 +6,9 @@
     width: 320px;
     transition: transform 0.25s ease, box-shadow 0.2s ease;
     z-index: 1;
-    background: rgba(9, 11, 16, 0.88);
-    border-left: 1px solid rgba(255, 255, 255, 0.08);
-    box-shadow: -10px 0 35px rgba(0, 0, 0, 0.55);
+    background: var(--dark-bg-alt);
+    border-left: 1px solid var(--border-medium);
+    box-shadow: -10px 0 35px var(--shadow-darkest);
     backdrop-filter: blur(20px);
     overflow: hidden;
     display: flex;
@@ -21,12 +21,8 @@
     justify-content: flex-start;
     padding: 16px 16px 46px;
     gap: 10px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-    background: linear-gradient(
-        135deg,
-        rgba(125, 211, 252, 0.08),
-        rgba(167, 139, 250, 0.06)
-    );
+    border-bottom: 1px solid var(--border-medium);
+    background: var(--gradient-accent-bg);
     position: relative;
     overflow: hidden;
 }
@@ -40,9 +36,9 @@
 .logo-dot {
     width: 16px;
     height: 16px;
-    background: linear-gradient(135deg, #7dd3fc, #a78bfa, #22c55e);
+    background: var(--gradient-accent-triple);
     border-radius: 50%;
-    box-shadow: 0 0 0 4px rgba(125, 211, 252, 0.08);
+    box-shadow: 0 0 0 4px var(--accent-bg);
 }
 
 .sidebar-toggle {
@@ -54,9 +50,9 @@
     height: 44px;
     padding: 0;
     border-radius: 50%;
-    border: 1px solid rgba(255, 255, 255, 0.16);
-    background: rgba(18, 22, 28, 0.85);
-    box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5);
+    border: 1px solid var(--border-emphasis);
+    background: var(--dark-bg-sidebar);
+    box-shadow: 0 14px 40px var(--shadow-darker);
     cursor: pointer;
     display: inline-flex;
     align-items: center;
@@ -71,8 +67,8 @@
 .sidebar-toggle.open {
     background: linear-gradient(
         135deg,
-        rgba(125, 211, 252, 0.2),
-        rgba(167, 139, 250, 0.18)
+        var(--accent-bg-emphasis),
+        var(--purple-bg-emphasis)
     );
 }
 

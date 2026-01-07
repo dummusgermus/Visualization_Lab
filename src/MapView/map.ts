@@ -5,6 +5,11 @@ import { dataToArray, type ClimateData } from "../Utils/dataClient";
 import { convertMinMax, convertValue } from "../Utils/unitConverter";
 import { hideTooltip, setDataRange, showTooltip } from "./tooltip";
 
+type DrawCallbacks = {
+    onClick?: (coords: { lat: number; lon: number }) => void;
+    onMove?: (coords: { lat: number; lon: number }) => void;
+};
+
 let mapZoom = 1;
 let mapPanX = 0;
 let mapPanY = 0;
@@ -23,6 +28,10 @@ let cachedIsDifference = false;
 let cachedValueLookup: (Float32Array | Float64Array | null)[] | null = null;
 let cachedVariable: string | undefined = undefined;
 let cachedSelectedUnit: string | undefined = undefined;
+
+let drawMode = false;
+let drawCallbacks: DrawCallbacks | null = null;
+let transformCallback: (() => void) | null = null;
 
 // Helper function to setup canvas with proper DPI scaling
 function setupCanvas(
@@ -78,13 +87,114 @@ function getDataValue(
     return isFinite(value) ? value : null;
 }
 
+function updateCursor(canvas: HTMLCanvasElement) {
+    if (drawMode) {
+        canvas.style.cursor = "crosshair";
+    } else if (isDragging) {
+        canvas.style.cursor = "grabbing";
+    } else {
+        canvas.style.cursor = "auto";
+    }
+}
+
+function pointerToLonLat(
+    canvas: HTMLCanvasElement,
+    clientX: number,
+    clientY: number
+): { lat: number; lon: number } | null {
+    if (!cachedMapCanvas) return null;
+
+    const rect = canvas.getBoundingClientRect();
+    const mouseX = clientX - rect.left;
+    const mouseY = clientY - rect.top;
+
+    let worldX = (mouseX + mapPanX) / mapZoom;
+    const worldY = (mouseY + mapPanY) / mapZoom;
+
+    const mapWidth = cachedMapCanvas.width;
+    const mapHeight = cachedMapCanvas.height;
+
+    worldX = ((worldX % mapWidth) + mapWidth) % mapWidth;
+
+    if (worldX < 0 || worldX > mapWidth || worldY < 0 || worldY > mapHeight) {
+        return null;
+    }
+
+    const lon = (worldX / mapWidth) * 360 - 180;
+    const lat = 90 - (worldY / mapHeight) * 180;
+
+    return { lat, lon };
+}
+
+function setDrawMode(enabled: boolean, callbacks?: DrawCallbacks | null) {
+    drawMode = enabled;
+    drawCallbacks = enabled ? callbacks ?? null : null;
+    if (enabled) {
+        isDragging = false;
+    }
+}
+
+export function projectLonLatToCanvas(
+    canvas: HTMLCanvasElement,
+    lon: number,
+    lat: number
+): { x: number; y: number } | null {
+    if (!cachedMapCanvas) return null;
+    const mapWidth = cachedMapCanvas.width;
+    const mapHeight = cachedMapCanvas.height;
+
+    const projectedX = ((lon + 180) / 360) * mapWidth;
+    const projectedY = ((90 - lat) / 180) * mapHeight;
+
+    const x = projectedX * mapZoom - mapPanX;
+    const y = projectedY * mapZoom - mapPanY;
+
+    const rect = canvas.getBoundingClientRect();
+    const wrapWidth = mapWidth * mapZoom;
+
+    let wrappedX = x;
+    while (wrappedX < -wrapWidth) {
+        wrappedX += wrapWidth;
+    }
+    while (wrappedX > rect.width + wrapWidth) {
+        wrappedX -= wrapWidth;
+    }
+
+    if (y < -mapHeight * mapZoom || y > rect.height + mapHeight * mapZoom) {
+        return null;
+    }
+
+    return { x: wrappedX, y };
+}
+
+export function screenToLonLat(
+    canvas: HTMLCanvasElement,
+    clientX: number,
+    clientY: number
+): { lat: number; lon: number } | null {
+    return pointerToLonLat(canvas, clientX, clientY);
+}
+
 export function setupMapInteractions(
     canvas: HTMLCanvasElement,
     currentData: ClimateData | null,
     unit: string,
     _variable?: string,
-    _selectedUnit?: string
+    _selectedUnit?: string,
+    options?: {
+        drawMode?: boolean;
+        onDrawClick?: (coords: { lat: number; lon: number }) => void;
+        onDrawMove?: (coords: { lat: number; lon: number }) => void;
+        onTransform?: () => void;
+    }
 ): void {
+    setDrawMode(options?.drawMode ?? false, {
+        onClick: options?.onDrawClick,
+        onMove: options?.onDrawMove,
+    });
+    transformCallback = options?.onTransform ?? null;
+    updateCursor(canvas);
+
     canvas.addEventListener(
         "wheel",
         (e) => {
@@ -110,12 +220,21 @@ export function setupMapInteractions(
                 if (currentData) {
                     redrawCachedMap(canvas);
                 }
+                transformCallback?.();
             }
         },
         { passive: false }
     );
 
     canvas.addEventListener("mousedown", (e) => {
+        if (drawMode && e.button === 0) {
+            const coords = pointerToLonLat(canvas, e.clientX, e.clientY);
+            if (coords) {
+                drawCallbacks?.onClick?.(coords);
+            }
+            return;
+        }
+
         if (e.button === 0) {
             isDragging = true;
             dragStartX = e.clientX;
@@ -127,6 +246,15 @@ export function setupMapInteractions(
     });
 
     canvas.addEventListener("mousemove", (e) => {
+        if (drawMode) {
+            const coords = pointerToLonLat(canvas, e.clientX, e.clientY);
+            if (coords) {
+                drawCallbacks?.onMove?.(coords);
+            }
+            hideTooltip();
+            return;
+        }
+
         if (isDragging && currentData) {
             const deltaX = e.clientX - dragStartX;
             const deltaY = e.clientY - dragStartY;
@@ -135,6 +263,7 @@ export function setupMapInteractions(
             mapPanY = dragStartPanY - deltaY;
 
             redrawCachedMap(canvas);
+            transformCallback?.();
 
             // Hide tooltip while dragging
             hideTooltip();
@@ -159,13 +288,20 @@ export function setupMapInteractions(
     });
 
     canvas.addEventListener("mouseup", () => {
+        if (drawMode) {
+            return;
+        }
         if (isDragging) {
             isDragging = false;
-            canvas.style.cursor = "auto";
+            updateCursor(canvas);
         }
     });
 
     canvas.addEventListener("mouseleave", () => {
+        if (drawMode) {
+            hideTooltip();
+            return;
+        }
         if (isDragging) {
             isDragging = false;
             canvas.style.cursor = "grab";
@@ -174,7 +310,7 @@ export function setupMapInteractions(
         hideTooltip();
     });
 
-    canvas.style.cursor = "auto";
+    updateCursor(canvas);
 }
 
 // Fast redraw function that just transforms the cached image

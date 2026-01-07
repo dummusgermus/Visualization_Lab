@@ -29,6 +29,12 @@ export function updateSidebarPosition(params: UpdateSidebarPositionParams) {
     const canvasToggle = root.querySelector<HTMLElement>(
         '[data-role="canvas-toggle"]'
     );
+    const compareTrigger = root.querySelector<HTMLElement>(
+        '[data-role="compare-info-trigger"]'
+    );
+    const compareOverlay = root.querySelector<HTMLElement>(
+        '[data-role="compare-info-overlay"]'
+    );
 
     if (!sidebarElement || !canvasToggle || !toggleElement) return;
 
@@ -57,6 +63,13 @@ export function updateSidebarPosition(params: UpdateSidebarPositionParams) {
     // Shift the canvas toggle
     const canvasRight = isOpen ? SIDEBAR_WIDTH + 24 : 24;
     canvasToggle.style.right = `${canvasRight}px`;
+    if (compareTrigger) {
+        compareTrigger.style.right = `${canvasRight}px`;
+    }
+    if (compareOverlay) {
+        compareOverlay.style.left = isOpen ? `${SIDEBAR_WIDTH}px` : "0";
+        compareOverlay.style.right = "0";
+    }
     if (onCanvasToggleUpdate) {
         onCanvasToggleUpdate(canvasRight);
     }

@@ -25,11 +25,15 @@ export interface ClimateData {
     size_bytes: number;
     quality: number;
     field: string;
-    data?: string | number[][] | null;
+    data?: string | number[][] | Float32Array | Float64Array | null;
     data_encoding?: "base64" | "list" | "none";
     metadata?: {
         variable?: Record<string, any>;
         scenario?: Record<string, any>;
+        comparison?: {
+            labelA: string;
+            labelB: string;
+        };
     };
 }
 
@@ -195,9 +199,14 @@ export async function fetchMetadata(options?: {
 export function dataToArray(
     data: ClimateData
 ): Float32Array | Float64Array | null {
-    if (!data.data || data.data_encoding === "none") {
-        return null;
+    if (!data.data) return null;
+
+    // Allow passing through precomputed typed arrays (used for client-side comparisons)
+    if (data.data instanceof Float32Array || data.data instanceof Float64Array) {
+        return data.data;
     }
+
+    if (data.data_encoding === "none") return null;
 
     if (data.data_encoding === "base64" && typeof data.data === "string") {
         return decodeBase64Data(data.data, data.shape, data.dtype);

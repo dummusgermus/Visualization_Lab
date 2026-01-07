@@ -199,6 +199,15 @@ input[type="date"]::-webkit-calendar-picker-indicator {
     cursor: pointer;
     transition: opacity 120ms ease;
 }
+
+@keyframes sv-spin {
+    from {
+        transform: rotate(0deg);
+    }
+    to {
+        transform: rotate(360deg);
+    }
+}
 input[type="date"] {
     cursor: text;
     padding-right: 14px;

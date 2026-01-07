@@ -2,6 +2,7 @@ import * as d3 from "d3";
 import { geoEquirectangular } from "d3-geo";
 import { hexToRgb } from "../Utils/colorUtils";
 import { dataToArray, type ClimateData } from "../Utils/dataClient";
+import { convertMinMax, convertValue } from "../Utils/unitConverter";
 import { hideTooltip, setDataRange, showTooltip } from "./tooltip";
 
 let mapZoom = 1;
@@ -18,7 +19,10 @@ let cachedMapCanvas: HTMLCanvasElement | null = null;
 
 // Cache for hover functionality
 let cachedData: ClimateData | null = null;
+let cachedIsDifference = false;
 let cachedValueLookup: (Float32Array | Float64Array | null)[] | null = null;
+let cachedVariable: string | undefined = undefined;
+let cachedSelectedUnit: string | undefined = undefined;
 
 // Helper function to setup canvas with proper DPI scaling
 function setupCanvas(
@@ -77,7 +81,9 @@ function getDataValue(
 export function setupMapInteractions(
     canvas: HTMLCanvasElement,
     currentData: ClimateData | null,
-    unit: string
+    unit: string,
+    _variable?: string,
+    _selectedUnit?: string
 ): void {
     canvas.addEventListener(
         "wheel",
@@ -139,7 +145,16 @@ export function setupMapInteractions(
             cachedMapCanvas
         ) {
             const [mouseX, mouseY] = d3.pointer(e, canvas);
-            updateTooltip(e.clientX, e.clientY, mouseX, mouseY, unit);
+            updateTooltip(
+                e.clientX,
+                e.clientY,
+                mouseX,
+                mouseY,
+                unit,
+                cachedVariable,
+                cachedSelectedUnit,
+                cachedIsDifference
+            );
         }
     });
 
@@ -203,7 +218,9 @@ export function renderMapData(
     paletteOptions: Array<{ name: string; colors: string[] }>,
     currentPalette: string,
     min: number,
-    max: number
+    max: number,
+    variable?: string,
+    selectedUnit?: string
 ): void {
     if (!mapCanvas) return;
 
@@ -227,13 +244,31 @@ export function renderMapData(
     ctx.save();
 
     // Cache for hover functionality
+    const isDifference =
+        Boolean((data as any)?.metadata?.comparison) ||
+        (typeof data.model === "string" && data.model.includes(" minus "));
+
     cachedData = data;
+    cachedVariable = variable;
+    cachedSelectedUnit = selectedUnit;
+    cachedIsDifference = isDifference;
     const valueLookup = new Array(viewHeight)
         .fill(null)
         .map(() => new Float32Array(viewWidth).fill(NaN));
 
+    // Convert min/max if unit conversion is selected
+    let convertedMin = min;
+    let convertedMax = max;
+    if (variable && selectedUnit) {
+        const converted = convertMinMax(min, max, variable, selectedUnit, {
+            isDifference,
+        });
+        convertedMin = converted.min;
+        convertedMax = converted.max;
+    }
+
     // Set data range for tooltip/legend indicator
-    setDataRange(min, max);
+    setDataRange(min, max, variable, selectedUnit, isDifference);
 
     const palette =
         paletteOptions.find((p) => p.name === currentPalette) ||
@@ -281,8 +316,24 @@ export function renderMapData(
 
             const [px, py] = coords;
 
-            // Color based on value
-            const normalized = (value - min) / (max - min);
+            // Convert value if unit conversion is selected (for color mapping)
+            let displayValue = value;
+            if (variable && selectedUnit) {
+                displayValue = convertValue(value, variable, selectedUnit, {
+                    isDifference,
+                });
+            }
+
+            // Guard against zero data range (e.g., identical datasets) to avoid NaN
+            const range = convertedMax - convertedMin;
+            const normalized =
+                range === 0
+                    ? 0.5
+                    : Math.min(
+                          1,
+                          Math.max(0, (displayValue - convertedMin) / range)
+                      );
+
             const colorIdx = Math.floor(normalized * (paletteRgb.length - 1));
             const c1 = paletteRgb[Math.min(colorIdx, paletteRgb.length - 1)];
             const c2 =
@@ -306,7 +357,7 @@ export function renderMapData(
                     pixels[pixelIdx + 1] = g;
                     pixels[pixelIdx + 2] = b;
                     pixels[pixelIdx + 3] = 255;
-                    // Store value for hover lookup
+                    // Store original value for hover lookup (will be converted in tooltip)
                     valueLookup[iy][ix] = value;
                 }
             }
@@ -344,7 +395,10 @@ function updateTooltip(
     clientY: number,
     mouseX: number,
     mouseY: number,
-    unit: string
+    unit: string,
+    _variable?: string,
+    _selectedUnit?: string,
+    isDifference?: boolean
 ): void {
     if (!cachedValueLookup || !cachedMapCanvas) return;
 
@@ -362,14 +416,15 @@ function updateTooltip(
     const py = Math.floor(worldY);
 
     if (px >= 0 && px < mapWidth && py >= 0 && py < mapHeight) {
-        const value = cachedValueLookup?.[py]?.[px] ?? 0;
+        const rawValue = cachedValueLookup?.[py]?.[px] ?? 0;
 
-        if (isFinite(value)) {
+        if (isFinite(rawValue)) {
             // Calculate lat/lon for display
             const lon = (worldX / mapWidth) * 360 - 180;
             const lat = 90 - (worldY / mapHeight) * 180;
 
-            showTooltip(clientX, clientY, lat, lon, value, unit);
+            // Let tooltip handle conversion based on selected unit
+            showTooltip(clientX, clientY, lat, lon, rawValue, unit, isDifference);
         } else {
             hideTooltip();
         }

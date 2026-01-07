@@ -21,6 +21,10 @@ import {
     fetchMetadata,
     type Metadata,
 } from "./Utils/dataClient";
+import {
+    getDefaultUnitOption,
+    getUnitOptions,
+} from "./Utils/unitConverter";
 
 type Mode = "Explore" | "Compare";
 type PanelTab = "Manual" | "Chat";
@@ -122,6 +126,159 @@ const styles: Record<string, Style> = {
         textAlign: "center",
         pointerEvents: "none",
         zIndex: 1,
+    },
+    loadingIndicator: {
+        position: "absolute",
+        left: 18,
+        bottom: 80,
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        padding: 0,
+        pointerEvents: "auto",
+        zIndex: 20,
+        minWidth: 160,
+    },
+    loadingSpinner: {
+        width: 18,
+        height: 18,
+        borderRadius: "50%",
+        border: "2px solid rgba(255,255,255,0.18)",
+        borderTop: "2px solid #34d399",
+        animation: "sv-spin 1s linear infinite",
+        flexShrink: 0,
+    },
+    loadingTextGroup: {
+        display: "flex",
+        flexDirection: "column",
+        gap: 4,
+        alignItems: "flex-start",
+        minWidth: 0,
+    },
+    loadingText: {
+        fontSize: 12.5,
+        fontWeight: 700,
+        color: "var(--text-primary)",
+        letterSpacing: 0.3,
+    },
+    loadingSubtext: {
+        fontSize: 11.5,
+        color: "var(--text-secondary)",
+        letterSpacing: 0.2,
+    },
+    loadingBar: {
+        position: "relative",
+        width: 120,
+        height: 6,
+        borderRadius: 999,
+        background: "rgba(255, 255, 255, 0.08)",
+        overflow: "hidden",
+    },
+    loadingBarFill: {
+        position: "absolute",
+        inset: 0,
+        borderRadius: 999,
+        background:
+            "linear-gradient(90deg, rgba(52, 211, 153, 0.9), rgba(125, 211, 252, 0.9))",
+        transition: "width 140ms ease",
+        width: "0%",
+    },
+    compareInfoWrap: {
+        position: "fixed",
+        right: 24,
+        bottom: 88,
+        display: "flex",
+        alignItems: "center",
+        pointerEvents: "auto",
+        zIndex: 10000,
+    },
+    compareInfoButton: {
+        padding: 0,
+        background: "transparent",
+        border: "none",
+        color: "var(--text-primary)",
+        fontWeight: 700,
+        fontSize: 13,
+        letterSpacing: 0.2,
+        cursor: "pointer",
+        textDecoration: "underline",
+    },
+    compareInfoButtonHover: {},
+    infoModalOverlay: {
+        position: "fixed",
+        inset: 0,
+        background: "transparent",
+        backdropFilter: "none",
+        zIndex: 200,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 16,
+    },
+    infoModal: {
+        width: "min(480px, 92vw)",
+        background: "rgba(12, 16, 24, 0.98)",
+        border: "1px solid var(--border-default)",
+        borderRadius: 14,
+        boxShadow: "var(--shadow-elevated)",
+        color: "var(--text-primary)",
+        padding: 20,
+        position: "relative",
+        maxWidth: "520px",
+    },
+    infoModalHeader: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 12,
+        marginBottom: 12,
+    },
+    infoModalTitle: {
+        fontSize: 16,
+        fontWeight: 900,
+        letterSpacing: 0.2,
+        background: "var(--gradient-accent)",
+        WebkitBackgroundClip: "text",
+        WebkitTextFillColor: "transparent",
+        backgroundClip: "text",
+        color: "transparent",
+    },
+    infoModalClose: {
+        width: 32,
+        height: 32,
+        borderRadius: 8,
+        border: "none",
+        background: "transparent",
+        color: "var(--text-secondary)",
+        cursor: "pointer",
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontWeight: 700,
+    },
+    infoModalBody: {
+        fontSize: 14,
+        lineHeight: 1.6,
+        color: "var(--text-primary)",
+        display: "block",
+        textAlign: "left",
+        whiteSpace: "normal",
+        wordBreak: "break-word",
+    },
+    infoModalFooter: {
+        marginTop: 18,
+        display: "flex",
+        justifyContent: "center",
+    },
+    infoModalConfirm: {
+        padding: "10px 16px",
+        borderRadius: 10,
+        border: "1px solid var(--accent-border)",
+        background: "var(--gradient-primary)",
+        color: "white",
+        fontWeight: 700,
+        cursor: "pointer",
+        boxShadow: "var(--shadow-combined)",
     },
     canvasToggle: {
         position: "fixed",
@@ -280,16 +437,26 @@ const styles: Record<string, Style> = {
         overflow: "hidden",
         width: "100%",
         position: "relative",
+        flex: 1,
+        minHeight: 0,
+        height: 0,
     },
     modeTrack: {
         display: "grid",
         gridTemplateColumns: "1fr 1fr",
         width: "200%",
+        height: "100%",
         transition: "transform 220ms ease",
     },
     modePane: {
         width: "100%",
+        height: "100%",
         paddingRight: 4,
+        overflowY: "auto",
+        overflowX: "hidden",
+        scrollbarGutter: "stable",
+        minHeight: 0,
+        maxHeight: "100%",
     },
     chatBox: {
         display: "flex",
@@ -343,6 +510,9 @@ const styles: Record<string, Style> = {
         flexDirection: "column",
         gap: 10,
         padding: "4px 0 6px",
+        paddingRight: 0,
+        width: "100%",
+        boxSizing: "border-box",
     },
     chatBubble: {
         maxWidth: "100%",
@@ -352,12 +522,14 @@ const styles: Record<string, Style> = {
         fontSize: 13,
         lineHeight: 1.4,
         boxShadow: "0 6px 14px rgba(0,0,0,0.3)",
+        boxSizing: "border-box",
     },
     chatBubbleUser: {
         alignSelf: "flex-end",
         background: "var(--gradient-chat-user)",
         border: "1px solid rgba(125,211,252,0.45)",
         color: "white",
+        marginRight: 26,
     },
     chatBubbleAgent: {
         alignSelf: "flex-start",
@@ -434,6 +606,7 @@ export type AppState = {
     date: string;
     palette: string;
     resolution: number;
+    selectedUnit: string; // Unit label (e.g., "Kelvin (K)", "Celsius (°C)")
     chatInput: string;
     chatMessages: ChatMessage[];
     availableModels: string[];
@@ -443,6 +616,7 @@ export type AppState = {
     compareDateStart: string;
     compareDateEnd: string;
     isLoading: boolean;
+    loadingProgress: number;
     dataError: string | null;
     currentData: ClimateData | null;
     apiAvailable: boolean | null;
@@ -453,6 +627,7 @@ export type AppState = {
         start: string;
         end: string;
     } | null;
+    compareInfoOpen: boolean;
 };
 
 //TODO set 0 from available models to active model and so on
@@ -467,15 +642,17 @@ const state: AppState = {
     date: "2000-01-01",
     palette: paletteOptions[0].name,
     resolution: 2,
+    selectedUnit: getDefaultUnitOption(variables[0]).label,
     chatInput: "",
     chatMessages: [],
     compareMode: "Scenarios",
     availableModels: [],
     compareModelA: models[0],
     compareModelB: models[1] ?? models[0],
-    compareDateStart: "2000-01-01",
-    compareDateEnd: "2000-12-31",
+    compareDateStart: "1962-06-28",
+    compareDateEnd: "2007-06-28",
     isLoading: false,
+    loadingProgress: 0,
     dataError: null,
     currentData: null,
     apiAvailable: null,
@@ -483,6 +660,7 @@ const state: AppState = {
     dataMax: null,
     timeRange: null,
     metaData: undefined,
+    compareInfoOpen: false,
 };
 
 let agentReplyTimer: number | null = null;
@@ -513,6 +691,146 @@ function mergeStyles(...entries: Array<Style | undefined>): Style {
     }, {});
 }
 
+function formatDisplayDate(value: string): string {
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return value;
+    return parsed.toLocaleDateString("en-US", {
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+    });
+}
+
+function getVariableLabel(variable: string, meta?: Metadata): string {
+    return (
+        meta?.variable_metadata?.[variable]?.name ||
+        meta?.variable_metadata?.[variable]?.description ||
+        variable
+    );
+}
+
+function describeCompareContext(state: AppState): {
+    title: string;
+    paragraphs: string[];
+} {
+    const variableLabel = getVariableLabel(state.variable, state.metaData);
+    const unitLabel =
+        state.selectedUnit ||
+        state.metaData?.variable_metadata?.[state.variable]?.unit ||
+        "";
+    const unitText = unitLabel ? `${unitLabel}` : "the dataset's native units";
+
+    switch (state.compareMode) {
+        case "Dates": {
+            const start = formatDisplayDate(state.compareDateStart);
+            const end = formatDisplayDate(state.compareDateEnd);
+            return {
+                title: "Comparing two dates",
+                paragraphs: [
+                    `We are comparing ${variableLabel} on ${start} versus ${end} under the ${state.scenario} scenario using the ${state.model} model.`,
+                    `Values on the map represent ${end} minus ${start} in ${unitText}. A value of X means ${variableLabel} was X ${unitLabel || ""} higher on ${end} than on ${start} (negative values mean it was lower).`,
+                ],
+            };
+        }
+        case "Models": {
+            const date = formatDisplayDate(state.date);
+            return {
+                title: "Comparing two models",
+                paragraphs: [
+                    `We are comparing ${variableLabel} between ${state.compareModelB} and ${state.compareModelA} on ${date} within the ${state.scenario} scenario.`,
+                    `Each value shows ${state.compareModelB} minus ${state.compareModelA} in ${unitText}. Positive numbers mean ${variableLabel} is higher in ${state.compareModelB}; negative means it is higher in ${state.compareModelA}.`,
+                ],
+            };
+        }
+        case "Scenarios":
+        default: {
+            const date = formatDisplayDate(state.date);
+            const scenarioA = "SSP245";
+            const scenarioB = "SSP585";
+            return {
+                title: "Comparing two scenarios",
+                paragraphs: [
+                    `We are comparing ${variableLabel} for ${scenarioB} versus ${scenarioA} on ${date} using the ${state.model} model.`,
+                    `Values show ${scenarioB} minus ${scenarioA} in ${unitText}. A value of X means ${variableLabel} is X ${unitLabel || ""} higher under ${scenarioB} than under ${scenarioA}; negative values mean it is lower.`,
+                ],
+            };
+        }
+    }
+}
+
+function renderCompareInfo(state: AppState): string {
+    if (state.mode !== "Compare" || state.canvasView !== "map") return "";
+    const info = describeCompareContext(state);
+    const paragraphs = info.paragraphs
+        .map((p, idx) => {
+            const isLast = idx === info.paragraphs.length - 1;
+            const margin = isLast ? "0" : "0 0 12px 0";
+            // Highlight X in the text
+            const highlightedText = p.replace(
+                /(\bX\b|ΔX)/g,
+                '<span style="color: var(--accent-purple);">$1</span>'
+            );
+            return `<p style="display:block; margin:${margin}; line-height:1.6; white-space: normal; word-break: break-word;">${highlightedText}</p>`;
+        })
+        .join("");
+    const compareRight = state.sidebarOpen ? SIDEBAR_WIDTH + 24 : 24;
+    const compareBottom = state.mode === "Compare" && state.compareMode === "Dates" ? 120 : 88;
+    const overlayStyle = mergeStyles(styles.infoModalOverlay, {
+        left: "0",
+        right: "0",
+        width: "100%",
+        justifyContent: "center",
+        paddingLeft: 0,
+    });
+
+    const modalStyle = mergeStyles(styles.infoModal, {
+        alignSelf: "center",
+        marginLeft: "auto",
+        marginRight: "auto",
+    });
+
+    const modal = state.compareInfoOpen
+        ? `
+      <div data-role="compare-info-overlay" class="compare-info-overlay" style="${styleAttr(
+          overlayStyle
+      )}">
+        <div style="${styleAttr(modalStyle)}" role="dialog" aria-modal="true" aria-label="${info.title}">
+          <div style="${styleAttr(styles.infoModalHeader)}">
+            <div style="${styleAttr(styles.infoModalTitle)}">${info.title}</div>
+            <button type="button" data-action="close-compare-info" style="${styleAttr(
+                styles.infoModalClose
+            )}" aria-label="Close info dialog">✕</button>
+          </div>
+          <div style="${styleAttr(styles.infoModalBody)}">
+            ${paragraphs}
+          </div>
+          <div style="${styleAttr(styles.infoModalFooter)}">
+            <button type="button" data-action="close-compare-info" style="${styleAttr(
+                styles.infoModalConfirm
+            )}">Got it</button>
+          </div>
+        </div>
+      </div>
+    `
+        : "";
+
+    return `
+      <div data-role="compare-info-trigger" style="${styleAttr(
+          mergeStyles(styles.compareInfoWrap, {
+              right: compareRight,
+              bottom: compareBottom,
+          })
+      )}">
+        <button type="button" data-action="open-compare-info" style="${styleAttr(
+            styles.compareInfoButton
+        )}">
+          What am I seeing?
+        </button>
+      </div>
+      ${modal}
+    `;
+}
+
 async function checkApiAvailability() {
     try {
         const available = await checkApiHealth();
@@ -522,53 +840,382 @@ async function checkApiAvailability() {
     }
 }
 
+/**
+ * Get the appropriate date for a given scenario
+ * - Historical: returns "2000-01-01"
+ * - SSP245/SSP585: returns current date (or earliest valid date if current date is before 2015)
+ */
+function getDateForScenario(scenario: string): string {
+    if (scenario === "Historical") {
+        return "2000-01-01";
+    }
+    
+    // For future scenarios (SSP245, SSP585), use current date
+    // But ensure it's within the valid range (2015-2100)
+    const today = new Date();
+    const currentYear = today.getFullYear();
+    const currentMonth = String(today.getMonth() + 1).padStart(2, "0");
+    const currentDay = String(today.getDate()).padStart(2, "0");
+    
+    // If current date is before 2015, use 2015-01-01
+    if (currentYear < 2015) {
+        return "2015-01-01";
+    }
+    
+    // If current date is after 2100, use 2100-12-31
+    if (currentYear > 2100) {
+        return "2100-12-31";
+    }
+    
+    // Use current date
+    return `${currentYear}-${currentMonth}-${currentDay}`;
+}
+
+/**
+ * Get the time range for a given scenario
+ * - Historical: 1950-01-01 to 2014-12-31
+ * - SSP245/SSP585: 2015-01-01 to 2100-12-31
+ */
+function getTimeRangeForScenario(
+    scenario: string
+): { start: string; end: string } {
+    if (scenario === "Historical") {
+        return {
+            start: "1950-01-01",
+            end: "2014-12-31",
+        };
+    }
+    
+    // For future scenarios (SSP245, SSP585)
+    return {
+        start: "2015-01-01",
+        end: "2100-12-31",
+    };
+}
+
+/**
+ * Clip a date to the valid range for a scenario
+ * Returns the nearest valid date if the input date is outside the range
+ */
+function clipDateToScenarioRange(date: string, scenario: string): string {
+    const timeRange = getTimeRangeForScenario(scenario);
+    const inputDate = new Date(date);
+    const startDate = new Date(timeRange.start);
+    const endDate = new Date(timeRange.end);
+    
+    // If date is before the start, return the start date
+    if (inputDate < startDate) {
+        return timeRange.start;
+    }
+    
+    // If date is after the end, return the end date
+    if (inputDate > endDate) {
+        return timeRange.end;
+    }
+    
+    // Date is within range, return as-is
+    return date;
+}
+
+function calculateMinMax(
+    arrayData: Float32Array | Float64Array
+): { min: number; max: number } {
+    let min = Infinity;
+    let max = -Infinity;
+
+    for (let i = 0; i < arrayData.length; i++) {
+        const val = arrayData[i];
+        if (isFinite(val)) {
+            min = Math.min(min, val);
+            max = Math.max(max, val);
+        }
+    }
+
+    if (!isFinite(min) || !isFinite(max)) {
+        throw new Error("No valid numeric values returned from dataset.");
+    }
+
+    return { min, max };
+}
+
+function createDifferenceData(
+    dataA: ClimateData,
+    dataB: ClimateData,
+    labelA: string,
+    labelB: string
+): { data: ClimateData; min: number; max: number } {
+    const arrayA = dataToArray(dataA);
+    const arrayB = dataToArray(dataB);
+
+    if (!arrayA || !arrayB) {
+        throw new Error("Comparison data is missing numeric values.");
+    }
+
+    if (
+        arrayA.length !== arrayB.length ||
+        dataA.shape[0] !== dataB.shape[0] ||
+        dataA.shape[1] !== dataB.shape[1]
+    ) {
+        throw new Error("Comparison datasets have mismatched shapes.");
+    }
+
+    const differenceArray = new Float32Array(arrayA.length);
+    let min = Infinity;
+    let max = -Infinity;
+
+    for (let i = 0; i < arrayA.length; i++) {
+        const a = arrayA[i];
+        const b = arrayB[i];
+
+        if (!isFinite(a) || !isFinite(b)) {
+            differenceArray[i] = NaN;
+            continue;
+        }
+
+        const diff = b - a;
+        differenceArray[i] = diff;
+
+        if (isFinite(diff)) {
+            min = Math.min(min, diff);
+            max = Math.max(max, diff);
+        }
+    }
+
+    if (!isFinite(min) || !isFinite(max)) {
+        throw new Error("Comparison produced no valid numeric values.");
+    }
+
+    const differenceData: ClimateData = {
+        ...dataA,
+        data: differenceArray,
+        data_encoding: "none",
+        dtype: "float32",
+        model: `${labelB} minus ${labelA}`,
+        time: `${dataB.time} minus ${dataA.time}`,
+        scenario: `${dataB.scenario} minus ${dataA.scenario}`,
+        metadata: {
+            ...dataA.metadata,
+            comparison: { labelA, labelB },
+        },
+    };
+
+    return { data: differenceData, min, max };
+}
+
+function setLoadingProgress(value: number, forceRender = false) {
+    const clamped = Math.max(0, Math.min(100, Math.round(value)));
+    if (clamped === state.loadingProgress) return;
+    state.loadingProgress = clamped;
+    if (state.isLoading || forceRender) {
+        render();
+    }
+}
+
+async function loadCompareData(
+    activeScenarioForRange: string,
+    onProgress?: (progress: number) => void
+): Promise<{ data: ClimateData; min: number; max: number }> {
+    let requestA = createDataRequest({
+        variable: state.variable,
+        date: state.date,
+        model: state.model,
+        scenario: state.scenario,
+        resolution: state.resolution,
+    });
+    let requestB = requestA;
+    let labelA = "";
+    let labelB = "";
+
+    switch (state.compareMode) {
+        case "Scenarios": {
+            const scenarioA = "SSP245";
+            const scenarioB = "SSP585";
+            const compareDate = clipDateToScenarioRange(
+                state.date,
+                activeScenarioForRange
+            );
+            if (compareDate !== state.date) {
+                state.date = compareDate;
+            }
+
+            requestA = createDataRequest({
+                variable: state.variable,
+                date: compareDate,
+                model: state.model,
+                scenario: scenarioA,
+                resolution: state.resolution,
+            });
+            requestB = createDataRequest({
+                variable: state.variable,
+                date: compareDate,
+                model: state.model,
+                scenario: scenarioB,
+                resolution: state.resolution,
+            });
+            labelA = scenarioA;
+            labelB = scenarioB;
+            break;
+        }
+        case "Models": {
+            const compareDate = clipDateToScenarioRange(
+                state.date,
+                activeScenarioForRange
+            );
+            if (compareDate !== state.date) {
+                state.date = compareDate;
+            }
+
+            requestA = createDataRequest({
+                variable: state.variable,
+                date: compareDate,
+                model: state.compareModelA,
+                scenario: state.scenario,
+                resolution: state.resolution,
+            });
+            requestB = createDataRequest({
+                variable: state.variable,
+                date: compareDate,
+                model: state.compareModelB,
+                scenario: state.scenario,
+                resolution: state.resolution,
+            });
+            labelA = state.compareModelA;
+            labelB = state.compareModelB;
+            break;
+        }
+        case "Dates": {
+            const startDate = clipDateToScenarioRange(
+                state.compareDateStart,
+                state.scenario
+            );
+            const endDate = clipDateToScenarioRange(
+                state.compareDateEnd,
+                state.scenario
+            );
+
+            if (startDate !== state.compareDateStart) {
+                state.compareDateStart = startDate;
+            }
+            if (endDate !== state.compareDateEnd) {
+                state.compareDateEnd = endDate;
+            }
+
+            requestA = createDataRequest({
+                variable: state.variable,
+                date: startDate,
+                model: state.model,
+                scenario: state.scenario,
+                resolution: state.resolution,
+            });
+            requestB = createDataRequest({
+                variable: state.variable,
+                date: endDate,
+                model: state.model,
+                scenario: state.scenario,
+                resolution: state.resolution,
+            });
+            labelA = startDate;
+            labelB = endDate;
+            break;
+        }
+    }
+
+    const dataA = await fetchClimateData(requestA);
+    onProgress?.(65);
+
+    const dataB = await fetchClimateData(requestB);
+    onProgress?.(85);
+
+    return createDifferenceData(dataA, dataB, labelA, labelB);
+}
+
 async function loadClimateData() {
     console.log("fetching");
-    if (state.canvasView !== "map" || state.mode !== "Explore") {
+    if (state.canvasView !== "map") {
         return;
     }
 
     state.isLoading = true;
+    setLoadingProgress(5, true);
 
     state.dataError = null;
 
     try {
-        const request = createDataRequest({
-            variable: state.variable,
-            date: state.date,
-            model: state.model,
-            scenario: state.scenario,
-            resolution: state.resolution,
-        });
-
-        const data = await fetchClimateData(request);
         const metaData = await fetchMetadata();
         state.metaData = metaData;
         state.availableModels = metaData.models;
-        state.timeRange = metaData.time_range
-            ? {
-                  start: metaData.time_range.start,
-                  end: metaData.time_range.historical_end,
-              }
-            : { start: "1950-01-01", end: "2100-12-31" };
-        state.currentData = data;
+        setLoadingProgress(20);
 
-        // Calculate min/max from data
-        const arrayData = dataToArray(data);
-        if (arrayData) {
-            let min = Infinity;
-            let max = -Infinity;
-            for (let i = 0; i < arrayData.length; i++) {
-                const val = arrayData[i];
-                if (isFinite(val)) {
-                    min = Math.min(min, val);
-                    max = Math.max(max, val);
-                }
-            }
-            state.dataMin = min;
-            state.dataMax = max;
-        }
+        const activeScenarioForRange =
+            state.mode === "Compare" && state.compareMode === "Scenarios"
+                ? "SSP245"
+                : state.scenario;
+        // Update time range based on the scenario driving the current request
+        state.timeRange = getTimeRangeForScenario(activeScenarioForRange);
+        setLoadingProgress(30);
 
+        const result =
+            state.mode === "Compare"
+                ? await loadCompareData(activeScenarioForRange, setLoadingProgress)
+                : await (async () => {
+                      setLoadingProgress(40);
+                      const clippedDate = clipDateToScenarioRange(
+                          state.date,
+                          activeScenarioForRange
+                      );
+                      if (clippedDate !== state.date) {
+                          state.date = clippedDate;
+                      }
+
+                      const request = createDataRequest({
+                          variable: state.variable,
+                          date: clippedDate,
+                          model: state.model,
+                          scenario: state.scenario,
+                          resolution: state.resolution,
+                      });
+
+                      setLoadingProgress(55);
+                      let data = await fetchClimateData(request);
+                      setLoadingProgress(80);
+                      let arrayData = dataToArray(data);
+                      if (!arrayData) {
+                          throw new Error(
+                              "No data returned for the selected parameters."
+                          );
+                      }
+
+                      // Cap relative humidity to 100% in Explore mode to avoid invalid values
+                      if (state.variable === "hurs") {
+                          const clamped = new Float32Array(arrayData.length);
+                          let min = Infinity;
+                          let max = -Infinity;
+                          for (let i = 0; i < arrayData.length; i++) {
+                              const val = arrayData[i];
+                              if (!isFinite(val)) {
+                                  clamped[i] = NaN;
+                                  continue;
+                              }
+                              const capped = Math.min(val, 100);
+                              clamped[i] = capped;
+                              min = Math.min(min, capped);
+                              max = Math.max(max, capped);
+                          }
+                          data = { ...data, data: clamped, data_encoding: "none" };
+                          arrayData = clamped;
+                          return { data, min, max };
+                      }
+
+                      const { min, max } = calculateMinMax(arrayData);
+                      setLoadingProgress(95);
+                      return { data, min, max };
+                  })();
+
+        state.currentData = result.data;
+        state.dataMin = result.min;
+        state.dataMax = result.max;
+
+        setLoadingProgress(100);
         state.isLoading = false;
 
         render();
@@ -577,11 +1224,15 @@ async function loadClimateData() {
             const canvas =
                 appRoot.querySelector<HTMLCanvasElement>("#map-canvas");
             if (canvas) {
+                const defaultUnit =
+                    state.metaData?.variable_metadata[state.variable]?.unit ||
+                    "";
                 setupMapInteractions(
                     canvas,
                     state.currentData,
-                    state.metaData?.variable_metadata[state.variable]?.unit ||
-                        ""
+                    defaultUnit,
+                    state.variable,
+                    state.selectedUnit
                 );
             }
         }
@@ -593,7 +1244,10 @@ async function loadClimateData() {
                 error instanceof Error ? error.message : String(error);
         }
         state.isLoading = false;
+        setLoadingProgress(0, true);
         state.currentData = null;
+        state.dataMin = null;
+        state.dataMax = null;
         render();
     }
 }
@@ -617,12 +1271,16 @@ function render() {
       <div style="${styleAttr(styles.bgLayer2)}"></div>
       <div style="${styleAttr(styles.bgOverlay)}"></div>
         ${
-            state.dataMin !== null && state.dataMax !== null
+            state.canvasView === "map" &&
+            state.dataMin !== null &&
+            state.dataMax !== null
                 ? renderMapLegend(
                       state.variable,
                       state.dataMin,
                       state.dataMax,
-                      state.metaData
+                      state.metaData,
+                      state.selectedUnit,
+                      state.mode === "Compare"
                   )
                 : ""
         }
@@ -634,20 +1292,7 @@ function render() {
                 id="map-canvas"
                 style="position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; pointer-events: auto;"
               ></canvas>
-              ${
-                  state.isLoading
-                      ? `<div style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.7); z-index: 10;">
-                      <div style="text-align: center;">
-                        <div style="${styleAttr(
-                            styles.mapTitle
-                        )}">Loading climate data...</div>
-                        <div style="${styleAttr(
-                            styles.mapSubtitle
-                        )}">Fetching data from API</div>
-                      </div>
-                    </div>`
-                      : ""
-              }
+              ${renderLoadingIndicator()}
               ${
                   state.dataError
                       ? `<div style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.8); z-index: 10;">
@@ -798,14 +1443,24 @@ function render() {
         </div>
       </div>
 
+      ${renderCompareInfo(state)}
+
       ${renderSidebarToggle(state.sidebarOpen)}
 
-      ${renderTimeSlider({
-          date: state.date,
-          timeRange: state.timeRange,
-          sidebarOpen: state.sidebarOpen,
-          sidebarWidth: SIDEBAR_WIDTH,
-      })}
+      ${
+          state.canvasView === "map"
+              ? renderTimeSlider({
+                    date: state.date,
+                    timeRange: state.timeRange,
+                    sidebarOpen: state.sidebarOpen,
+                    sidebarWidth: SIDEBAR_WIDTH,
+                    mode: state.mode,
+                    compareMode: state.compareMode,
+                    compareDateStart: state.compareDateStart,
+                    compareDateEnd: state.compareDateEnd,
+                })
+              : ""
+      }
     </div>
   `;
 
@@ -816,15 +1471,18 @@ function render() {
     if (mapCanvas) {
         if (
             state.currentData &&
-            !state.isLoading &&
             !state.dataError &&
             state.dataMin !== null &&
             state.dataMax !== null
         ) {
+            const defaultUnit =
+                state.metaData?.variable_metadata[state.variable]?.unit || "";
             setupMapInteractions(
                 mapCanvas,
                 state.currentData,
-                state.metaData?.variable_metadata[state.variable]?.unit || ""
+                defaultUnit,
+                state.variable,
+                state.selectedUnit
             );
             renderMapData(
                 state.currentData,
@@ -832,7 +1490,9 @@ function render() {
                 paletteOptions,
                 state.palette,
                 state.dataMin,
-                state.dataMax
+                state.dataMax,
+                state.variable,
+                state.selectedUnit
             );
 
             // Draw the gradient on the legend canvas
@@ -844,10 +1504,30 @@ function render() {
     }
 }
 
+function renderLoadingIndicator() {
+    if (!state.isLoading) return "";
+    const progress = Math.max(0, Math.min(100, Math.round(state.loadingProgress)));
+    return `
+      <div style="${styleAttr(styles.loadingIndicator)}">
+        <div style="${styleAttr(styles.loadingSpinner)}"></div>
+        <div style="${styleAttr(styles.loadingTextGroup)}">
+          <div style="${styleAttr(styles.loadingText)}">Loading data · ${progress}%</div>
+          <div style="${styleAttr(styles.loadingBar)}">
+            <div style="${styleAttr({
+                ...styles.loadingBarFill,
+                width: `${progress}%`,
+            })}"></div>
+          </div>
+          <div style="${styleAttr(styles.loadingSubtext)}">Fetching climate tiles</div>
+        </div>
+      </div>
+    `;
+}
+
 function renderField(label: string, controlHtml: string) {
     return `
     <div style="${styleAttr(styles.field)}">
-      <div style="${styleAttr(styles.fieldLabel)}">${label}</div>
+      ${label ? `<div style="${styleAttr(styles.fieldLabel)}">${label}</div>` : ""}
       ${controlHtml}
     </div>
   `;
@@ -856,16 +1536,20 @@ function renderField(label: string, controlHtml: string) {
 function renderInput(
     name: string,
     value: string,
-    opts?: { type?: string; dataKey?: string }
+    opts?: { type?: string; dataKey?: string; min?: string; max?: string }
 ) {
     const type = opts?.type ?? "date";
     const dataKey = opts?.dataKey ?? name;
+    const minAttr = opts?.min ? `min="${opts.min}"` : "";
+    const maxAttr = opts?.max ? `max="${opts.max}"` : "";
     return `
     <input
       type="${type}"
       value="${value}"
       data-action="update-input"
       data-key="${dataKey}"
+      ${minAttr}
+      ${maxAttr}
     />
   `;
 }
@@ -979,7 +1663,7 @@ function renderManualSection(params: {
           ...styles.modeTrack,
           transform: modeTransform,
       })}">
-        <div style="${styleAttr(styles.modePane)}">
+        <div class="mode-pane-scrollable" style="${styleAttr(styles.modePane)}">
           <div style="${styleAttr({
               display: "flex",
               flexDirection: "column",
@@ -995,7 +1679,18 @@ function renderManualSection(params: {
                   "Model",
                   renderSelect("model", models, state.model)
               )}
-              ${renderField("Date", renderInput("date", state.date))}
+              ${renderField(
+                  "Date",
+                  (() => {
+                      const timeRange = getTimeRangeForScenario(
+                          state.scenario
+                      );
+                      return renderInput("date", state.date, {
+                          min: timeRange.start,
+                          max: timeRange.end,
+                      });
+                  })()
+              )}
               ${renderField(
                   "Variable",
                   renderSelect("variable", variables, state.variable)
@@ -1009,9 +1704,28 @@ function renderManualSection(params: {
                 flexDirection: "column",
                 gap: 8,
             })}">
+              <div style="${styleAttr(styles.sectionTitle)}">Unit</div>
+              ${renderField(
+                  "",
+                  renderSelect(
+                      "unit",
+                      getUnitOptions(state.variable).map((opt) => opt.label),
+                      state.selectedUnit,
+                      { dataKey: "unit" }
+                  )
+              )}
+            </div>
+          </div>
+
+          <div style="margin-top:14px">
+            <div style="${styleAttr({
+                display: "flex",
+                flexDirection: "column",
+                gap: 8,
+            })}">
               <div style="${styleAttr(styles.sectionTitle)}">Color palette</div>
               ${renderField(
-                  "Palette",
+                  "",
                   renderSelect(
                       "palette",
                       paletteOptions.map((p) => p.name),
@@ -1058,7 +1772,7 @@ function renderManualSection(params: {
           </div>
         </div>
 
-        <div style="${styleAttr(styles.modePane)}">
+        <div class="mode-pane-scrollable" style="${styleAttr(styles.modePane)}">
           <div style="${styleAttr({
               display: "flex",
               flexDirection: "column",
@@ -1177,11 +1891,32 @@ function renderManualSection(params: {
                     flexDirection: "column",
                     gap: 8,
                 })}">
+                  <div style="${styleAttr(styles.sectionTitle)}">Unit</div>
+                  ${renderField(
+                      "",
+                      renderSelect(
+                          "unit",
+                          getUnitOptions(state.variable).map(
+                              (opt) => opt.label
+                          ),
+                          state.selectedUnit,
+                          { dataKey: "unit" }
+                      )
+                  )}
+                </div>
+              </div>
+
+              <div style="margin-top:14px">
+                <div style="${styleAttr({
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 8,
+                })}">
                   <div style="${styleAttr(
                       styles.sectionTitle
                   )}">Color palette</div>
                   ${renderField(
-                      "Palette",
+                      "",
                       renderSelect(
                           "palette",
                           paletteOptions.map((p) => p.name),
@@ -1397,6 +2132,9 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                 modeTrack.style.transform = nextModeTransform;
                 modeIndicator.style.transform = nextIndicatorTransform;
             }
+            if (state.canvasView === "map") {
+                loadClimateData();
+            }
         })
     );
 
@@ -1451,13 +2189,69 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             switch (key) {
                 case "scenario":
                     state.scenario = val;
+                    // Automatically update date to a valid date for the selected scenario
+                    state.date = getDateForScenario(val);
+                    // Update time range for the slider
+                    state.timeRange = getTimeRangeForScenario(val);
                     break;
                 case "model":
                     state.model = val;
                     break;
                 case "variable":
                     state.variable = val;
+                    // Reset unit to default for new variable
+                    state.selectedUnit = getDefaultUnitOption(val).label;
                     break;
+                case "unit":
+                    state.selectedUnit = val;
+                    render();
+                    // Re-render map with new unit conversion
+                    if (
+                        state.currentData &&
+                        appRoot &&
+                        state.dataMin !== null &&
+                        state.dataMax !== null
+                    ) {
+                        const canvas =
+                            appRoot.querySelector<HTMLCanvasElement>(
+                                "#map-canvas"
+                            );
+                        if (canvas) {
+                            mapCanvas = canvas;
+                            const defaultUnit =
+                                state.metaData?.variable_metadata[
+                                    state.variable
+                                ]?.unit || "";
+                            setupMapInteractions(
+                                canvas,
+                                state.currentData,
+                                defaultUnit,
+                                state.variable,
+                                state.selectedUnit
+                            );
+                            renderMapData(
+                                state.currentData,
+                                mapCanvas,
+                                paletteOptions,
+                                state.palette,
+                                state.dataMin,
+                                state.dataMax,
+                                state.variable,
+                                state.selectedUnit
+                            );
+
+                            // Redraw gradient with new palette
+                            const palette =
+                                paletteOptions.find(
+                                    (p) => p.name === state.palette
+                                ) || paletteOptions[0];
+                            drawLegendGradient(
+                                "legend-gradient-canvas",
+                                palette.colors
+                            );
+                        }
+                    }
+                    return;
                 case "palette":
                     state.palette = val;
                     render();
@@ -1479,7 +2273,9 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                                 paletteOptions,
                                 state.palette,
                                 state.dataMin,
-                                state.dataMax
+                                state.dataMax,
+                                state.variable,
+                                state.selectedUnit
                             );
 
                             // Redraw gradient with new palette
@@ -1532,6 +2328,16 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             // Valid date - reset border
             input.style.borderColor = "";
 
+            // Clip date to valid range for scenario (only for main date input)
+            let clippedValue = value;
+            if (key === "date") {
+                clippedValue = clipDateToScenarioRange(value, state.scenario);
+                // Update input field if date was clipped
+                if (clippedValue !== value) {
+                    input.value = clippedValue;
+                }
+            }
+
             // Get current value to check if it changed
             const currentValue =
                 key === "date"
@@ -1540,11 +2346,11 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                     ? state.compareDateStart
                     : state.compareDateEnd;
 
-            if (currentValue === value) return; // No change, skip update
+            if (currentValue === clippedValue) return; // No change, skip update
 
             switch (key) {
                 case "date":
-                    state.date = value;
+                    state.date = clippedValue;
 
                     break;
                 case "compareDateStart":
@@ -1560,7 +2366,11 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             // Only re-render and reload if the date actually changed
 
             render();
-            if (key === "date") {
+            if (
+                key === "date" ||
+                (state.mode === "Compare" &&
+                    (key === "compareDateStart" || key === "compareDateEnd"))
+            ) {
                 loadClimateData();
             }
         };
@@ -1604,11 +2414,40 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         })
     );
 
+    const infoOpenBtn = root.querySelector<HTMLButtonElement>(
+        '[data-action="open-compare-info"]'
+    );
+    infoOpenBtn?.addEventListener("click", () => {
+        state.compareInfoOpen = true;
+        render();
+    });
+
+    const infoCloseBtns = root.querySelectorAll<HTMLButtonElement>(
+        '[data-action="close-compare-info"]'
+    );
+    infoCloseBtns.forEach((btn) =>
+        btn.addEventListener("click", () => {
+            state.compareInfoOpen = false;
+            render();
+        })
+    );
+
     attachTimeSliderHandlers({
         root,
         getTimeRange: () => state.timeRange,
         onDateChange: (date) => {
             state.date = date;
+            loadClimateData();
+        },
+        getMode: () => state.mode,
+        getCompareMode: () => state.compareMode,
+        getCompareDates: () => ({
+            start: state.compareDateStart,
+            end: state.compareDateEnd,
+        }),
+        onDateRangeChange: (start, end) => {
+            state.compareDateStart = start;
+            state.compareDateEnd = end;
             loadClimateData();
         },
     });

@@ -1,12 +1,11 @@
 import { hexToRgb } from "../Utils/colorUtils";
 import type { Metadata } from "../Utils/dataClient";
+import { convertMinMax, getUnitString } from "../Utils/unitConverter";
 import "./legend.css";
 
 // Store references for indicator updates
 let legendCanvas: HTMLCanvasElement | null = null;
 let currentPaletteColors: string[] = [];
-let currentMin = 0;
-let currentMax = 1;
 
 // Helper function to render the gradient on a canvas
 function renderGradient(
@@ -40,17 +39,37 @@ export function renderMapLegend(
     variable: string,
     min: number,
     max: number,
-    metadata?: Metadata
+    metadata?: Metadata,
+    selectedUnit?: string,
+    isDifference?: boolean
 ): string {
     const variableMeta = metadata?.variable_metadata[variable];
-    const unit = variableMeta?.unit || "";
     const name = variableMeta?.name || variable;
 
-    // Calculate 5 equally spaced values from max to min
-    const step = (max - min) / 4;
-    const values = [max, max - step, max - 2 * step, max - 3 * step, min];
+    // Convert min/max if unit is selected
+    let convertedMin = min;
+    let convertedMax = max;
+    let unit = variableMeta?.unit || "";
+    
+    if (selectedUnit) {
+        const converted = convertMinMax(min, max, variable, selectedUnit, {
+            isDifference,
+        });
+        convertedMin = converted.min;
+        convertedMax = converted.max;
+        unit = getUnitString(variable, selectedUnit);
+    }
 
-    //TODO Legend still looks weird for some variables like "precipitation" because values are just 0.00
+    // Calculate 5 equally spaced values from max to min
+    const step = (convertedMax - convertedMin) / 4;
+    const values = [
+        convertedMax,
+        convertedMax - step,
+        convertedMax - 2 * step,
+        convertedMax - 3 * step,
+        convertedMin,
+    ];
+
     return `
       <div class="map-legend">
         <div class="legend-title">${name}</div>
@@ -95,10 +114,6 @@ export function updateLegendIndicator(
     max: number
 ): void {
     if (!legendCanvas || currentPaletteColors.length === 0) return;
-
-    // Store current range
-    currentMin = min;
-    currentMax = max;
 
     // Redraw the gradient first
     const ctx = legendCanvas.getContext("2d");

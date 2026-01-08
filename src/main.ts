@@ -37,7 +37,12 @@ type PanelTab = "Manual" | "Chat";
 type CanvasView = "map" | "chart";
 type CompareMode = "Scenarios" | "Models" | "Dates";
 type ChartMode = "single" | "range";
-type ChartLocation = "World" | "Draw" | "Point";
+type ChartLocation = "World" | "Draw" | "Point" | "Search";
+type LocationSearchResult = {
+    displayName: string;
+    lat: number;
+    lon: number;
+};
 
 type LatLon = { lat: number; lon: number };
 type DrawState = {
@@ -963,6 +968,11 @@ export type AppState = {
     chartError: string | null;
     chartLoadingProgress: ChartLoadingProgress;
     chartLocation: ChartLocation;
+    chartLocationName: string | null;
+    chartLocationSearchQuery: string;
+    chartLocationSearchResults: LocationSearchResult[];
+    chartLocationSearchLoading: boolean;
+    chartLocationSearchError: string | null;
     chartPolygon: LatLon[] | null;
     chartPoint: LatLon | null;
     drawState: DrawState;
@@ -1018,6 +1028,11 @@ const state: AppState = {
     chartLoading: false,
     chartError: null,
     chartLocation: "World",
+    chartLocationName: null,
+    chartLocationSearchQuery: "",
+    chartLocationSearchResults: [],
+    chartLocationSearchLoading: false,
+    chartLocationSearchError: null,
     chartPolygon: null,
     chartPoint: null,
     drawState: { active: false, points: [], previewPoint: null },
@@ -1054,6 +1069,9 @@ let brandEyeFrame: number | null = null;
 let brandBlinkFrame: number | null = null;
 let brandBlinkTimeout: number | null = null;
 let brandEyeIdleTimeout: number | null = null;
+let locationSearchDebounce: number | null = null;
+let locationSearchRequestId = 0;
+const LOCATION_SEARCH_DEBOUNCE_MS = 500;
 
 function toKebab(input: string) {
     return input.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`);
@@ -1076,6 +1094,25 @@ function mergeStyles(...entries: Array<Style | undefined>): Style {
         if (!entry) return acc;
         return { ...acc, ...entry };
     }, {});
+}
+
+function escapeHtml(input: string): string {
+    return input.replace(/[&<>"']/g, (char) => {
+        switch (char) {
+            case "&":
+                return "&amp;";
+            case "<":
+                return "&lt;";
+            case ">":
+                return "&gt;";
+            case '"':
+                return "&quot;";
+            case "'":
+                return "&#39;";
+            default:
+                return char;
+        }
+    });
 }
 
 function formatDisplayDate(value: string): string {
@@ -1377,7 +1414,9 @@ function averageArrayInPolygon(
     for (let y = 0; y < height; y++) {
         const lat = 90 - y * latStep - latStep / 2;
         for (let x = 0; x < width; x++) {
-            const lon = -180 + x * lonStep + lonStep / 2;
+            // Data uses 0-360° longitude: convert to -180 to 180° for display
+            const lonRaw = x * lonStep + lonStep / 2;
+            const lon = lonRaw > 180 ? lonRaw - 360 : lonRaw;
             const idx = (height - 1 - y) * width + x;
             const raw = arrayData[idx];
             if (!isFinite(raw)) continue;
@@ -1410,18 +1449,62 @@ function valueAtPoint(
     point: LatLon
 ): number {
     const [height, width] = shape;
-    const lonNorm = ((point.lon + 180) % 360 + 360) % 360;
-    const x = Math.min(width - 1, Math.max(0, Math.floor((lonNorm / 360) * width)));
-    const y = Math.min(
-        height - 1,
-        Math.max(0, Math.floor(((90 - point.lat) / 180) * height))
-    );
-    const idx = (height - 1 - y) * width + x;
-    const raw = array[idx];
-    if (!Number.isFinite(raw)) {
+
+    // Convert longitude from [-180, 180) to [0, 360) for data grid lookup
+    // Climate data uses 0-360° longitude range: x=0 → 0°, x=width → 360°
+    const lonNormalized = ((point.lon + 360) % 360 + 360) % 360; // Convert to 0-360 range
+    const xFloat = (lonNormalized / 360) * width - 0.5;
+    const yFloat = ((90 - point.lat) / 180) * height - 0.5;
+
+    const clamp = (value: number, min: number, max: number) =>
+        Math.min(max, Math.max(min, value));
+
+    const x = clamp(Math.round(xFloat), 0, width - 1);
+    const y = clamp(Math.round(yFloat), 0, height - 1);
+
+    const idxFromXY = (xi: number, yi: number) =>
+        (height - 1 - yi) * width + xi;
+
+    const tryGetValue = (xi: number, yi: number) => {
+        const xiWrapped = ((xi % width) + width) % width; // wrap in case of dateline neighbors
+        const yiClamped = clamp(yi, 0, height - 1);
+        const index = idxFromXY(xiWrapped, yiClamped);
+        const raw = array[index];
+        return Number.isFinite(raw) ? raw : null;
+    };
+
+    let raw = tryGetValue(x, y);
+
+    // If the exact cell is missing (NaN), search nearby cells for the nearest valid value
+    if (raw === null) {
+        const maxRadius = 3;
+        let found: number | null = null;
+        for (let r = 1; r <= maxRadius && found === null; r++) {
+            for (let dy = -r; dy <= r; dy++) {
+                for (let dx = -r; dx <= r; dx++) {
+                    if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue; // only perimeter for efficiency
+                    const candidate = tryGetValue(x + dx, y + dy);
+                    if (candidate !== null) {
+                        found = candidate;
+                        break;
+                    }
+                }
+                if (found !== null) break;
+            }
+        }
+        raw = found;
+    }
+
+    if (raw === null) {
         throw new Error("No valid data at the selected point.");
     }
-    return convertValue(raw, variable, state.chartUnit);
+    
+    // Keep the raw value in base units; clamp humidity like other paths
+    const rawValue = variable === "hurs" ? Math.min(raw, 100) : raw;
+    if (!Number.isFinite(rawValue)) {
+        throw new Error(`Invalid value at point: ${rawValue}`);
+    }
+    return rawValue;
 }
 
 function resetDrawState(): DrawState {
@@ -1592,6 +1675,11 @@ function renderPointOverlay() {
 function startRegionDrawing() {
     state.chartLocation = "Draw";
     state.chartPolygon = null;
+    state.chartLocationName = null;
+    state.chartLocationSearchResults = [];
+    state.chartLocationSearchQuery = "";
+    state.chartLocationSearchError = null;
+    state.chartLocationSearchLoading = false;
     state.chartError = null;
     state.pointSelectActive = false;
     state.drawState = { active: true, points: [], previewPoint: null };
@@ -1610,8 +1698,15 @@ function startPointSelection() {
     state.chartLocation = "Point";
     state.chartPolygon = null;
     state.chartPoint = null;
+    state.chartLocationName = null;
+    state.chartLocationSearchResults = [];
+    state.chartLocationSearchQuery = "";
+    state.chartLocationSearchError = null;
+    state.chartLocationSearchLoading = false;
     state.chartError = null;
     state.drawState = resetDrawState();
+    // Reset chart unit to default for current variable to ensure correct conversion
+    state.chartUnit = getDefaultUnitOption(state.chartVariable).label;
     state.pointSelectActive = true;
     state.canvasView = "map";
     render();
@@ -1620,6 +1715,112 @@ function startPointSelection() {
 
 function stopPointSelection() {
     state.pointSelectActive = false;
+}
+
+async function fetchLocationSuggestions(
+    query: string
+): Promise<LocationSearchResult[]> {
+    const trimmed = query.trim();
+    if (!trimmed) return [];
+
+    const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(
+        trimmed
+    )}&limit=5&addressdetails=1`;
+    const response = await fetch(url, {
+        headers: {
+            Accept: "application/json",
+            "User-Agent": "climate-visualization-app/1.0",
+        },
+    });
+
+    if (!response.ok) {
+        throw new Error("Location search failed. Please try again.");
+    }
+
+    const payload = (await response.json()) as Array<{
+        display_name: string;
+        lat: string;
+        lon: string;
+    }>;
+
+    return payload
+        .map((item) => ({
+            displayName: item.display_name,
+            lat: Number(item.lat),
+            lon: Number(item.lon),
+        }))
+        .filter(
+            (item) => Number.isFinite(item.lat) && Number.isFinite(item.lon)
+        );
+}
+
+function applySearchedLocation(result: LocationSearchResult) {
+    if (locationSearchDebounce !== null) {
+        window.clearTimeout(locationSearchDebounce);
+        locationSearchDebounce = null;
+    }
+    state.chartLocation = "Search";
+    state.chartPoint = { lat: result.lat, lon: result.lon };
+    state.chartLocationName = result.displayName;
+    state.chartLocationSearchError = null;
+    state.chartLocationSearchResults = [];
+    state.chartLocationSearchLoading = false;
+    state.chartLocationSearchQuery = "";
+    state.chartError = null;
+    state.chartPolygon = null;
+    state.pointSelectActive = false;
+    state.drawState = resetDrawState();
+    state.canvasView = "chart";
+    stopRegionDrawing();
+    stopPointSelection();
+    render();
+    loadChartData();
+}
+
+async function handleLocationSearch(query: string) {
+    const trimmed = query.trim();
+    const requestId = ++locationSearchRequestId;
+    state.chartLocation = "Search";
+    state.chartLocationSearchQuery = query;
+    state.chartLocationSearchError = null;
+    state.chartLocationSearchResults = [];
+    state.chartLocationName = null;
+    state.chartPoint = null;
+    state.chartError = null;
+    state.chartPolygon = null;
+    state.pointSelectActive = false;
+    state.drawState = resetDrawState();
+    state.canvasView = "chart";
+    stopRegionDrawing();
+    stopPointSelection();
+
+    if (!trimmed) {
+        state.chartLocationSearchLoading = false;
+        state.chartLocationSearchResults = [];
+        state.chartLocationSearchError = null;
+        render();
+        return;
+    }
+
+    state.chartLocationSearchLoading = true;
+    render();
+
+    try {
+        const results = await fetchLocationSuggestions(trimmed);
+        if (requestId !== locationSearchRequestId) return;
+        state.chartLocationSearchResults = results;
+        if (!results.length) {
+            state.chartLocationSearchError = "No places found for that query.";
+        }
+    } catch (error) {
+        if (requestId !== locationSearchRequestId) return;
+        state.chartLocationSearchError =
+            error instanceof Error ? error.message : "Search failed.";
+    } finally {
+        if (requestId !== locationSearchRequestId) return;
+        state.chartLocationSearchLoading = false;
+        render();
+    }
 }
 
 function handleDrawMove(coords: LatLon) {
@@ -1943,6 +2144,17 @@ async function loadChartData() {
         render();
         return;
     }
+    if (state.chartLocation === "Search" && !state.chartPoint) {
+        state.chartError = state.chartLocationSearchLoading
+            ? "Searching for a place..."
+            : "Search for a place and pick a result.";
+        state.chartBoxes = null;
+        state.chartSamples = [];
+        state.chartLoading = false;
+        state.chartLoadingProgress = { total: 0, done: 0 };
+        render();
+        return;
+    }
 
     state.chartLoading = true;
     state.chartError = null;
@@ -2038,7 +2250,9 @@ async function loadChartData() {
                               data.shape,
                               state.chartPolygon
                           )
-                        : state.chartLocation === "Point" && state.chartPoint
+                        : (state.chartLocation === "Point" ||
+                              state.chartLocation === "Search") &&
+                          state.chartPoint
                         ? valueAtPoint(arr, state.chartVariable, data.shape, state.chartPoint)
                         : averageArray(arr, state.chartVariable);
                 samples.push({
@@ -2233,6 +2447,11 @@ function renderBranding() {
 
 function render() {
     if (!appRoot) return; // Defensive check (should never happen due to initialization check)
+    const shouldRestoreChartLocationDropdown = Boolean(
+        appRoot
+            .querySelector('.custom-select-wrapper[data-key="chartLocation"]')
+            ?.classList.contains("open")
+    );
     const resolutionFill = ((state.resolution - 1) / (3 - 1)) * 100;
 
     const modeTransform =
@@ -2444,6 +2663,15 @@ function render() {
   `;
 
     attachEventHandlers({ resolutionFill });
+
+    if (shouldRestoreChartLocationDropdown) {
+        const wrapper = appRoot.querySelector<HTMLElement>(
+            '.custom-select-wrapper[data-key="chartLocation"]'
+        );
+        if (wrapper) {
+            wrapper.classList.add("open");
+        }
+    }
 
     mapCanvas = appRoot.querySelector<HTMLCanvasElement>("#map-canvas");
 
@@ -2670,6 +2898,16 @@ function renderChartArea() {
         body = renderChartSvg(state.chartBoxes);
     }
 
+    const chartLocationLabel =
+        state.chartLocationName ||
+        (state.chartLocation === "Point" && state.chartPoint
+            ? `Point (${state.chartPoint.lat.toFixed(2)}, ${state.chartPoint.lon.toFixed(2)})`
+            : state.chartLocation === "Draw"
+            ? "Custom region"
+            : state.chartLocation === "World"
+            ? "Global"
+            : "");
+
     return `
       <div style="pointer-events:auto; width:100%; display:flex; align-items:center; justify-content:center; padding:24px; padding-right:${state.sidebarOpen ? SIDEBAR_WIDTH + 32 : 24}px;">
         <div style="${styleAttr(styles.chartPanel)}">
@@ -2678,9 +2916,11 @@ function renderChartArea() {
                 state.chartVariable,
                 state.metaData
             )}</div>
-            <div style="${styleAttr(styles.mapSubtitle)}">${formatDisplayDate(
-                state.chartDate
-            )}</div>
+            <div style="${styleAttr(styles.mapSubtitle)}">${
+                chartLocationLabel
+                    ? `${escapeHtml(chartLocationLabel)} · ${formatDisplayDate(state.chartDate)}`
+                    : formatDisplayDate(state.chartDate)
+            }</div>
           </div>
           <div style="${styleAttr(
               mergeStyles(styles.chartPlotWrapper, {
@@ -2730,19 +2970,27 @@ function renderSelect(
     name: string,
     options: string[],
     current: string,
-    opts?: { disabled?: boolean; dataKey?: string; infoType?: "scenario" | "variable" | "model" }
+    opts?: {
+        disabled?: boolean;
+        dataKey?: string;
+        infoType?: "scenario" | "variable" | "model";
+        selectedLabel?: string;
+        extraContent?: string;
+    }
 ) {
     const dataKey = opts?.dataKey ?? name;
     const disabled = opts?.disabled ? "disabled" : "";
     const uniqueId = `custom-select-${dataKey}-${Math.random().toString(36).substr(2, 9)}`;
     const infoType = opts?.infoType;
+    const displayValue = escapeHtml(opts?.selectedLabel ?? current);
+    const extraContent = opts?.extraContent ?? "";
     
     return `
     <div class="custom-select-container">
       <div class="custom-select-info-panel" id="${uniqueId}-info" role="tooltip"></div>
       <div class="custom-select-wrapper" data-key="${dataKey}" ${disabled ? 'data-disabled="true"' : ''} ${infoType ? `data-info-type="${infoType}"` : ''}>
         <div class="custom-select-trigger" data-action="update-select" data-key="${dataKey}" id="${uniqueId}-trigger" ${disabled ? 'aria-disabled="true"' : ''} tabindex="${disabled ? '-1' : '0'}">
-          <span class="custom-select-value">${current}</span>
+          <span class="custom-select-value">${displayValue}</span>
           <svg class="custom-select-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
             <path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
@@ -2763,6 +3011,7 @@ function renderSelect(
               `
               )
               .join("")}
+          ${extraContent}
         </div>
       </div>
     </div>
@@ -3206,6 +3455,60 @@ function renderChipGroup(options: string[], selected: string[], dataKey: string)
     `;
 }
 
+function renderChartLocationExtras() {
+    const results =
+        state.chartLocationSearchResults.length > 0
+            ? state.chartLocationSearchResults
+                  .map(
+                      (res) => `
+                <button
+                  type="button"
+                  class="location-search-result"
+                  data-role="location-search-result"
+                  data-name="${escapeHtml(res.displayName)}"
+                  data-lat="${res.lat}"
+                  data-lon="${res.lon}"
+                >
+                  <div class="location-search-result-name">${escapeHtml(res.displayName)}</div>
+                  <div class="location-search-result-coord">
+                    ${res.lat.toFixed(3)}, ${res.lon.toFixed(3)}
+                  </div>
+                </button>
+              `
+                  )
+                  .join("")
+            : "";
+
+    const hasQuery = state.chartLocationSearchQuery.trim().length > 0;
+    const statusMessage = state.chartLocationSearchError
+        ? `<div class="location-search-error">${escapeHtml(
+              state.chartLocationSearchError
+          )}</div>`
+        : state.chartLocationSearchLoading
+        ? `<div class="location-search-status">Searching...</div>`
+        : state.chartLocationSearchResults.length === 0 && hasQuery
+        ? `<div class="location-search-status">No places found. Try refining your query.</div>`
+        : "";
+
+    return `
+      <div class="custom-select-extra" data-role="chart-location-search">
+        <div class="location-search-row">
+          <input
+            type="text"
+            class="location-search-input"
+            value="${escapeHtml(state.chartLocationSearchQuery)}"
+            placeholder="Search a place (e.g. Aachen)"
+            data-role="location-search-input"
+          />
+        </div>
+        ${statusMessage}
+        <div class="location-search-results" data-role="location-search-results">
+          ${results || ""}
+        </div>
+      </div>
+    `;
+}
+
 function renderChartSection() {
     const chartModeIndicatorTransform =
         state.chartMode === "single" ? "translateX(0%)" : "translateX(100%)";
@@ -3300,60 +3603,17 @@ function renderChartSection() {
                 "chartLocation",
                 ["World", "Draw", "Point"],
                 state.chartLocation,
-                { dataKey: "chartLocation" }
+                {
+                    dataKey: "chartLocation",
+                    selectedLabel:
+                        state.chartLocation === "Search" &&
+                        state.chartLocationName
+                            ? `Search: ${state.chartLocationName}`
+                            : state.chartLocation,
+                    extraContent: renderChartLocationExtras(),
+                }
             )
         )}
-        ${
-            state.chartLocation === "Draw"
-                ? `<div style="${styleAttr({
-                      marginTop: 6,
-                      display: "flex",
-                      justifyContent: "flex-end",
-                  })}">
-                    <button
-                      type="button"
-                      data-action="restart-draw"
-                      style="${styleAttr({
-                          background: "var(--gradient-primary)",
-                          border: "none",
-                          borderRadius: 10,
-                          padding: "6px 10px",
-                          color: "white",
-                          fontWeight: 700,
-                          fontSize: 12,
-                          cursor: "pointer",
-                          boxShadow: "var(--shadow-elevated)",
-                      })}"
-                    >
-                      Restart drawing
-                    </button>
-                  </div>`
-                : state.chartLocation === "Point"
-                ? `<div style="${styleAttr({
-                      marginTop: 6,
-                      display: "flex",
-                      justifyContent: "flex-end",
-                  })}">
-                    <button
-                      type="button"
-                      data-action="restart-point"
-                      style="${styleAttr({
-                          background: "var(--gradient-primary)",
-                          border: "none",
-                          borderRadius: 10,
-                          padding: "6px 10px",
-                          color: "white",
-                          fontWeight: 700,
-                          fontSize: 12,
-                          cursor: "pointer",
-                          boxShadow: "var(--shadow-elevated)",
-                      })}"
-                    >
-                      Pick point again
-                    </button>
-                  </div>`
-                : ""
-        }
       </div>
 
       <div style="margin-top:14px">
@@ -4252,9 +4512,31 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                         startPointSelection();
                         return;
                     }
+                    if (val === "Search") {
+                        state.chartLocation = "Search";
+                        state.chartPolygon = null;
+                        state.pointSelectActive = false;
+                        state.drawState = resetDrawState();
+                        state.chartError = null;
+                        state.chartLocationName = null;
+                        state.chartLocationSearchError = null;
+                        state.chartLocationSearchResults = [];
+                        state.chartLocationSearchQuery = "";
+                        state.chartLocationSearchLoading = false;
+                        state.canvasView = "chart";
+                        stopRegionDrawing();
+                        stopPointSelection();
+                        render();
+                        return;
+                    }
                     state.chartLocation = "World";
                     state.chartPolygon = null;
                     state.chartPoint = null;
+                    state.chartLocationName = null;
+                    state.chartLocationSearchError = null;
+                    state.chartLocationSearchResults = [];
+                    state.chartLocationSearchQuery = "";
+                    state.chartLocationSearchLoading = false;
                     stopRegionDrawing();
                     stopPointSelection();
                     triggerChartReload = true;
@@ -4287,6 +4569,84 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                 }
             });
         });
+
+        const locationSearchInputs = chartLocationWrapper.querySelectorAll<HTMLInputElement>(
+            '[data-role="location-search-input"]'
+        );
+        const locationSearchResults = chartLocationWrapper.querySelectorAll<HTMLElement>(
+            '[data-role="location-search-result"]'
+        );
+
+        const clearLocationSearchDebounce = () => {
+            if (locationSearchDebounce !== null) {
+                window.clearTimeout(locationSearchDebounce);
+                locationSearchDebounce = null;
+            }
+        };
+
+        const triggerSearch = (query: string) => {
+            clearLocationSearchDebounce();
+            void handleLocationSearch(query);
+        };
+
+        locationSearchInputs.forEach((input) => {
+            input.addEventListener("input", () => {
+                const hadResults = state.chartLocationSearchResults.length > 0;
+                const wasLoading = state.chartLocationSearchLoading;
+                const hadError = Boolean(state.chartLocationSearchError);
+
+                state.chartLocationSearchQuery = input.value;
+                state.chartLocationSearchError = null;
+
+                clearLocationSearchDebounce();
+
+                const trimmed = input.value.trim();
+
+                if (!trimmed) {
+                    state.chartLocationSearchResults = [];
+                    state.chartLocationSearchLoading = false;
+                    render();
+                    return;
+                }
+
+                if (hadResults || wasLoading || hadError) {
+                    state.chartLocationSearchResults = [];
+                    state.chartLocationSearchLoading = false;
+                    render();
+                }
+
+                locationSearchDebounce = window.setTimeout(() => {
+                    triggerSearch(input.value);
+                }, LOCATION_SEARCH_DEBOUNCE_MS);
+            });
+            input.addEventListener("keydown", (e) => {
+                if (e.key === "Enter") {
+                    e.preventDefault();
+                    clearLocationSearchDebounce();
+                    triggerSearch(input.value);
+                }
+            });
+        });
+
+        locationSearchResults.forEach((resultEl) => {
+            resultEl.addEventListener("click", () => {
+                const lat = Number(resultEl.dataset.lat);
+                const lon = Number(resultEl.dataset.lon);
+                const name = resultEl.dataset.name ?? "Selected place";
+                if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+                chartLocationWrapper.classList.remove("open");
+                applySearchedLocation({ displayName: name, lat, lon });
+            });
+        });
+
+        if (state.chartLocation === "Search") {
+            const input = chartLocationWrapper.querySelector<HTMLInputElement>(
+                '[data-role="location-search-input"]'
+            );
+            if (input) {
+                setTimeout(() => input.focus(), 0);
+            }
+        }
     }
     
     // Keep old select handlers for backwards compatibility (if any native selects remain)
@@ -4299,24 +4659,6 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             const val = select.value;
             if (!key) return;
             await handleSelectChange(key, val);
-        })
-    );
-
-    const restartDrawButtons = root.querySelectorAll<HTMLButtonElement>(
-        '[data-action="restart-draw"]'
-    );
-    restartDrawButtons.forEach((btn) =>
-        btn.addEventListener("click", () => {
-            startRegionDrawing();
-        })
-    );
-
-    const restartPointButtons = root.querySelectorAll<HTMLButtonElement>(
-        '[data-action="restart-point"]'
-    );
-    restartPointButtons.forEach((btn) =>
-        btn.addEventListener("click", () => {
-            startPointSelection();
         })
     );
 

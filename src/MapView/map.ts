@@ -1,5 +1,4 @@
 import * as d3 from "d3";
-import { geoEquirectangular } from "d3-geo";
 import { hexToRgb } from "../Utils/colorUtils";
 import { dataToArray, type ClimateData } from "../Utils/dataClient";
 import { convertMinMax, convertValue } from "../Utils/unitConverter";
@@ -33,6 +32,14 @@ let drawMode = false;
 let drawCallbacks: DrawCallbacks | null = null;
 let transformCallback: (() => void) | null = null;
 
+// Export function to reset map transform state
+export function resetMapTransform(): void {
+    mapZoom = 1;
+    mapPanX = 0;
+    mapPanY = 0;
+    isDragging = false;
+}
+
 // Helper function to setup canvas with proper DPI scaling
 function setupCanvas(
     canvas: HTMLCanvasElement
@@ -59,6 +66,8 @@ function setupCanvas(
 }
 
 // Helper function to convert grid indices to lat/lon
+// Climate data typically uses 0-360° longitude range (not -180 to 180°)
+// We convert to -180 to 180° for standard display
 function gridToLatLon(
     x: number,
     y: number,
@@ -67,7 +76,11 @@ function gridToLatLon(
 ): [number, number] {
     const lonStep = 360 / width;
     const latStep = 180 / height;
-    const lon = -180 + x * lonStep + lonStep / 2;
+    // Data uses 0-360° longitude: x=0 → 0°, x=width → 360°
+    // Convert to -180 to 180° for display: subtract 180°
+    const lonRaw = x * lonStep + lonStep / 2;
+    const lon = lonRaw > 180 ? lonRaw - 360 : lonRaw;
+    // Latitude: y=0 → 90° (North Pole), y=height → -90° (South Pole)
     const lat = 90 - y * latStep - latStep / 2;
     return [lon, lat];
 }
@@ -114,16 +127,42 @@ function pointerToLonLat(
     const mapWidth = cachedMapCanvas.width;
     const mapHeight = cachedMapCanvas.height;
 
-    worldX = ((worldX % mapWidth) + mapWidth) % mapWidth;
-
-    if (worldX < 0 || worldX > mapWidth || worldY < 0 || worldY > mapHeight) {
+    // Validate bounds first (allowing for wrapped coordinates)
+    if (worldY < 0 || worldY > mapHeight) {
         return null;
     }
 
-    const lon = (worldX / mapWidth) * 360 - 180;
-    const lat = 90 - (worldY / mapHeight) * 180;
+    // Normalize worldX to [0, mapWidth) range (canonical representation)
+    // Handle both positive and negative worldX values correctly
+    let normalizedX = worldX;
+    
+    // Use modulo arithmetic that works correctly with negative numbers
+    // JavaScript's % operator gives negative results for negative inputs, so we need to handle that
+    normalizedX = normalizedX % mapWidth;
+    if (normalizedX < 0) {
+        normalizedX += mapWidth;
+    }
+    
+    // Clamp to ensure it's strictly in [0, mapWidth) range
+    if (normalizedX < 0) normalizedX = 0;
+    if (normalizedX >= mapWidth) normalizedX = mapWidth * (1 - Number.EPSILON);
 
-    return { lat, lon };
+    // Calculate longitude from normalized coordinate (will be in [-180, 180) range)
+    const lon = (normalizedX / mapWidth) * 360 - 180;
+    
+    // Calculate latitude (will be in [-90, 90] range)
+    const lat = 90 - (worldY / mapHeight) * 180;
+    
+    // Final safety clamp to ensure values are in valid ranges
+    const clampedLon = Math.max(-180, Math.min(180, lon));
+    const clampedLat = Math.max(-90, Math.min(90, lat));
+
+    // Additional validation: ensure no NaN or Infinity values
+    if (!Number.isFinite(clampedLon) || !Number.isFinite(clampedLat)) {
+        return null;
+    }
+
+    return { lat: clampedLat, lon: clampedLon };
 }
 
 function setDrawMode(enabled: boolean, callbacks?: DrawCallbacks | null) {
@@ -143,7 +182,12 @@ export function projectLonLatToCanvas(
     const mapWidth = cachedMapCanvas.width;
     const mapHeight = cachedMapCanvas.height;
 
-    const projectedX = ((lon + 180) / 360) * mapWidth;
+    // Normalize longitude to [-180, 180] range first
+    let normalizedLon = lon;
+    while (normalizedLon > 180) normalizedLon -= 360;
+    while (normalizedLon < -180) normalizedLon += 360;
+
+    const projectedX = ((normalizedLon + 180) / 360) * mapWidth;
     const projectedY = ((90 - lat) / 180) * mapHeight;
 
     const x = projectedX * mapZoom - mapPanX;
@@ -151,20 +195,28 @@ export function projectLonLatToCanvas(
 
     const rect = canvas.getBoundingClientRect();
     const wrapWidth = mapWidth * mapZoom;
-
-    let wrappedX = x;
-    while (wrappedX < -wrapWidth) {
-        wrappedX += wrapWidth;
-    }
-    while (wrappedX > rect.width + wrapWidth) {
-        wrappedX -= wrapWidth;
+    
+    // Find the copy of the point that's closest to the center of the current view
+    // This ensures lines connect properly when crossing the antimeridian
+    const viewCenterX = rect.width / 2;
+    let bestX = x;
+    let bestDistance = Math.abs(x - viewCenterX);
+    
+    // Try copies to the left and right to find the closest one to the view center
+    for (let offset = -wrapWidth; offset <= wrapWidth; offset += wrapWidth) {
+        const candidateX = x + offset;
+        const distance = Math.abs(candidateX - viewCenterX);
+        if (distance < bestDistance) {
+            bestDistance = distance;
+            bestX = candidateX;
+        }
     }
 
     if (y < -mapHeight * mapZoom || y > rect.height + mapHeight * mapZoom) {
         return null;
     }
 
-    return { x: wrappedX, y };
+    return { x: bestX, y };
 }
 
 export function screenToLonLat(
@@ -329,7 +381,8 @@ function redrawCachedMap(canvas: HTMLCanvasElement): void {
     ctx.scale(mapZoom, mapZoom);
 
     // Draw the cached pre-rendered map multiple times for horizontal wrapping
-    ctx.imageSmoothingEnabled = true;
+    // Disable image smoothing for crisp pixels (nearest-neighbor interpolation)
+    ctx.imageSmoothingEnabled = false;
     const mapWidth = cachedMapCanvas.width;
 
     // Calculate visible range in world coordinates
@@ -414,11 +467,15 @@ export function renderMapData(
     // Pre-compute RGB values for palette
     const paletteRgb = colors.map(hexToRgb);
 
-    // Setup D3 geographic projection for seamless horizontal wrapping
-    // Use equirectangular with explicit scale to ensure full width coverage
-    const projection = geoEquirectangular()
-        .scale(viewWidth / (2 * Math.PI))
-        .translate([viewWidth / 2, viewHeight / 2]);
+    // Direct equirectangular projection (simple linear mapping)
+    // This ensures accurate coordinate mapping without D3 projection quirks
+    // Formula: x = (lon + 180) / 360 * viewWidth, y = (90 - lat) / 180 * viewHeight
+    // This maps: lon[-180,180] -> x[0,viewWidth], lat[90,-90] -> y[0,viewHeight]
+    function projectLonLat(lon: number, lat: number): [number, number] {
+        const x = ((lon + 180) / 360) * viewWidth;
+        const y = ((90 - lat) / 180) * viewHeight;
+        return [x, y];
+    }
 
     // Create an offscreen canvas for the projected data
     const offscreen = document.createElement("canvas");
@@ -446,11 +503,8 @@ export function renderMapData(
             // Convert grid indices to lat/lon
             const [lon, lat] = gridToLatLon(x, y, width, height);
 
-            // Project to canvas coordinates
-            const coords = projection([lon, lat]);
-            if (!coords) continue;
-
-            const [px, py] = coords;
+            // Project to canvas coordinates using direct equirectangular mapping
+            const [px, py] = projectLonLat(lon, lat);
 
             // Convert value if unit conversion is selected (for color mapping)
             let displayValue = value;
@@ -512,7 +566,8 @@ export function renderMapData(
     ctx.scale(mapZoom, mapZoom);
 
     // horizontal wrapping
-    ctx.imageSmoothingEnabled = true;
+    // Disable image smoothing for crisp pixels (nearest-neighbor interpolation)
+    ctx.imageSmoothingEnabled = false;
     const mapWidth = cachedMapCanvas.width;
     const viewLeft = mapPanX / mapZoom;
     const viewRight = (mapPanX + rect.width) / mapZoom;

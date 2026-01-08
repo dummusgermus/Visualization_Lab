@@ -9,14 +9,9 @@ type DrawCallbacks = {
     onMove?: (coords: { lat: number; lon: number }) => void;
 };
 
-let mapZoom = 1;
-let mapPanX = 0;
-let mapPanY = 0;
-let isDragging = false;
-let dragStartX = 0;
-let dragStartY = 0;
-let dragStartPanX = 0;
-let dragStartPanY = 0;
+// Use d3.ZoomTransform for pan/zoom state
+let currentTransform = d3.zoomIdentity;
+let zoomBehavior: d3.ZoomBehavior<HTMLCanvasElement, unknown> | null = null;
 
 // Cache for pre-rendered map
 let cachedMapCanvas: HTMLCanvasElement | null = null;
@@ -34,16 +29,17 @@ let transformCallback: (() => void) | null = null;
 
 // Export function to reset map transform state
 export function resetMapTransform(): void {
-    mapZoom = 1;
-    mapPanX = 0;
-    mapPanY = 0;
-    isDragging = false;
+    currentTransform = d3.zoomIdentity;
+    if (zoomBehavior && cachedMapCanvas) {
+        d3.select(cachedMapCanvas).call(
+            zoomBehavior.transform,
+            d3.zoomIdentity
+        );
+    }
 }
 
 // Helper function to setup canvas with proper DPI scaling
-function setupCanvas(
-    canvas: HTMLCanvasElement
-): {
+function setupCanvas(canvas: HTMLCanvasElement): {
     ctx: CanvasRenderingContext2D;
     rect: DOMRect;
     viewWidth: number;
@@ -71,17 +67,15 @@ function setupCanvas(
 function gridToLatLon(
     x: number,
     y: number,
-    width: number,
-    height: number
+    lonStep: number,
+    latStep: number
 ): [number, number] {
-    const lonStep = 360 / width;
-    const latStep = 180 / height;
     // Data uses 0-360° longitude: x=0 → 0°, x=width → 360°
     // Convert to -180 to 180° for display: subtract 180°
     const lonRaw = x * lonStep + lonStep / 2;
     const lon = lonRaw > 180 ? lonRaw - 360 : lonRaw;
-    // Latitude: y=0 → 90° (North Pole), y=height → -90° (South Pole)
-    const lat = 90 - y * latStep - latStep / 2;
+    // Latitude: y=0 → 90° (North), y=height → -60° (South, excluding Antarctica)
+    const lat = 90 - (y * latStep + latStep / 2);
     return [lon, lat];
 }
 
@@ -103,8 +97,6 @@ function getDataValue(
 function updateCursor(canvas: HTMLCanvasElement) {
     if (drawMode) {
         canvas.style.cursor = "crosshair";
-    } else if (isDragging) {
-        canvas.style.cursor = "grabbing";
     } else {
         canvas.style.cursor = "auto";
     }
@@ -121,8 +113,9 @@ function pointerToLonLat(
     const mouseX = clientX - rect.left;
     const mouseY = clientY - rect.top;
 
-    let worldX = (mouseX + mapPanX) / mapZoom;
-    const worldY = (mouseY + mapPanY) / mapZoom;
+    // Apply inverse D3 zoom transform to get world coordinates
+    let worldX = (mouseX - currentTransform.x) / currentTransform.k;
+    const worldY = (mouseY - currentTransform.y) / currentTransform.k;
 
     const mapWidth = cachedMapCanvas.width;
     const mapHeight = cachedMapCanvas.height;
@@ -135,24 +128,24 @@ function pointerToLonLat(
     // Normalize worldX to [0, mapWidth) range (canonical representation)
     // Handle both positive and negative worldX values correctly
     let normalizedX = worldX;
-    
+
     // Use modulo arithmetic that works correctly with negative numbers
     // JavaScript's % operator gives negative results for negative inputs, so we need to handle that
     normalizedX = normalizedX % mapWidth;
     if (normalizedX < 0) {
         normalizedX += mapWidth;
     }
-    
+
     // Clamp to ensure it's strictly in [0, mapWidth) range
     if (normalizedX < 0) normalizedX = 0;
     if (normalizedX >= mapWidth) normalizedX = mapWidth * (1 - Number.EPSILON);
 
     // Calculate longitude from normalized coordinate (will be in [-180, 180) range)
     const lon = (normalizedX / mapWidth) * 360 - 180;
-    
+
     // Calculate latitude (will be in [-90, 90] range)
     const lat = 90 - (worldY / mapHeight) * 180;
-    
+
     // Final safety clamp to ensure values are in valid ranges
     const clampedLon = Math.max(-180, Math.min(180, lon));
     const clampedLat = Math.max(-90, Math.min(90, lat));
@@ -168,9 +161,6 @@ function pointerToLonLat(
 function setDrawMode(enabled: boolean, callbacks?: DrawCallbacks | null) {
     drawMode = enabled;
     drawCallbacks = enabled ? callbacks ?? null : null;
-    if (enabled) {
-        isDragging = false;
-    }
 }
 
 export function projectLonLatToCanvas(
@@ -190,18 +180,19 @@ export function projectLonLatToCanvas(
     const projectedX = ((normalizedLon + 180) / 360) * mapWidth;
     const projectedY = ((90 - lat) / 180) * mapHeight;
 
-    const x = projectedX * mapZoom - mapPanX;
-    const y = projectedY * mapZoom - mapPanY;
+    // Apply D3 zoom transform
+    const x = projectedX * currentTransform.k + currentTransform.x;
+    const y = projectedY * currentTransform.k + currentTransform.y;
 
     const rect = canvas.getBoundingClientRect();
-    const wrapWidth = mapWidth * mapZoom;
-    
+    const wrapWidth = mapWidth * currentTransform.k;
+
     // Find the copy of the point that's closest to the center of the current view
     // This ensures lines connect properly when crossing the antimeridian
     const viewCenterX = rect.width / 2;
     let bestX = x;
     let bestDistance = Math.abs(x - viewCenterX);
-    
+
     // Try copies to the left and right to find the closest one to the view center
     for (let offset = -wrapWidth; offset <= wrapWidth; offset += wrapWidth) {
         const candidateX = x + offset;
@@ -212,7 +203,10 @@ export function projectLonLatToCanvas(
         }
     }
 
-    if (y < -mapHeight * mapZoom || y > rect.height + mapHeight * mapZoom) {
+    if (
+        y < -mapHeight * currentTransform.k ||
+        y > rect.height + mapHeight * currentTransform.k
+    ) {
         return null;
     }
 
@@ -247,57 +241,42 @@ export function setupMapInteractions(
     transformCallback = options?.onTransform ?? null;
     updateCursor(canvas);
 
-    canvas.addEventListener(
-        "wheel",
-        (e) => {
-            e.preventDefault();
-            const rect = canvas.getBoundingClientRect();
-            const mouseX = e.clientX - rect.left;
-            const mouseY = e.clientY - rect.top;
+    const selection = d3.select(canvas);
 
-            const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
-            const newZoom = mapZoom * zoomFactor;
-
-            const minZoom = 0.8;
-            const maxZoom = 10.0;
-
-            if (newZoom >= minZoom && newZoom <= maxZoom) {
-                const worldX = (mouseX + mapPanX) / mapZoom;
-                const worldY = (mouseY + mapPanY) / mapZoom;
-
-                mapZoom = newZoom;
-                mapPanX = worldX * mapZoom - mouseX;
-                mapPanY = worldY * mapZoom - mouseY;
-
-                if (currentData) {
-                    redrawCachedMap(canvas);
-                }
-                transformCallback?.();
+    zoomBehavior = d3
+        .zoom<HTMLCanvasElement, unknown>()
+        .scaleExtent([0.8, 10.0])
+        .filter((e: any) => {
+            if (drawMode) return false;
+            return !e.ctrlKey && !e.button;
+        })
+        .on("zoom", (e: d3.D3ZoomEvent<HTMLCanvasElement, unknown>) => {
+            currentTransform = e.transform;
+            if (currentData) {
+                redrawCachedMap(canvas);
             }
-        },
-        { passive: false }
-    );
+            transformCallback?.();
+        })
+        .on("start", () => {
+            canvas.style.cursor = "grabbing";
+            hideTooltip();
+        })
+        .on("end", () => {
+            updateCursor(canvas);
+        });
 
-    canvas.addEventListener("mousedown", (e) => {
-        if (drawMode && e.button === 0) {
+    selection.call(zoomBehavior);
+
+    selection.on("click.draw", (e: MouseEvent) => {
+        if (drawMode) {
             const coords = pointerToLonLat(canvas, e.clientX, e.clientY);
             if (coords) {
                 drawCallbacks?.onClick?.(coords);
             }
-            return;
-        }
-
-        if (e.button === 0) {
-            isDragging = true;
-            dragStartX = e.clientX;
-            dragStartY = e.clientY;
-            dragStartPanX = mapPanX;
-            dragStartPanY = mapPanY;
-            canvas.style.cursor = "grabbing";
         }
     });
 
-    canvas.addEventListener("mousemove", (e) => {
+    selection.on("pointermove.tooltip", (e: PointerEvent) => {
         if (drawMode) {
             const coords = pointerToLonLat(canvas, e.clientX, e.clientY);
             if (coords) {
@@ -307,20 +286,8 @@ export function setupMapInteractions(
             return;
         }
 
-        if (isDragging && currentData) {
-            const deltaX = e.clientX - dragStartX;
-            const deltaY = e.clientY - dragStartY;
-
-            mapPanX = dragStartPanX - deltaX;
-            mapPanY = dragStartPanY - deltaY;
-
-            redrawCachedMap(canvas);
-            transformCallback?.();
-
-            // Hide tooltip while dragging
-            hideTooltip();
-        } else if (
-            !isDragging &&
+        if (
+            e.buttons === 0 &&
             cachedData &&
             cachedValueLookup &&
             cachedMapCanvas
@@ -339,26 +306,7 @@ export function setupMapInteractions(
         }
     });
 
-    canvas.addEventListener("mouseup", () => {
-        if (drawMode) {
-            return;
-        }
-        if (isDragging) {
-            isDragging = false;
-            updateCursor(canvas);
-        }
-    });
-
-    canvas.addEventListener("mouseleave", () => {
-        if (drawMode) {
-            hideTooltip();
-            return;
-        }
-        if (isDragging) {
-            isDragging = false;
-            canvas.style.cursor = "grab";
-        }
-        // Hide tooltip when leaving canvas
+    selection.on("pointerleave", () => {
         hideTooltip();
     });
 
@@ -377,25 +325,21 @@ function redrawCachedMap(canvas: HTMLCanvasElement): void {
     ctx.clearRect(0, 0, rect.width, rect.height);
     ctx.save();
 
-    ctx.translate(-mapPanX, -mapPanY);
-    ctx.scale(mapZoom, mapZoom);
+    // Apply D3 zoom transform
+    ctx.translate(currentTransform.x, currentTransform.y);
+    ctx.scale(currentTransform.k, currentTransform.k);
 
     // Draw the cached pre-rendered map multiple times for horizontal wrapping
     // Disable image smoothing for crisp pixels (nearest-neighbor interpolation)
     ctx.imageSmoothingEnabled = false;
     const mapWidth = cachedMapCanvas.width;
-
-    // Calculate visible range in world coordinates
-    const viewLeft = mapPanX / mapZoom;
-    const viewRight = (mapPanX + rect.width) / mapZoom;
-
-    // Calculate which tiles we need to cover the visible area
+    const viewLeft = -currentTransform.x / currentTransform.k;
+    const viewRight = (rect.width - currentTransform.x) / currentTransform.k;
     const startTile = Math.floor(viewLeft / mapWidth) - 1;
     const endTile = Math.ceil(viewRight / mapWidth) + 1;
 
     for (let i = startTile; i <= endTile; i++) {
-        // Add tiny overlap to prevent gaps between tiles
-        ctx.drawImage(cachedMapCanvas, i * mapWidth - 0.5, 0);
+        ctx.drawImage(cachedMapCanvas, i * mapWidth, 0);
     }
 
     ctx.restore();
@@ -423,9 +367,7 @@ export function renderMapData(
 
     const setup = setupCanvas(mapCanvas);
     if (!setup) return;
-
     const { ctx, rect, viewWidth, viewHeight } = setup;
-
     const [height, width] = data.shape;
 
     ctx.clearRect(0, 0, rect.width, rect.height);
@@ -470,7 +412,7 @@ export function renderMapData(
     // Direct equirectangular projection (simple linear mapping)
     // This ensures accurate coordinate mapping without D3 projection quirks
     // Formula: x = (lon + 180) / 360 * viewWidth, y = (90 - lat) / 180 * viewHeight
-    // This maps: lon[-180,180] -> x[0,viewWidth], lat[90,-90] -> y[0,viewHeight]
+    // This maps: lon[-180,180] -> x[0,viewWidth], lat[90,-60] -> y[0,viewHeight]
     function projectLonLat(lon: number, lat: number): [number, number] {
         const x = ((lon + 180) / 360) * viewWidth;
         const y = ((90 - lat) / 180) * viewHeight;
@@ -494,6 +436,10 @@ export function renderMapData(
     const cellSize = Math.max(viewWidth / width, viewHeight / height) * 0.8;
     const halfCell = Math.ceil(cellSize / 2);
 
+    const lonStep = 360 / width;
+    // NEX-GDDP-CMIP6 dataset: latitude range is -60°S to 90°N (150° total, not 180°)
+    const latStep = 150 / height;
+
     // Render each data point with lat/lon projection
     for (let y = 0; y < height; y++) {
         for (let x = 0; x < width; x++) {
@@ -501,7 +447,7 @@ export function renderMapData(
             if (value === null) continue;
 
             // Convert grid indices to lat/lon
-            const [lon, lat] = gridToLatLon(x, y, width, height);
+            const [lon, lat] = gridToLatLon(x, y, lonStep, latStep);
 
             // Project to canvas coordinates using direct equirectangular mapping
             const [px, py] = projectLonLat(lon, lat);
@@ -562,15 +508,15 @@ export function renderMapData(
     ctx.clearRect(0, 0, rect.width, rect.height);
     ctx.save();
 
-    ctx.translate(-mapPanX, -mapPanY);
-    ctx.scale(mapZoom, mapZoom);
+    // Apply D3 zoom transform
+    ctx.translate(currentTransform.x, currentTransform.y);
+    ctx.scale(currentTransform.k, currentTransform.k);
 
     // horizontal wrapping
-    // Disable image smoothing for crisp pixels (nearest-neighbor interpolation)
     ctx.imageSmoothingEnabled = false;
     const mapWidth = cachedMapCanvas.width;
-    const viewLeft = mapPanX / mapZoom;
-    const viewRight = (mapPanX + rect.width) / mapZoom;
+    const viewLeft = -currentTransform.x / currentTransform.k;
+    const viewRight = (rect.width - currentTransform.x) / currentTransform.k;
     const startTile = Math.floor(viewLeft / mapWidth) - 1;
     const endTile = Math.ceil(viewRight / mapWidth) + 1;
 
@@ -593,9 +539,9 @@ function updateTooltip(
 ): void {
     if (!cachedValueLookup || !cachedMapCanvas) return;
 
-    // Convert mouse position to world coordinates (accounting for zoom and pan)
-    let worldX = (mouseX + mapPanX) / mapZoom;
-    const worldY = (mouseY + mapPanY) / mapZoom;
+    // Apply inverse D3 zoom transform to get world coordinates
+    let worldX = (mouseX - currentTransform.x) / currentTransform.k;
+    const worldY = (mouseY - currentTransform.y) / currentTransform.k;
 
     // Normalize worldX to be within the map width (for repeating tiles)
     const mapWidth = cachedMapCanvas.width;
@@ -615,7 +561,15 @@ function updateTooltip(
             const lat = 90 - (worldY / mapHeight) * 180;
 
             // Let tooltip handle conversion based on selected unit
-            showTooltip(clientX, clientY, lat, lon, rawValue, unit, isDifference);
+            showTooltip(
+                clientX,
+                clientY,
+                lat,
+                lon,
+                rawValue,
+                unit,
+                isDifference
+            );
         } else {
             hideTooltip();
         }

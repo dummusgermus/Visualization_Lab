@@ -27,8 +27,8 @@ import {
     type Metadata,
 } from "./Utils/dataClient";
 import {
-    getDefaultUnitOption,
     convertValue,
+    getDefaultUnitOption,
     getUnitOptions,
 } from "./Utils/unitConverter";
 
@@ -97,9 +97,10 @@ function parseDate(date: string): Date {
     return new Date(date);
 }
 
-function intersectScenarioRange(
-    scenarioList: string[]
-): { start: string; end: string } {
+function intersectScenarioRange(scenarioList: string[]): {
+    start: string;
+    end: string;
+} {
     if (!scenarioList.length) {
         return getTimeRangeForScenario("Historical");
     }
@@ -157,49 +158,60 @@ const variables = [
 
 // Information content for scenarios
 const scenarioInfo: Record<string, string> = {
-    "SSP245": "A moderate scenario (2015-2100) that assumes we take active measures against climate change. This represents a realistic path where significant climate protection policies are implemented, leading to moderate warming by the end of the century.",
-    "SSP370": "A moderate-to-high scenario (2015-2100) representing a middle ground. This path assumes some climate action is taken, but not enough to prevent substantial warming. It falls between optimistic and pessimistic outcomes.",
-    "SSP585": "A pessimistic scenario (2015-2100) representing a worst-case path with minimal climate action. This shows what happens if we continue with current trends and take little to no measures against climate change, leading to severe warming.",
-    "Historical": "Historical climate simulation (1950-2014) based on past conditions. This represents simulated climate data for the historical period, used as a baseline to compare against future projections.",
+    SSP245: "A moderate scenario (2015-2100) that assumes we take active measures against climate change. This represents a realistic path where significant climate protection policies are implemented, leading to moderate warming by the end of the century.",
+    SSP370: "A moderate-to-high scenario (2015-2100) representing a middle ground. This path assumes some climate action is taken, but not enough to prevent substantial warming. It falls between optimistic and pessimistic outcomes.",
+    SSP585: "A pessimistic scenario (2015-2100) representing a worst-case path with minimal climate action. This shows what happens if we continue with current trends and take little to no measures against climate change, leading to severe warming.",
+    Historical:
+        "Historical climate simulation (1950-2014) based on past conditions. This represents simulated climate data for the historical period, used as a baseline to compare against future projections.",
 };
 
 // Full names for variables
 const variableFullNames: Record<string, string> = {
-    "tas": "Near-Surface Air Temperature",
-    "pr": "Precipitation",
-    "rsds": "Surface Downwelling Shortwave Radiation",
-    "hurs": "Near-Surface Relative Humidity",
-    "rlds": "Surface Downwelling Longwave Radiation",
-    "sfcWind": "Daily-Mean Near-Surface Wind Speed",
-    "tasmin": "Daily Minimum Near-Surface Air Temperature",
-    "tasmax": "Daily Maximum Near-Surface Air Temperature",
+    tas: "Near-Surface Air Temperature",
+    pr: "Precipitation",
+    rsds: "Surface Downwelling Shortwave Radiation",
+    hurs: "Near-Surface Relative Humidity",
+    rlds: "Surface Downwelling Longwave Radiation",
+    sfcWind: "Daily-Mean Near-Surface Wind Speed",
+    tasmin: "Daily Minimum Near-Surface Air Temperature",
+    tasmax: "Daily Maximum Near-Surface Air Temperature",
 };
 
 // Information content for variables
 const variableInfo: Record<string, string> = {
-    "tas": "The air temperature near the Earth's surface, measured in Kelvin.",
-    "pr": "The amount of water that falls from the atmosphere to the surface, measured as mass per unit area per unit time.",
-    "rsds": "Incoming solar radiation reaching the Earth's surface, measured in Watts per square meter.",
-    "hurs": "The amount of moisture in the air relative to the maximum it can hold, expressed as a percentage.",
-    "rlds": "Incoming thermal radiation from the atmosphere, measured in Watts per square meter.",
-    "sfcWind": "The average wind speed near the surface over a day, measured in meters per second.",
-    "tasmin": "The lowest air temperature near the surface during a day, measured in Kelvin.",
-    "tasmax": "The highest air temperature near the surface during a day, measured in Kelvin.",
+    tas: "The air temperature near the Earth's surface, measured in Kelvin.",
+    pr: "The amount of water that falls from the atmosphere to the surface, measured as mass per unit area per unit time.",
+    rsds: "Incoming solar radiation reaching the Earth's surface, measured in Watts per square meter.",
+    hurs: "The amount of moisture in the air relative to the maximum it can hold, expressed as a percentage.",
+    rlds: "Incoming thermal radiation from the atmosphere, measured in Watts per square meter.",
+    sfcWind:
+        "The average wind speed near the surface over a day, measured in meters per second.",
+    tasmin: "The lowest air temperature near the surface during a day, measured in Kelvin.",
+    tasmax: "The highest air temperature near the surface during a day, measured in Kelvin.",
 };
 
 // Information content for models
 const modelInfo: Record<string, string> = {
-    "ACCESS-CM2": "Developed by Australia's research institutions. This model is part of the global CMIP6 ensemble, providing climate projections that contribute to our understanding of future climate patterns.",
-    "CanESM5": "The Canadian Earth System Model version 5, developed by Environment and Climate Change Canada. This model represents North American climate research and contributes valuable projections to the global climate science community.",
-    "CESM2": "The Community Earth System Model version 2, developed by the National Center for Atmospheric Research (NCAR) in the United States. One of the most widely used models in climate research, known for its comprehensive representation of Earth's climate system.",
-    "CMCC-CM2-SR5": "Developed by the Euro-Mediterranean Center on Climate Change (CMCC) in Italy. This model provides European perspectives on climate change and is particularly valuable for understanding Mediterranean and European climate patterns.",
-    "EC-Earth3": "A collaborative European climate model developed by multiple research institutions across Europe. This model combines expertise from various European countries to provide comprehensive climate projections.",
-    "GFDL-ESM4": "Developed by NOAA's Geophysical Fluid Dynamics Laboratory in the United States. This model is known for its advanced representation of ocean and atmosphere interactions, providing detailed climate projections.",
-    "INM-CM5-0": "Developed by the Institute of Numerical Mathematics in Russia. This model contributes a unique perspective from Russian climate research to the global ensemble of climate models.",
-    "IPSL-CM6A-LR": "Developed by the Institut Pierre-Simon Laplace in France. This model is part of a long-standing French climate modeling tradition and provides important contributions to understanding global climate dynamics.",
-    "MIROC6": "Developed by a Japanese research consortium. This model represents Asian climate research expertise and contributes valuable insights, particularly for understanding climate patterns in the Asia-Pacific region.",
-    "MPI-ESM1-2-HR": "Developed by the Max Planck Institute in Germany. This high-resolution model provides detailed climate projections and is known for its sophisticated representation of Earth's climate system.",
-    "MRI-ESM2-0": "Developed by Japan's Meteorological Research Institute. This model contributes Japanese climate research expertise to the global ensemble, providing valuable perspectives on climate change projections.",
+    "ACCESS-CM2":
+        "Developed by Australia's research institutions. This model is part of the global CMIP6 ensemble, providing climate projections that contribute to our understanding of future climate patterns.",
+    CanESM5:
+        "The Canadian Earth System Model version 5, developed by Environment and Climate Change Canada. This model represents North American climate research and contributes valuable projections to the global climate science community.",
+    CESM2: "The Community Earth System Model version 2, developed by the National Center for Atmospheric Research (NCAR) in the United States. One of the most widely used models in climate research, known for its comprehensive representation of Earth's climate system.",
+    "CMCC-CM2-SR5":
+        "Developed by the Euro-Mediterranean Center on Climate Change (CMCC) in Italy. This model provides European perspectives on climate change and is particularly valuable for understanding Mediterranean and European climate patterns.",
+    "EC-Earth3":
+        "A collaborative European climate model developed by multiple research institutions across Europe. This model combines expertise from various European countries to provide comprehensive climate projections.",
+    "GFDL-ESM4":
+        "Developed by NOAA's Geophysical Fluid Dynamics Laboratory in the United States. This model is known for its advanced representation of ocean and atmosphere interactions, providing detailed climate projections.",
+    "INM-CM5-0":
+        "Developed by the Institute of Numerical Mathematics in Russia. This model contributes a unique perspective from Russian climate research to the global ensemble of climate models.",
+    "IPSL-CM6A-LR":
+        "Developed by the Institut Pierre-Simon Laplace in France. This model is part of a long-standing French climate modeling tradition and provides important contributions to understanding global climate dynamics.",
+    MIROC6: "Developed by a Japanese research consortium. This model represents Asian climate research expertise and contributes valuable insights, particularly for understanding climate patterns in the Asia-Pacific region.",
+    "MPI-ESM1-2-HR":
+        "Developed by the Max Planck Institute in Germany. This high-resolution model provides detailed climate projections and is known for its sophisticated representation of Earth's climate system.",
+    "MRI-ESM2-0":
+        "Developed by Japan's Meteorological Research Institute. This model contributes Japanese climate research expertise to the global ensemble, providing valuable perspectives on climate change projections.",
 };
 
 const paletteOptions = [
@@ -290,12 +302,14 @@ const styles: Record<string, Style> = {
         opacity: 0.92,
     },
     brandLids: {
-        transform: "translate(60px, 40px) scaleY(var(--blink-open, 1)) translate(-60px, -40px)",
+        transform:
+            "translate(60px, 40px) scaleY(var(--blink-open, 1)) translate(-60px, -40px)",
         transformOrigin: "60px 40px",
         transition: "none",
     },
     brandClipRect: {
-        transform: "translate(60px, 40px) scaleY(var(--blink-open, 1)) translate(-60px, -40px)",
+        transform:
+            "translate(60px, 40px) scaleY(var(--blink-open, 1)) translate(-60px, -40px)",
         transformOrigin: "60px 40px",
         transition: "none",
     },
@@ -1152,7 +1166,9 @@ function describeCompareContext(state: AppState): {
                 title: "Comparing two dates",
                 paragraphs: [
                     `We are comparing ${variableLabel} on ${start} versus ${end} under the ${state.scenario} scenario using the ${state.model} model.`,
-                    `Values on the map represent ${end} minus ${start} in ${unitText}. A value of X means ${variableLabel} was X ${unitLabel || ""} higher on ${end} than on ${start} (negative values mean it was lower).`,
+                    `Values on the map represent ${end} minus ${start} in ${unitText}. A value of X means ${variableLabel} was X ${
+                        unitLabel || ""
+                    } higher on ${end} than on ${start} (negative values mean it was lower).`,
                 ],
             };
         }
@@ -1175,7 +1191,9 @@ function describeCompareContext(state: AppState): {
                 title: "Comparing two scenarios",
                 paragraphs: [
                     `We are comparing ${variableLabel} for ${scenarioB} versus ${scenarioA} on ${date} using the ${state.model} model.`,
-                    `Values show ${scenarioB} minus ${scenarioA} in ${unitText}. A value of X means ${variableLabel} is X ${unitLabel || ""} higher under ${scenarioB} than under ${scenarioA}; negative values mean it is lower.`,
+                    `Values show ${scenarioB} minus ${scenarioA} in ${unitText}. A value of X means ${variableLabel} is X ${
+                        unitLabel || ""
+                    } higher under ${scenarioB} than under ${scenarioA}; negative values mean it is lower.`,
                 ],
             };
         }
@@ -1198,7 +1216,8 @@ function renderCompareInfo(state: AppState): string {
         })
         .join("");
     const compareRight = state.sidebarOpen ? SIDEBAR_WIDTH + 24 : 24;
-    const compareBottom = state.mode === "Compare" && state.compareMode === "Dates" ? 120 : 88;
+    const compareBottom =
+        state.mode === "Compare" && state.compareMode === "Dates" ? 120 : 88;
     const overlayStyle = mergeStyles(styles.infoModalOverlay, {
         left: "0",
         right: "0",
@@ -1218,7 +1237,9 @@ function renderCompareInfo(state: AppState): string {
       <div data-role="compare-info-overlay" class="compare-info-overlay" style="${styleAttr(
           overlayStyle
       )}">
-        <div style="${styleAttr(modalStyle)}" role="dialog" aria-modal="true" aria-label="${info.title}">
+        <div style="${styleAttr(
+            modalStyle
+        )}" role="dialog" aria-modal="true" aria-label="${info.title}">
           <div style="${styleAttr(styles.infoModalHeader)}">
             <div style="${styleAttr(styles.infoModalTitle)}">${info.title}</div>
             <button type="button" data-action="close-compare-info" style="${styleAttr(
@@ -1273,24 +1294,24 @@ function getDateForScenario(scenario: string): string {
     if (scenario === "Historical") {
         return "2000-01-01";
     }
-    
+
     // For future scenarios (SSP245, SSP585), use current date
     // But ensure it's within the valid range (2015-2100)
     const today = new Date();
     const currentYear = today.getFullYear();
     const currentMonth = String(today.getMonth() + 1).padStart(2, "0");
     const currentDay = String(today.getDate()).padStart(2, "0");
-    
+
     // If current date is before 2015, use 2015-01-01
     if (currentYear < 2015) {
         return "2015-01-01";
     }
-    
+
     // If current date is after 2100, use 2100-12-31
     if (currentYear > 2100) {
         return "2100-12-31";
     }
-    
+
     // Use current date
     return `${currentYear}-${currentMonth}-${currentDay}`;
 }
@@ -1300,16 +1321,17 @@ function getDateForScenario(scenario: string): string {
  * - Historical: 1950-01-01 to 2014-12-31
  * - SSP245/SSP585: 2015-01-01 to 2100-12-31
  */
-function getTimeRangeForScenario(
-    scenario: string
-): { start: string; end: string } {
+function getTimeRangeForScenario(scenario: string): {
+    start: string;
+    end: string;
+} {
     if (scenario === "Historical") {
         return {
             start: "1950-01-01",
             end: "2014-12-31",
         };
     }
-    
+
     // For future scenarios (SSP245, SSP585)
     return {
         start: "2015-01-01",
@@ -1326,24 +1348,25 @@ function clipDateToScenarioRange(date: string, scenario: string): string {
     const inputDate = new Date(date);
     const startDate = new Date(timeRange.start);
     const endDate = new Date(timeRange.end);
-    
+
     // If date is before the start, return the start date
     if (inputDate < startDate) {
         return timeRange.start;
     }
-    
+
     // If date is after the end, return the end date
     if (inputDate > endDate) {
         return timeRange.end;
     }
-    
+
     // Date is within range, return as-is
     return date;
 }
 
-function calculateMinMax(
-    arrayData: Float32Array | Float64Array
-): { min: number; max: number } {
+function calculateMinMax(arrayData: Float32Array | Float64Array): {
+    min: number;
+    max: number;
+} {
     let min = Infinity;
     let max = -Infinity;
 
@@ -1392,7 +1415,8 @@ function isPointInPolygon(point: LatLon, polygon: LatLon[]): boolean {
         const intersect =
             yi > point.lat !== yj > point.lat &&
             point.lon <
-                ((xj - xi) * (point.lat - yi)) / (yj - yi + Number.EPSILON) + xi;
+                ((xj - xi) * (point.lat - yi)) / (yj - yi + Number.EPSILON) +
+                    xi;
         if (intersect) inside = !inside;
     }
     return inside;
@@ -1406,7 +1430,7 @@ function averageArrayInPolygon(
 ): number {
     const [height, width] = shape;
     const lonStep = 360 / width;
-    const latStep = 180 / height;
+    const latStep = 150 / height;
 
     let sum = 0;
     let count = 0;
@@ -1430,7 +1454,9 @@ function averageArrayInPolygon(
     }
 
     if (!count) {
-        throw new Error("The selected region does not contain valid data points.");
+        throw new Error(
+            "The selected region does not contain valid data points."
+        );
     }
 
     return sum / count;
@@ -1452,9 +1478,9 @@ function valueAtPoint(
 
     // Convert longitude from [-180, 180) to [0, 360) for data grid lookup
     // Climate data uses 0-360° longitude range: x=0 → 0°, x=width → 360°
-    const lonNormalized = ((point.lon + 360) % 360 + 360) % 360; // Convert to 0-360 range
+    const lonNormalized = (((point.lon + 360) % 360) + 360) % 360;
     const xFloat = (lonNormalized / 360) * width - 0.5;
-    const yFloat = ((90 - point.lat) / 180) * height - 0.5;
+    const yFloat = ((90 - point.lat) / 150) * height - 0.5;
 
     const clamp = (value: number, min: number, max: number) =>
         Math.min(max, Math.max(min, value));
@@ -1498,7 +1524,7 @@ function valueAtPoint(
     if (raw === null) {
         throw new Error("No valid data at the selected point.");
     }
-    
+
     // Keep the raw value in base units; clamp humidity like other paths
     const rawValue = variable === "hurs" ? Math.min(raw, 100) : raw;
     if (!Number.isFinite(rawValue)) {
@@ -1540,7 +1566,9 @@ function applyMapInteractions(canvas: HTMLCanvasElement) {
         state.selectedUnit,
         {
             drawMode: useDrawMode,
-            onDrawClick: state.pointSelectActive ? handlePointClick : handleDrawClick,
+            onDrawClick: state.pointSelectActive
+                ? handlePointClick
+                : handleDrawClick,
             onDrawMove: state.drawState.active ? handleDrawMove : undefined,
             onTransform: () => {
                 renderDrawOverlayPaths();
@@ -1553,8 +1581,9 @@ function applyMapInteractions(canvas: HTMLCanvasElement) {
 
 function renderDrawOverlayPaths() {
     if (!appRoot) return;
-    const overlay =
-        appRoot.querySelector<HTMLCanvasElement>("#draw-overlay-canvas");
+    const overlay = appRoot.querySelector<HTMLCanvasElement>(
+        "#draw-overlay-canvas"
+    );
     const canvas =
         mapCanvas || appRoot.querySelector<HTMLCanvasElement>("#map-canvas");
     if (!overlay || !canvas) return;
@@ -1637,7 +1666,9 @@ function renderDrawOverlay() {
 
 function renderPointOverlayMarker() {
     if (!appRoot) return;
-    const marker = appRoot.querySelector<HTMLDivElement>("#point-overlay-marker");
+    const marker = appRoot.querySelector<HTMLDivElement>(
+        "#point-overlay-marker"
+    );
     const canvas =
         mapCanvas || appRoot.querySelector<HTMLCanvasElement>("#map-canvas");
     if (!marker || !canvas || !state.pointSelectActive) return;
@@ -1878,7 +1909,8 @@ function computeChartStats(values: number[]): ChartStats {
         throw new Error("No valid values available to build chart statistics.");
     }
     const q1 = d3.quantileSorted(sorted, 0.25) ?? sorted[0];
-    const median = d3.quantileSorted(sorted, 0.5) ?? sorted[Math.floor(sorted.length / 2)];
+    const median =
+        d3.quantileSorted(sorted, 0.5) ?? sorted[Math.floor(sorted.length / 2)];
     const q3 = d3.quantileSorted(sorted, 0.75) ?? sorted[sorted.length - 1];
     const mean = d3.mean(sorted) ?? sorted[0];
     return {
@@ -2177,14 +2209,12 @@ async function loadChartData() {
             ? metaData.models
             : models;
 
-        const activeScenarios = (state.chartScenarios.length
-            ? state.chartScenarios
-            : scenarioOptions
+        const activeScenarios = (
+            state.chartScenarios.length ? state.chartScenarios : scenarioOptions
         ).filter((s) => scenarioOptions.includes(s));
 
-        const activeModels = (state.chartModels.length
-            ? state.chartModels
-            : modelOptions
+        const activeModels = (
+            state.chartModels.length ? state.chartModels : modelOptions
         ).filter((m) => modelOptions.includes(m));
 
         if (!activeScenarios.length || !activeModels.length) {
@@ -2217,7 +2247,10 @@ async function loadChartData() {
             for (const model of activeModels) {
                 const done = state.chartLoadingProgress.done;
                 setLoadingProgress(
-                    Math.min(95, Math.round(((done + 0.1) / totalRequests) * 100))
+                    Math.min(
+                        95,
+                        Math.round(((done + 0.1) / totalRequests) * 100)
+                    )
                 );
                 const request = createDataRequest({
                     variable: state.chartVariable,
@@ -2253,7 +2286,12 @@ async function loadChartData() {
                         : (state.chartLocation === "Point" ||
                               state.chartLocation === "Search") &&
                           state.chartPoint
-                        ? valueAtPoint(arr, state.chartVariable, data.shape, state.chartPoint)
+                        ? valueAtPoint(
+                              arr,
+                              state.chartVariable,
+                              data.shape,
+                              state.chartPoint
+                          )
                         : averageArray(arr, state.chartVariable);
                 samples.push({
                     scenario,
@@ -2318,7 +2356,10 @@ async function loadClimateData() {
 
         const result =
             state.mode === "Compare"
-                ? await loadCompareData(activeScenarioForRange, setLoadingProgress)
+                ? await loadCompareData(
+                      activeScenarioForRange,
+                      setLoadingProgress
+                  )
                 : await (async () => {
                       setLoadingProgress(40);
                       const clippedDate = clipDateToScenarioRange(
@@ -2363,7 +2404,11 @@ async function loadClimateData() {
                               min = Math.min(min, capped);
                               max = Math.max(max, capped);
                           }
-                          data = { ...data, data: clamped, data_encoding: "none" };
+                          data = {
+                              ...data,
+                              data: clamped,
+                              data_encoding: "none",
+                          };
                           arrayData = clamped;
                           return { data, min, max };
                       }
@@ -2428,8 +2473,12 @@ function renderBranding() {
             <g data-role="brand-iris" style="${styleAttr(
                 mergeStyles(styles.brandIrisGroup, styles.brandEyeContent)
             )}">
-              <circle cx="60" cy="40" r="20" style="${styleAttr(styles.brandIris)}" />
-              <g data-role="brand-pupil" style="${styleAttr(styles.brandPupilGroup)}">
+              <circle cx="60" cy="40" r="20" style="${styleAttr(
+                  styles.brandIris
+              )}" />
+              <g data-role="brand-pupil" style="${styleAttr(
+                  styles.brandPupilGroup
+              )}">
                 <circle cx="60" cy="40" r="10" style="${styleAttr(
                     styles.brandPupil
                 )}" />
@@ -2709,19 +2758,26 @@ function render() {
 
 function renderLoadingIndicator() {
     if (!state.isLoading) return "";
-    const progress = Math.max(0, Math.min(100, Math.round(state.loadingProgress)));
+    const progress = Math.max(
+        0,
+        Math.min(100, Math.round(state.loadingProgress))
+    );
     return `
       <div style="${styleAttr(styles.loadingIndicator)}">
         <div style="${styleAttr(styles.loadingSpinner)}"></div>
         <div style="${styleAttr(styles.loadingTextGroup)}">
-          <div style="${styleAttr(styles.loadingText)}">Loading data · ${progress}%</div>
+          <div style="${styleAttr(
+              styles.loadingText
+          )}">Loading data · ${progress}%</div>
           <div style="${styleAttr(styles.loadingBar)}">
             <div style="${styleAttr({
                 ...styles.loadingBarFill,
                 width: `${progress}%`,
             })}"></div>
           </div>
-          <div style="${styleAttr(styles.loadingSubtext)}">Fetching climate tiles</div>
+          <div style="${styleAttr(
+              styles.loadingSubtext
+          )}">Fetching climate tiles</div>
         </div>
       </div>
     `;
@@ -2745,7 +2801,9 @@ function formatNumberCompact(value: number): string {
 
 function renderChartSvg(boxes: ChartBox[]): string {
     if (!boxes.length) {
-        return `<div style="${styleAttr(styles.chartEmpty)}">No chart data loaded yet.</div>`;
+        return `<div style="${styleAttr(
+            styles.chartEmpty
+        )}">No chart data loaded yet.</div>`;
     }
 
     const sortedBoxes = [...boxes].sort((a, b) => {
@@ -2753,7 +2811,8 @@ function renderChartSvg(boxes: ChartBox[]): string {
     });
 
     const palette =
-        paletteOptions.find((p) => p.name === state.palette) || paletteOptions[0];
+        paletteOptions.find((p) => p.name === state.palette) ||
+        paletteOptions[0];
     const colors = palette.colors;
 
     const width = 900;
@@ -2783,7 +2842,9 @@ function renderChartSvg(boxes: ChartBox[]): string {
           <line x1="${margin.left}" x2="${
                 width - margin.right
             }" y1="${y}" y2="${y}" stroke="rgba(255,255,255,0.08)" />
-          <text x="${margin.left - 10}" y="${y + 4}" fill="var(--text-secondary)" font-size="11" text-anchor="end">
+          <text x="${margin.left - 10}" y="${
+                y + 4
+            }" fill="var(--text-secondary)" font-size="11" text-anchor="end">
             ${formatNumberCompact(tick)}
           </text>
         </g>
@@ -2804,13 +2865,27 @@ function renderChartSvg(boxes: ChartBox[]): string {
           <line x1="${x}" x2="${x}" y1="${yScale(min) + margin.top}" y2="${
                 yScale(max) + margin.top
             }" stroke="${color}" stroke-width="2" stroke-linecap="round" />
-          <rect x="${x - 24}" y="${boxTop}" width="48" height="${rectHeight}" fill="rgba(255,255,255,0.06)" stroke="${color}" stroke-width="2" rx="6" />
+          <rect x="${
+              x - 24
+          }" y="${boxTop}" width="48" height="${rectHeight}" fill="rgba(255,255,255,0.06)" stroke="${color}" stroke-width="2" rx="6" />
           <line x1="${x - 24}" x2="${x + 24}" y1="${
                 yScale(median) + margin.top
-            }" y2="${yScale(median) + margin.top}" stroke="${color}" stroke-width="2.4" />
-          <circle cx="${x}" cy="${yScale(mean) + margin.top}" r="4" fill="${color}" stroke="rgba(0,0,0,0.55)" stroke-width="1" />
-          <text x="${x}" y="${height - margin.bottom + 32}" fill="var(--text-primary)" font-weight="700" font-size="12" text-anchor="middle">${box.scenario}</text>
-          <text x="${x}" y="${height - margin.bottom + 48}" fill="var(--text-secondary)" font-size="11" text-anchor="middle">${box.samples.length} model${box.samples.length === 1 ? "" : "s"}</text>
+            }" y2="${
+                yScale(median) + margin.top
+            }" stroke="${color}" stroke-width="2.4" />
+          <circle cx="${x}" cy="${
+                yScale(mean) + margin.top
+            }" r="4" fill="${color}" stroke="rgba(0,0,0,0.55)" stroke-width="1" />
+          <text x="${x}" y="${
+                height - margin.bottom + 32
+            }" fill="var(--text-primary)" font-weight="700" font-size="12" text-anchor="middle">${
+                box.scenario
+            }</text>
+          <text x="${x}" y="${
+                height - margin.bottom + 48
+            }" fill="var(--text-secondary)" font-size="11" text-anchor="middle">${
+                box.samples.length
+            } model${box.samples.length === 1 ? "" : "s"}</text>
         </g>
       `;
         })
@@ -2834,7 +2909,9 @@ function renderChartSvg(boxes: ChartBox[]): string {
         fill="var(--text-secondary)"
         font-size="12"
         text-anchor="middle"
-        transform="rotate(-90 ${margin.left - 70} ${margin.top + plotHeight / 2})"
+        transform="rotate(-90 ${margin.left - 70} ${
+        margin.top + plotHeight / 2
+    })"
       >
         ${state.chartUnit}
       </text>
@@ -2876,10 +2953,10 @@ function renderChartArea() {
                   })}"></div>
                 </div>
                 <div style="${styleAttr(styles.loadingSubtext)}">${
-                    state.chartLoadingProgress.total > 0
-                        ? `${state.chartLoadingProgress.done}/${state.chartLoadingProgress.total} datasets loaded`
-                        : "Preparing datasets"
-                }</div>
+            state.chartLoadingProgress.total > 0
+                ? `${state.chartLoadingProgress.done}/${state.chartLoadingProgress.total} datasets loaded`
+                : "Preparing datasets"
+        }</div>
               </div>
             </div>
             ${renderChartLoadingIndicator()}
@@ -2887,7 +2964,9 @@ function renderChartArea() {
           ${state.chartBoxes ? renderChartSvg(state.chartBoxes) : ""}
         `;
     } else if (state.chartError) {
-        body = `<div style="${styleAttr(styles.chartError)}">${state.chartError}</div>`;
+        body = `<div style="${styleAttr(styles.chartError)}">${
+            state.chartError
+        }</div>`;
     } else if (!state.chartBoxes || !state.chartBoxes.length) {
         body = `
           <div style="${styleAttr(styles.chartEmpty)}">
@@ -2901,7 +2980,9 @@ function renderChartArea() {
     const chartLocationLabel =
         state.chartLocationName ||
         (state.chartLocation === "Point" && state.chartPoint
-            ? `Point (${state.chartPoint.lat.toFixed(2)}, ${state.chartPoint.lon.toFixed(2)})`
+            ? `Point (${state.chartPoint.lat.toFixed(
+                  2
+              )}, ${state.chartPoint.lon.toFixed(2)})`
             : state.chartLocation === "Draw"
             ? "Custom region"
             : state.chartLocation === "World"
@@ -2909,18 +2990,22 @@ function renderChartArea() {
             : "");
 
     return `
-      <div style="pointer-events:auto; width:100%; display:flex; align-items:center; justify-content:center; padding:24px; padding-right:${state.sidebarOpen ? SIDEBAR_WIDTH + 32 : 24}px;">
+      <div style="pointer-events:auto; width:100%; display:flex; align-items:center; justify-content:center; padding:24px; padding-right:${
+          state.sidebarOpen ? SIDEBAR_WIDTH + 32 : 24
+      }px;">
         <div style="${styleAttr(styles.chartPanel)}">
           <div style="${styleAttr(styles.chartHeader)}">
             <div style="${styleAttr(styles.chartTitle)}">${getVariableLabel(
-                state.chartVariable,
-                state.metaData
-            )}</div>
+        state.chartVariable,
+        state.metaData
+    )}</div>
             <div style="${styleAttr(styles.mapSubtitle)}">${
-                chartLocationLabel
-                    ? `${escapeHtml(chartLocationLabel)} · ${formatDisplayDate(state.chartDate)}`
-                    : formatDisplayDate(state.chartDate)
-            }</div>
+        chartLocationLabel
+            ? `${escapeHtml(chartLocationLabel)} · ${formatDisplayDate(
+                  state.chartDate
+              )}`
+            : formatDisplayDate(state.chartDate)
+    }</div>
           </div>
           <div style="${styleAttr(
               mergeStyles(styles.chartPlotWrapper, {
@@ -2939,7 +3024,11 @@ function renderChartArea() {
 function renderField(label: string, controlHtml: string) {
     return `
     <div style="${styleAttr(styles.field)}">
-      ${label ? `<div style="${styleAttr(styles.fieldLabel)}">${label}</div>` : ""}
+      ${
+          label
+              ? `<div style="${styleAttr(styles.fieldLabel)}">${label}</div>`
+              : ""
+      }
       ${controlHtml}
     </div>
   `;
@@ -2980,16 +3069,22 @@ function renderSelect(
 ) {
     const dataKey = opts?.dataKey ?? name;
     const disabled = opts?.disabled ? "disabled" : "";
-    const uniqueId = `custom-select-${dataKey}-${Math.random().toString(36).substr(2, 9)}`;
+    const uniqueId = `custom-select-${dataKey}-${Math.random()
+        .toString(36)
+        .substr(2, 9)}`;
     const infoType = opts?.infoType;
     const displayValue = escapeHtml(opts?.selectedLabel ?? current);
     const extraContent = opts?.extraContent ?? "";
-    
+
     return `
     <div class="custom-select-container">
       <div class="custom-select-info-panel" id="${uniqueId}-info" role="tooltip"></div>
-      <div class="custom-select-wrapper" data-key="${dataKey}" ${disabled ? 'data-disabled="true"' : ''} ${infoType ? `data-info-type="${infoType}"` : ''}>
-        <div class="custom-select-trigger" data-action="update-select" data-key="${dataKey}" id="${uniqueId}-trigger" ${disabled ? 'aria-disabled="true"' : ''} tabindex="${disabled ? '-1' : '0'}">
+      <div class="custom-select-wrapper" data-key="${dataKey}" ${
+        disabled ? 'data-disabled="true"' : ""
+    } ${infoType ? `data-info-type="${infoType}"` : ""}>
+        <div class="custom-select-trigger" data-action="update-select" data-key="${dataKey}" id="${uniqueId}-trigger" ${
+        disabled ? 'aria-disabled="true"' : ""
+    } tabindex="${disabled ? "-1" : "0"}">
           <span class="custom-select-value">${displayValue}</span>
           <svg class="custom-select-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
             <path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -2999,12 +3094,14 @@ function renderSelect(
           ${options
               .map(
                   (opt) => `
-                <div class="custom-select-option ${opt === current ? 'selected' : ''}" 
+                <div class="custom-select-option ${
+                    opt === current ? "selected" : ""
+                }" 
                      data-value="${opt}" 
                      data-action="update-select" 
                      data-key="${dataKey}"
                      role="option"
-                     ${opt === current ? 'aria-selected="true"' : ''}
+                     ${opt === current ? 'aria-selected="true"' : ""}
                      tabindex="0">
                   ${opt}
                 </div>
@@ -3047,7 +3144,9 @@ function renderManualSection(params: {
             ? [
                   renderField(
                       "Scenario",
-                      renderSelect("scenario", scenarios, state.scenario, { infoType: "scenario" })
+                      renderSelect("scenario", scenarios, state.scenario, {
+                          infoType: "scenario",
+                      })
                   ),
                   renderField("Date", renderInput("date", state.date)),
               ]
@@ -3055,17 +3154,23 @@ function renderManualSection(params: {
             ? [
                   renderField(
                       "Scenario",
-                      renderSelect("scenario", scenarios, state.scenario, { infoType: "scenario" })
+                      renderSelect("scenario", scenarios, state.scenario, {
+                          infoType: "scenario",
+                      })
                   ),
                   renderField(
                       "Model",
-                      renderSelect("model", models, state.model, { infoType: "model" })
+                      renderSelect("model", models, state.model, {
+                          infoType: "model",
+                      })
                   ),
               ]
             : [
                   renderField(
                       "Model",
-                      renderSelect("model", models, state.model, { infoType: "model" })
+                      renderSelect("model", models, state.model, {
+                          infoType: "model",
+                      })
                   ),
                   renderField("Date", renderInput("date", state.date)),
               ];
@@ -3114,18 +3219,20 @@ function renderManualSection(params: {
             <div style="${styleAttr(styles.paramGrid)}">
               ${renderField(
                   "Scenario",
-                  renderSelect("scenario", scenarios, state.scenario, { infoType: "scenario" })
+                  renderSelect("scenario", scenarios, state.scenario, {
+                      infoType: "scenario",
+                  })
               )}
               ${renderField(
                   "Model",
-                  renderSelect("model", models, state.model, { infoType: "model" })
+                  renderSelect("model", models, state.model, {
+                      infoType: "model",
+                  })
               )}
               ${renderField(
                   "Date",
                   (() => {
-                      const timeRange = getTimeRangeForScenario(
-                          state.scenario
-                      );
+                      const timeRange = getTimeRangeForScenario(state.scenario);
                       return renderInput("date", state.date, {
                           min: timeRange.start,
                           max: timeRange.end,
@@ -3134,7 +3241,9 @@ function renderManualSection(params: {
               )}
               ${renderField(
                   "Variable",
-                  renderSelect("variable", variables, state.variable, { infoType: "variable" })
+                  renderSelect("variable", variables, state.variable, {
+                      infoType: "variable",
+                  })
               )}
             </div>
           </div>
@@ -3249,7 +3358,10 @@ function renderManualSection(params: {
                                 "compareScenarioA",
                                 ["SSP245", "SSP370", "SSP585"],
                                 state.compareScenarioA,
-                                { dataKey: "compareScenarioA", infoType: "scenario" }
+                                {
+                                    dataKey: "compareScenarioA",
+                                    infoType: "scenario",
+                                }
                             )
                         )}
                         ${renderField(
@@ -3258,7 +3370,10 @@ function renderManualSection(params: {
                                 "compareScenarioB",
                                 ["SSP245", "SSP370", "SSP585"],
                                 state.compareScenarioB,
-                                { dataKey: "compareScenarioB", infoType: "scenario" }
+                                {
+                                    dataKey: "compareScenarioB",
+                                    infoType: "scenario",
+                                }
                             )
                         )}
                       </div>
@@ -3275,10 +3390,17 @@ function renderManualSection(params: {
                             renderSelect(
                                 "compareModelA",
                                 (() => {
-                                    const filtered = models.filter((m) => m !== state.compareModelB);
+                                    const filtered = models.filter(
+                                        (m) => m !== state.compareModelB
+                                    );
                                     // Ensure current value is always available
-                                    if (!filtered.includes(state.compareModelA)) {
-                                        return [state.compareModelA, ...filtered];
+                                    if (
+                                        !filtered.includes(state.compareModelA)
+                                    ) {
+                                        return [
+                                            state.compareModelA,
+                                            ...filtered,
+                                        ];
                                     }
                                     return filtered;
                                 })(),
@@ -3291,10 +3413,17 @@ function renderManualSection(params: {
                             renderSelect(
                                 "compareModelB",
                                 (() => {
-                                    const filtered = models.filter((m) => m !== state.compareModelA);
+                                    const filtered = models.filter(
+                                        (m) => m !== state.compareModelA
+                                    );
                                     // Ensure current value is always available
-                                    if (!filtered.includes(state.compareModelB)) {
-                                        return [state.compareModelB, ...filtered];
+                                    if (
+                                        !filtered.includes(state.compareModelB)
+                                    ) {
+                                        return [
+                                            state.compareModelB,
+                                            ...filtered,
+                                        ];
                                     }
                                     return filtered;
                                 })(),
@@ -3336,7 +3465,9 @@ function renderManualSection(params: {
                 ${compareParameters.join("")}
                 ${renderField(
                     "Variable",
-                    renderSelect("variable", variables, state.variable, { infoType: "variable" })
+                    renderSelect("variable", variables, state.variable, {
+                        infoType: "variable",
+                    })
                 )}
               </div>
 
@@ -3426,7 +3557,11 @@ function renderManualSection(params: {
   `;
 }
 
-function renderChipGroup(options: string[], selected: string[], dataKey: string) {
+function renderChipGroup(
+    options: string[],
+    selected: string[],
+    dataKey: string
+) {
     const selectedSet = new Set(selected);
     return `
       <div style="${styleAttr(styles.chipRow)}">
@@ -3469,7 +3604,9 @@ function renderChartLocationExtras() {
                   data-lat="${res.lat}"
                   data-lon="${res.lon}"
                 >
-                  <div class="location-search-result-name">${escapeHtml(res.displayName)}</div>
+                  <div class="location-search-result-name">${escapeHtml(
+                      res.displayName
+                  )}</div>
                   <div class="location-search-result-coord">
                     ${res.lat.toFixed(3)}, ${res.lon.toFixed(3)}
                   </div>
@@ -4069,7 +4206,9 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
 
             const previousMode = state.chartMode;
             const previousTransform =
-                previousMode === "single" ? "translateX(0%)" : "translateX(100%)";
+                previousMode === "single"
+                    ? "translateX(0%)"
+                    : "translateX(100%)";
             const nextTransform =
                 value === "single" ? "translateX(0%)" : "translateX(100%)";
 
@@ -4137,81 +4276,92 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
 
     // Custom dropdown handlers
     const customSelectWrappers = root.querySelectorAll<HTMLElement>(
-        '.custom-select-wrapper'
+        ".custom-select-wrapper"
     );
-    
+
     // Create a single shared info panel for all dropdowns
-    let sharedInfoPanel: HTMLElement | null = document.querySelector<HTMLElement>('.custom-select-info-panel-shared');
+    let sharedInfoPanel: HTMLElement | null =
+        document.querySelector<HTMLElement>(".custom-select-info-panel-shared");
     if (!sharedInfoPanel) {
-        sharedInfoPanel = document.createElement('div');
-        sharedInfoPanel.className = 'custom-select-info-panel custom-select-info-panel-shared';
-        sharedInfoPanel.setAttribute('role', 'tooltip');
+        sharedInfoPanel = document.createElement("div");
+        sharedInfoPanel.className =
+            "custom-select-info-panel custom-select-info-panel-shared";
+        sharedInfoPanel.setAttribute("role", "tooltip");
         document.body.appendChild(sharedInfoPanel);
     }
-    
+
     // Close all dropdowns when clicking outside
     const handleClickOutside = (event: MouseEvent) => {
         const target = event.target as HTMLElement;
-        if (!target.closest('.custom-select-wrapper')) {
+        if (!target.closest(".custom-select-wrapper")) {
             customSelectWrappers.forEach((wrapper) => {
-                wrapper.classList.remove('open');
+                wrapper.classList.remove("open");
             });
             if (sharedInfoPanel) {
-                sharedInfoPanel.classList.remove('visible');
+                sharedInfoPanel.classList.remove("visible");
             }
         }
     };
-    
+
     // Close dropdowns on Escape key
     const handleEscapeKey = (event: KeyboardEvent) => {
-        if (event.key === 'Escape') {
+        if (event.key === "Escape") {
             customSelectWrappers.forEach((wrapper) => {
-                wrapper.classList.remove('open');
+                wrapper.classList.remove("open");
             });
             if (sharedInfoPanel) {
-                sharedInfoPanel.classList.remove('visible');
+                sharedInfoPanel.classList.remove("visible");
             }
         }
     };
-    
-    document.addEventListener('click', handleClickOutside);
-    document.addEventListener('keydown', handleEscapeKey);
-    
+
+    document.addEventListener("click", handleClickOutside);
+    document.addEventListener("keydown", handleEscapeKey);
+
     customSelectWrappers.forEach((wrapper) => {
-        const trigger = wrapper.querySelector<HTMLElement>('.custom-select-trigger');
-        const dropdown = wrapper.querySelector<HTMLElement>('.custom-select-dropdown');
-        const options = wrapper.querySelectorAll<HTMLElement>('.custom-select-option');
+        const trigger = wrapper.querySelector<HTMLElement>(
+            ".custom-select-trigger"
+        );
+        const dropdown = wrapper.querySelector<HTMLElement>(
+            ".custom-select-dropdown"
+        );
+        const options = wrapper.querySelectorAll<HTMLElement>(
+            ".custom-select-option"
+        );
         const dataKey = wrapper.dataset.key;
-        const infoType = wrapper.dataset.infoType as "scenario" | "variable" | undefined;
-        const isDisabled = wrapper.dataset.disabled === 'true';
-        
+        const infoType = wrapper.dataset.infoType as
+            | "scenario"
+            | "variable"
+            | undefined;
+        const isDisabled = wrapper.dataset.disabled === "true";
+
         if (!trigger || !dropdown || isDisabled) return;
-        
+
         // Use the shared info panel
         const infoPanel = sharedInfoPanel;
-        
+
         // Function to show info
         const showInfo = (value: string, optionElement?: HTMLElement) => {
             if (!infoPanel || !infoType) return;
-            
-            let infoText = '';
+
+            let infoText = "";
             let title = value;
-            
-            if (infoType === 'scenario') {
-                infoText = scenarioInfo[value] || '';
-            } else if (infoType === 'variable') {
-                infoText = variableInfo[value] || '';
+
+            if (infoType === "scenario") {
+                infoText = scenarioInfo[value] || "";
+            } else if (infoType === "variable") {
+                infoText = variableInfo[value] || "";
                 title = variableFullNames[value] || value;
-            } else if (infoType === 'model') {
-                infoText = modelInfo[value] || '';
+            } else if (infoType === "model") {
+                infoText = modelInfo[value] || "";
             }
-            
+
             if (infoText) {
                 infoPanel.innerHTML = `
                     <div class="custom-select-info-panel-title">${title}</div>
                     <div class="custom-select-info-panel-content">${infoText}</div>
                 `;
-                
+
                 // Position the panel using fixed positioning - no gap between dropdown and panel
                 if (optionElement || trigger) {
                     const referenceElement = optionElement || trigger;
@@ -4221,121 +4371,129 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                         infoPanel.style.top = `${rect.top}px`;
                     }
                 }
-                
-                infoPanel.classList.add('visible');
+
+                infoPanel.classList.add("visible");
             }
         };
-        
+
         // Function to hide info
         const hideInfo = () => {
             if (infoPanel) {
-                infoPanel.classList.remove('visible');
+                infoPanel.classList.remove("visible");
             }
         };
-        
+
         // Toggle dropdown on trigger click
-        trigger.addEventListener('click', (e) => {
+        trigger.addEventListener("click", (e) => {
             e.stopPropagation();
             if (isDisabled) return;
-            
-            const isOpen = wrapper.classList.contains('open');
+
+            const isOpen = wrapper.classList.contains("open");
             // Close all other dropdowns
             customSelectWrappers.forEach((w) => {
-                if (w !== wrapper) w.classList.remove('open');
+                if (w !== wrapper) w.classList.remove("open");
             });
             // Toggle this dropdown
-            wrapper.classList.toggle('open', !isOpen);
+            wrapper.classList.toggle("open", !isOpen);
         });
-        
+
         // Keyboard navigation for trigger
-        trigger.addEventListener('keydown', (e) => {
+        trigger.addEventListener("keydown", (e) => {
             if (isDisabled) return;
-            
-            if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown') {
+
+            if (e.key === "Enter" || e.key === " " || e.key === "ArrowDown") {
                 e.preventDefault();
-                wrapper.classList.add('open');
+                wrapper.classList.add("open");
                 // Focus first option
                 const firstOption = options[0] as HTMLElement;
                 if (firstOption) firstOption.focus();
             }
         });
-        
+
         // Handle option clicks
         options.forEach((option) => {
-            option.addEventListener('click', (e) => {
+            option.addEventListener("click", (e) => {
                 e.stopPropagation();
                 const value = option.dataset.value;
                 if (!value || !dataKey) return;
-                
+
                 // Update selected state
                 options.forEach((opt) => {
-                    opt.classList.remove('selected');
-                    opt.removeAttribute('aria-selected');
+                    opt.classList.remove("selected");
+                    opt.removeAttribute("aria-selected");
                 });
-                option.classList.add('selected');
-                option.setAttribute('aria-selected', 'true');
-                
+                option.classList.add("selected");
+                option.setAttribute("aria-selected", "true");
+
                 // Update trigger value
-                const valueSpan = trigger.querySelector<HTMLElement>('.custom-select-value');
+                const valueSpan = trigger.querySelector<HTMLElement>(
+                    ".custom-select-value"
+                );
                 if (valueSpan) valueSpan.textContent = value;
-                
+
                 // Close dropdown
-                wrapper.classList.remove('open');
+                wrapper.classList.remove("open");
                 hideInfo();
-                
+
                 // Trigger the change handler
                 handleSelectChange(dataKey, value);
             });
-            
+
             // Show info on hover
             if (infoType) {
-                option.addEventListener('mouseenter', () => {
+                option.addEventListener("mouseenter", () => {
                     const value = option.dataset.value;
                     if (value) {
                         showInfo(value, option);
                     }
                 });
-                
-                option.addEventListener('mouseleave', () => {
+
+                option.addEventListener("mouseleave", () => {
                     hideInfo();
                 });
             }
-            
+
             // Keyboard navigation for options
-            option.addEventListener('keydown', (e) => {
+            option.addEventListener("keydown", (e) => {
                 const currentIndex = Array.from(options).indexOf(option);
-                
-                if (e.key === 'Enter' || e.key === ' ') {
+
+                if (e.key === "Enter" || e.key === " ") {
                     e.preventDefault();
                     option.click();
-                } else if (e.key === 'ArrowDown') {
+                } else if (e.key === "ArrowDown") {
                     e.preventDefault();
                     const nextIndex = (currentIndex + 1) % options.length;
                     (options[nextIndex] as HTMLElement)?.focus();
-                } else if (e.key === 'ArrowUp') {
+                } else if (e.key === "ArrowUp") {
                     e.preventDefault();
-                    const prevIndex = currentIndex === 0 ? options.length - 1 : currentIndex - 1;
+                    const prevIndex =
+                        currentIndex === 0
+                            ? options.length - 1
+                            : currentIndex - 1;
                     (options[prevIndex] as HTMLElement)?.focus();
-                } else if (e.key === 'Escape') {
+                } else if (e.key === "Escape") {
                     e.preventDefault();
-                    wrapper.classList.remove('open');
+                    wrapper.classList.remove("open");
                     hideInfo();
                     trigger.focus();
-                } else if (e.key === 'Home') {
+                } else if (e.key === "Home") {
                     e.preventDefault();
                     (options[0] as HTMLElement)?.focus();
-                } else if (e.key === 'End') {
+                } else if (e.key === "End") {
                     e.preventDefault();
                     (options[options.length - 1] as HTMLElement)?.focus();
                 }
             });
         });
-        
+
         // Hide info when dropdown closes
         const observer = new MutationObserver((mutations) => {
             mutations.forEach((mutation) => {
-                if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
-                    if (!wrapper.classList.contains('open')) {
+                if (
+                    mutation.type === "attributes" &&
+                    mutation.attributeName === "class"
+                ) {
+                    if (!wrapper.classList.contains("open")) {
                         hideInfo();
                     }
                 }
@@ -4343,239 +4501,244 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         });
         observer.observe(wrapper, { attributes: true });
     });
-    
+
     // Handle select change (reusable function)
     const handleSelectChange = async (key: string, val: string) => {
         if (!key) return;
         let triggerMapReload = false;
         let triggerChartReload = false;
         switch (key) {
-                case "scenario":
-                    state.scenario = val;
-                    // Automatically update date to a valid date for the selected scenario
-                    state.date = getDateForScenario(val);
-                    // Update time range for the slider
-                    state.timeRange = getTimeRangeForScenario(val);
-                    triggerMapReload = true;
-                    break;
-                case "model":
-                    state.model = val;
-                    triggerMapReload = true;
-                    break;
-                case "variable":
-                    state.variable = val;
-                    // Reset unit to default for new variable
-                    state.selectedUnit = getDefaultUnitOption(val).label;
-                    triggerMapReload = true;
-                    break;
-                case "unit":
-                    state.selectedUnit = val;
-                    render();
-                    // Re-render map with new unit conversion
-                    if (
-                        state.currentData &&
-                        appRoot &&
-                        state.dataMin !== null &&
-                        state.dataMax !== null
-                    ) {
-                        const canvas =
-                            appRoot.querySelector<HTMLCanvasElement>(
-                                "#map-canvas"
-                            );
-                        if (canvas) {
-                            mapCanvas = canvas;
-                            applyMapInteractions(canvas);
-                            renderMapData(
-                                state.currentData,
-                                mapCanvas,
-                                paletteOptions,
-                                state.palette,
-                                state.dataMin,
-                                state.dataMax,
-                                state.variable,
-                                state.selectedUnit
-                            );
+            case "scenario":
+                state.scenario = val;
+                // Automatically update date to a valid date for the selected scenario
+                state.date = getDateForScenario(val);
+                // Update time range for the slider
+                state.timeRange = getTimeRangeForScenario(val);
+                triggerMapReload = true;
+                break;
+            case "model":
+                state.model = val;
+                triggerMapReload = true;
+                break;
+            case "variable":
+                state.variable = val;
+                // Reset unit to default for new variable
+                state.selectedUnit = getDefaultUnitOption(val).label;
+                triggerMapReload = true;
+                break;
+            case "unit":
+                state.selectedUnit = val;
+                render();
+                // Re-render map with new unit conversion
+                if (
+                    state.currentData &&
+                    appRoot &&
+                    state.dataMin !== null &&
+                    state.dataMax !== null
+                ) {
+                    const canvas =
+                        appRoot.querySelector<HTMLCanvasElement>("#map-canvas");
+                    if (canvas) {
+                        mapCanvas = canvas;
+                        applyMapInteractions(canvas);
+                        renderMapData(
+                            state.currentData,
+                            mapCanvas,
+                            paletteOptions,
+                            state.palette,
+                            state.dataMin,
+                            state.dataMax,
+                            state.variable,
+                            state.selectedUnit
+                        );
 
-                            // Redraw gradient with new palette
-                            const palette =
-                                paletteOptions.find(
-                                    (p) => p.name === state.palette
-                                ) || paletteOptions[0];
-                            drawLegendGradient(
-                                "legend-gradient-canvas",
-                                palette.colors
-                            );
-                        }
-                    }
-                    return;
-                case "palette":
-                    state.palette = val;
-                    render();
-                    if (
-                        state.canvasView === "map" &&
-                        state.currentData &&
-                        appRoot &&
-                        state.dataMin !== null &&
-                        state.dataMax !== null
-                    ) {
-                        const canvas =
-                            appRoot.querySelector<HTMLCanvasElement>(
-                                "#map-canvas"
-                            );
-                        if (canvas) {
-                            mapCanvas = canvas;
-                            renderMapData(
-                                state.currentData,
-                                mapCanvas,
-                                paletteOptions,
-                                state.palette,
-                                state.dataMin,
-                                state.dataMax,
-                                state.variable,
-                                state.selectedUnit
-                            );
-
-                            // Redraw gradient with new palette
-                            const palette =
-                                paletteOptions.find(
-                                    (p) => p.name === state.palette
-                                ) || paletteOptions[0];
-                            drawLegendGradient(
-                                "legend-gradient-canvas",
-                                palette.colors
-                            );
-                        }
-                    }
-                    return;
-                case "compareMode":
-                    state.compareMode = val as CompareMode;
-                    triggerMapReload = true;
-                    break;
-                case "compareScenarioA":
-                    // Prevent selecting the same scenario as B
-                    if (val === state.compareScenarioB) {
-                        // If trying to select the same as B, swap them
-                        state.compareScenarioB = state.compareScenarioA;
-                    }
-                    state.compareScenarioA = val;
-                    triggerMapReload = true;
-                    break;
-                case "compareScenarioB":
-                    // Prevent selecting the same scenario as A
-                    if (val === state.compareScenarioA) {
-                        // If trying to select the same as A, swap them
-                        state.compareScenarioA = state.compareScenarioB;
-                    }
-                    state.compareScenarioB = val;
-                    triggerMapReload = true;
-                    break;
-                case "compareModelA":
-                    // Prevent selecting the same model as B
-                    if (val === state.compareModelB) {
-                        // If trying to select the same as B, swap them
-                        state.compareModelB = state.compareModelA;
-                    }
-                    state.compareModelA = val;
-                    triggerMapReload = true;
-                    break;
-                case "compareModelB":
-                    // Prevent selecting the same model as A
-                    if (val === state.compareModelA) {
-                        // If trying to select the same as A, swap them
-                        state.compareModelA = state.compareModelB;
-                    }
-                    state.compareModelB = val;
-                    triggerMapReload = true;
-                    break;
-                case "chartVariable":
-                    state.chartVariable = val;
-                    state.chartUnit = getDefaultUnitOption(val).label;
-                    triggerChartReload = true;
-                    break;
-                case "chartUnit":
-                    state.chartUnit = val;
-                    if (state.chartSamples.length) {
-                        state.chartBoxes = buildChartBoxes(
-                            state.chartSamples,
-                            state.chartVariable,
-                            state.chartUnit
+                        // Redraw gradient with new palette
+                        const palette =
+                            paletteOptions.find(
+                                (p) => p.name === state.palette
+                            ) || paletteOptions[0];
+                        drawLegendGradient(
+                            "legend-gradient-canvas",
+                            palette.colors
                         );
                     }
-                    render();
+                }
+                return;
+            case "palette":
+                state.palette = val;
+                render();
+                if (
+                    state.canvasView === "map" &&
+                    state.currentData &&
+                    appRoot &&
+                    state.dataMin !== null &&
+                    state.dataMax !== null
+                ) {
+                    const canvas =
+                        appRoot.querySelector<HTMLCanvasElement>("#map-canvas");
+                    if (canvas) {
+                        mapCanvas = canvas;
+                        renderMapData(
+                            state.currentData,
+                            mapCanvas,
+                            paletteOptions,
+                            state.palette,
+                            state.dataMin,
+                            state.dataMax,
+                            state.variable,
+                            state.selectedUnit
+                        );
+
+                        // Redraw gradient with new palette
+                        const palette =
+                            paletteOptions.find(
+                                (p) => p.name === state.palette
+                            ) || paletteOptions[0];
+                        drawLegendGradient(
+                            "legend-gradient-canvas",
+                            palette.colors
+                        );
+                    }
+                }
+                return;
+            case "compareMode":
+                state.compareMode = val as CompareMode;
+                triggerMapReload = true;
+                break;
+            case "compareScenarioA":
+                // Prevent selecting the same scenario as B
+                if (val === state.compareScenarioB) {
+                    // If trying to select the same as B, swap them
+                    state.compareScenarioB = state.compareScenarioA;
+                }
+                state.compareScenarioA = val;
+                triggerMapReload = true;
+                break;
+            case "compareScenarioB":
+                // Prevent selecting the same scenario as A
+                if (val === state.compareScenarioA) {
+                    // If trying to select the same as A, swap them
+                    state.compareScenarioA = state.compareScenarioB;
+                }
+                state.compareScenarioB = val;
+                triggerMapReload = true;
+                break;
+            case "compareModelA":
+                // Prevent selecting the same model as B
+                if (val === state.compareModelB) {
+                    // If trying to select the same as B, swap them
+                    state.compareModelB = state.compareModelA;
+                }
+                state.compareModelA = val;
+                triggerMapReload = true;
+                break;
+            case "compareModelB":
+                // Prevent selecting the same model as A
+                if (val === state.compareModelA) {
+                    // If trying to select the same as A, swap them
+                    state.compareModelA = state.compareModelB;
+                }
+                state.compareModelB = val;
+                triggerMapReload = true;
+                break;
+            case "chartVariable":
+                state.chartVariable = val;
+                state.chartUnit = getDefaultUnitOption(val).label;
+                triggerChartReload = true;
+                break;
+            case "chartUnit":
+                state.chartUnit = val;
+                if (state.chartSamples.length) {
+                    state.chartBoxes = buildChartBoxes(
+                        state.chartSamples,
+                        state.chartVariable,
+                        state.chartUnit
+                    );
+                }
+                render();
+                return;
+            case "chartLocation":
+                if (val === "Draw") {
+                    startRegionDrawing();
                     return;
-                case "chartLocation":
-                    if (val === "Draw") {
-                        startRegionDrawing();
-                        return;
-                    }
-                    if (val === "Point") {
-                        startPointSelection();
-                        return;
-                    }
-                    if (val === "Search") {
-                        state.chartLocation = "Search";
-                        state.chartPolygon = null;
-                        state.pointSelectActive = false;
-                        state.drawState = resetDrawState();
-                        state.chartError = null;
-                        state.chartLocationName = null;
-                        state.chartLocationSearchError = null;
-                        state.chartLocationSearchResults = [];
-                        state.chartLocationSearchQuery = "";
-                        state.chartLocationSearchLoading = false;
-                        state.canvasView = "chart";
-                        stopRegionDrawing();
-                        stopPointSelection();
-                        render();
-                        return;
-                    }
-                    state.chartLocation = "World";
+                }
+                if (val === "Point") {
+                    startPointSelection();
+                    return;
+                }
+                if (val === "Search") {
+                    state.chartLocation = "Search";
                     state.chartPolygon = null;
-                    state.chartPoint = null;
+                    state.pointSelectActive = false;
+                    state.drawState = resetDrawState();
+                    state.chartError = null;
                     state.chartLocationName = null;
                     state.chartLocationSearchError = null;
                     state.chartLocationSearchResults = [];
                     state.chartLocationSearchQuery = "";
                     state.chartLocationSearchLoading = false;
+                    state.canvasView = "chart";
                     stopRegionDrawing();
                     stopPointSelection();
-                    triggerChartReload = true;
-                    break;
-            }
-            render();
-            if (state.canvasView === "map" && triggerMapReload) {
-                loadClimateData();
-            }
-            if (state.canvasView === "chart" && (triggerChartReload || triggerMapReload)) {
-                loadChartData();
-            }
-        };
-    
+                    render();
+                    return;
+                }
+                state.chartLocation = "World";
+                state.chartPolygon = null;
+                state.chartPoint = null;
+                state.chartLocationName = null;
+                state.chartLocationSearchError = null;
+                state.chartLocationSearchResults = [];
+                state.chartLocationSearchQuery = "";
+                state.chartLocationSearchLoading = false;
+                stopRegionDrawing();
+                stopPointSelection();
+                triggerChartReload = true;
+                break;
+        }
+        render();
+        if (state.canvasView === "map" && triggerMapReload) {
+            loadClimateData();
+        }
+        if (
+            state.canvasView === "chart" &&
+            (triggerChartReload || triggerMapReload)
+        ) {
+            loadChartData();
+        }
+    };
+
     // Handle special case for chartLocation dropdown
     const chartLocationWrapper = root.querySelector<HTMLElement>(
         '.custom-select-wrapper[data-key="chartLocation"]'
     );
     if (chartLocationWrapper) {
-        const chartLocationOptions = chartLocationWrapper.querySelectorAll<HTMLElement>(
-            '.custom-select-option'
-        );
+        const chartLocationOptions =
+            chartLocationWrapper.querySelectorAll<HTMLElement>(
+                ".custom-select-option"
+            );
         chartLocationOptions.forEach((option) => {
-            option.addEventListener('click', () => {
+            option.addEventListener("click", () => {
                 const value = option.dataset.value;
                 if (value === "Draw" && state.chartLocation === "Draw") {
                     startRegionDrawing();
-                } else if (value === "Point" && state.chartLocation === "Point") {
+                } else if (
+                    value === "Point" &&
+                    state.chartLocation === "Point"
+                ) {
                     startPointSelection();
                 }
             });
         });
 
-        const locationSearchInputs = chartLocationWrapper.querySelectorAll<HTMLInputElement>(
-            '[data-role="location-search-input"]'
-        );
-        const locationSearchResults = chartLocationWrapper.querySelectorAll<HTMLElement>(
-            '[data-role="location-search-result"]'
-        );
+        const locationSearchInputs =
+            chartLocationWrapper.querySelectorAll<HTMLInputElement>(
+                '[data-role="location-search-input"]'
+            );
+        const locationSearchResults =
+            chartLocationWrapper.querySelectorAll<HTMLElement>(
+                '[data-role="location-search-result"]'
+            );
 
         const clearLocationSearchDebounce = () => {
             if (locationSearchDebounce !== null) {
@@ -4648,7 +4811,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             }
         }
     }
-    
+
     // Keep old select handlers for backwards compatibility (if any native selects remain)
     const selectInputs = root.querySelectorAll<HTMLSelectElement>(
         'select[data-action="update-select"]'
@@ -4673,7 +4836,8 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
 
             if (key === "chartScenarios") {
                 const available =
-                    state.metaData?.scenarios?.length && state.metaData.scenarios
+                    state.metaData?.scenarios?.length &&
+                    state.metaData.scenarios
                         ? Array.from(
                               new Set(
                                   state.metaData.scenarios.map(
@@ -4710,7 +4874,9 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                 );
 
                 // Clip date to new common range
-                const commonRange = intersectScenarioRange(state.chartScenarios);
+                const commonRange = intersectScenarioRange(
+                    state.chartScenarios
+                );
                 state.chartDate = clipDateToRange(state.chartDate, commonRange);
             }
 
@@ -4743,10 +4909,12 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             const key = btn.dataset.key;
             if (!key) return;
             if (key === "chartScenarios") {
-                state.chartDropdown.scenariosOpen = !state.chartDropdown.scenariosOpen;
+                state.chartDropdown.scenariosOpen =
+                    !state.chartDropdown.scenariosOpen;
             }
             if (key === "chartModels") {
-                state.chartDropdown.modelsOpen = !state.chartDropdown.modelsOpen;
+                state.chartDropdown.modelsOpen =
+                    !state.chartDropdown.modelsOpen;
             }
             render();
         })

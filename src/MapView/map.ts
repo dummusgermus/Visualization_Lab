@@ -70,8 +70,6 @@ function gridToLatLon(
     lonStep: number,
     latStep: number
 ): [number, number] {
-    // Data uses 0-360° longitude: x=0 → 0°, x=width → 360°
-    // Convert to -180 to 180° for display: subtract 180°
     const lonRaw = x * lonStep + lonStep / 2;
     const lon = lonRaw > 180 ? lonRaw - 360 : lonRaw;
     // Latitude: y=0 → 90° (North), y=height → -60° (South, excluding Antarctica)
@@ -211,14 +209,6 @@ export function projectLonLatToCanvas(
     }
 
     return { x: bestX, y };
-}
-
-export function screenToLonLat(
-    canvas: HTMLCanvasElement,
-    clientX: number,
-    clientY: number
-): { lat: number; lon: number } | null {
-    return pointerToLonLat(canvas, clientX, clientY);
 }
 
 export function setupMapInteractions(
@@ -411,11 +401,11 @@ export function renderMapData(
 
     // Direct equirectangular projection (simple linear mapping)
     // This ensures accurate coordinate mapping without D3 projection quirks
-    // Formula: x = (lon + 180) / 360 * viewWidth, y = (90 - lat) / 180 * viewHeight
+    // Formula: x = (lon + 180) / 360 * viewWidth, y = (90 - lat) / 150 * viewHeight
     // This maps: lon[-180,180] -> x[0,viewWidth], lat[90,-60] -> y[0,viewHeight]
     function projectLonLat(lon: number, lat: number): [number, number] {
         const x = ((lon + 180) / 360) * viewWidth;
-        const y = ((90 - lat) / 180) * viewHeight;
+        const y = ((90 - lat) / 150) * viewHeight;
         return [x, y];
     }
 
@@ -558,7 +548,7 @@ function updateTooltip(
         if (isFinite(rawValue)) {
             // Calculate lat/lon for display
             const lon = (worldX / mapWidth) * 360 - 180;
-            const lat = 90 - (worldY / mapHeight) * 180;
+            const lat = 90 - (worldY / mapHeight) * 150;
 
             // Let tooltip handle conversion based on selected unit
             showTooltip(

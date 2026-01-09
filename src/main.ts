@@ -31,6 +31,19 @@ import {
     getDefaultUnitOption,
     getUnitOptions,
 } from "./Utils/unitConverter";
+import {
+    generateToyRangeSeries,
+    flattenSeriesToSamples,
+} from "./Utils/mockChartData";
+import {
+    type ChartBox,
+    type ChartSample,
+    type ChartSeries,
+    type ChartStats,
+} from "./types/chartTypes";
+
+// Toggle to switch between real API data and toy mock chart data (range mode)
+const USE_TOY_RANGE_DATA = false;
 
 type Mode = "Explore" | "Compare";
 type PanelTab = "Manual" | "Chat";
@@ -51,29 +64,6 @@ type DrawState = {
     previewPoint: LatLon | null;
 };
 
-type ChartSample = {
-    scenario: string;
-    model: string;
-    rawValue: number;
-    dateUsed: string;
-};
-
-type ChartStats = {
-    min: number;
-    q1: number;
-    median: number;
-    q3: number;
-    max: number;
-    mean: number;
-    count: number;
-};
-
-type ChartBox = {
-    scenario: string;
-    dateUsed: string;
-    samples: Array<ChartSample & { value: number }>;
-    stats: ChartStats;
-};
 type ChartDropdownState = {
     scenariosOpen: boolean;
     modelsOpen: boolean;
@@ -83,6 +73,21 @@ type ChartLoadingProgress = {
     total: number;
     done: number;
 };
+
+function applyChartLayoutOffset(offset: number, scale?: number) {
+    const containers = document.querySelectorAll<HTMLElement>(
+        "[data-role='chart-container']"
+    );
+    containers.forEach((el) => {
+        el.style.transition =
+            "padding 220ms ease, padding-right 220ms ease, transform 220ms ease";
+        el.style.paddingRight = `${offset}px`;
+        if (typeof scale === "number") {
+            el.style.transform = `scale(${scale})`;
+            el.style.transformOrigin = "center center";
+        }
+    });
+}
 
 function normalizeScenarioLabel(input: string): string {
     const lower = input.toLowerCase();
@@ -971,6 +976,8 @@ export type AppState = {
     selectedUnit: string; // Unit label (e.g., "Kelvin (K)", "Celsius (°C)")
     chartMode: ChartMode;
     chartDate: string;
+    chartRangeStart: string;
+    chartRangeEnd: string;
     chartVariable: string;
     chartUnit: string;
     chartScenarios: string[];
@@ -978,6 +985,7 @@ export type AppState = {
     chartDropdown: ChartDropdownState;
     chartSamples: ChartSample[];
     chartBoxes: ChartBox[] | null;
+    chartRangeSeries: ChartSeries[] | null;
     chartLoading: boolean;
     chartError: string | null;
     chartLoadingProgress: ChartLoadingProgress;
@@ -1031,6 +1039,8 @@ const state: AppState = {
     selectedUnit: getDefaultUnitOption(variables[0]).label,
     chartMode: "single",
     chartDate: "2026-01-16",
+    chartRangeStart: "2020-01-01",
+    chartRangeEnd: "2077-06-28",
     chartVariable: variables[0],
     chartUnit: getDefaultUnitOption(variables[0]).label,
     chartScenarios: ["SSP245", "SSP370", "SSP585"],
@@ -1039,6 +1049,7 @@ const state: AppState = {
     chartLoadingProgress: { total: 0, done: 0 },
     chartSamples: [],
     chartBoxes: null,
+    chartRangeSeries: null,
     chartLoading: false,
     chartError: null,
     chartLocation: "World",
@@ -1199,6 +1210,7 @@ function describeCompareContext(state: AppState): {
         }
     }
 }
+
 
 function renderCompareInfo(state: AppState): string {
     if (state.mode !== "Compare" || state.canvasView !== "map") return "";
@@ -1951,6 +1963,151 @@ function buildChartBoxes(
     });
 }
 
+function buildSampleDates(
+    start: string,
+    end: string,
+    maxPoints = 50
+): string[] {
+    const startDate = parseDate(start);
+    const endDate = parseDate(end);
+    if (
+        Number.isNaN(startDate.getTime()) ||
+        Number.isNaN(endDate.getTime()) ||
+        maxPoints <= 0
+    ) {
+        return [];
+    }
+
+    let from = startDate;
+    let to = endDate;
+    if (from > to) {
+        [from, to] = [to, from];
+    }
+
+    const dayMs = 24 * 60 * 60 * 1000;
+    const totalDays = Math.floor((to.getTime() - from.getTime()) / dayMs);
+    const inclusiveDays = totalDays + 1;
+
+    const dates: string[] = [];
+    if (inclusiveDays <= maxPoints) {
+        for (let i = 0; i < inclusiveDays; i++) {
+            const next = new Date(from.getTime() + i * dayMs);
+            dates.push(next.toISOString().slice(0, 10));
+        }
+        return dates;
+    }
+
+    const stepMs = (to.getTime() - from.getTime()) / (maxPoints - 1);
+    const collected = new Set<string>();
+    for (let i = 0; i < maxPoints; i++) {
+        const next = new Date(from.getTime() + stepMs * i);
+        collected.add(next.toISOString().slice(0, 10));
+    }
+    collected.add(to.toISOString().slice(0, 10));
+
+    return Array.from(collected).sort(
+        (a, b) => parseDate(a).getTime() - parseDate(b).getTime()
+    );
+}
+
+function buildRangeSampleDates(
+    start: string,
+    end: string,
+    maxPoints = 50
+): string[] {
+    const startDate = parseDate(start);
+    const endDate = parseDate(end);
+    if (
+        Number.isNaN(startDate.getTime()) ||
+        Number.isNaN(endDate.getTime()) ||
+        maxPoints <= 0
+    ) {
+        return [];
+    }
+    let from = startDate;
+    let to = endDate;
+    if (from > to) [from, to] = [to, from];
+
+    const dayMs = 24 * 60 * 60 * 1000;
+    const spanDays = Math.floor((to.getTime() - from.getTime()) / dayMs);
+
+    // For short ranges (<= ~4 months), keep the dense even sampling
+    if (spanDays <= 120) {
+        return buildSampleDates(from.toISOString().slice(0, 10), to.toISOString().slice(0, 10), maxPoints);
+    }
+
+    // For longer ranges, align by day/month to compare same seasonal day across years
+    const startDay = from.getDate();
+    const startMonth = from.getMonth(); // 0-based
+    const startYear = from.getFullYear();
+    const endYear = to.getFullYear();
+    const totalYears = endYear - startYear + 1;
+    const steps = Math.min(maxPoints, totalYears);
+
+    const years = new Set<number>();
+    if (steps === 1) {
+        years.add(startYear);
+    } else {
+        const step = (totalYears - 1) / (steps - 1);
+        for (let i = 0; i < steps; i++) {
+            const yr = Math.round(startYear + step * i);
+            years.add(Math.min(endYear, Math.max(startYear, yr)));
+        }
+    }
+
+    const dates: string[] = [];
+    const sortedYears = Array.from(years).sort((a, b) => a - b);
+    sortedYears.forEach((year) => {
+        // Adjust day for months with fewer days (e.g., Feb)
+        const lastDayOfMonth = new Date(year, startMonth + 1, 0).getDate();
+        const day = Math.min(startDay, lastDayOfMonth);
+        const candidate = new Date(year, startMonth, day);
+        let clipped = candidate;
+        if (candidate < from) clipped = from;
+        if (candidate > to) clipped = to;
+        dates.push(clipped.toISOString().slice(0, 10));
+    });
+
+    return Array.from(new Set(dates)).sort(
+        (a, b) => parseDate(a).getTime() - parseDate(b).getTime()
+    );
+}
+
+function buildChartRangeSeries(
+    samples: ChartSample[],
+    variable: string,
+    unitLabel: string
+): ChartSeries[] {
+    const byScenario = new Map<string, ChartSample[]>();
+    samples.forEach((sample) => {
+        const current = byScenario.get(sample.scenario) ?? [];
+        current.push(sample);
+        byScenario.set(sample.scenario, current);
+    });
+
+    return Array.from(byScenario.entries()).map(([scenario, entries]) => {
+        const byDate = new Map<string, Array<ChartSample & { value: number }>>();
+        entries.forEach((entry) => {
+            const value = convertValue(entry.rawValue, variable, unitLabel);
+            const current = byDate.get(entry.dateUsed) ?? [];
+            current.push({ ...entry, value });
+            byDate.set(entry.dateUsed, current);
+        });
+
+        const points = Array.from(byDate.entries())
+            .map(([date, list]) => ({
+                date,
+                samples: list,
+                stats: computeChartStats(list.map((item) => item.value)),
+            }))
+            .sort(
+                (a, b) => parseDate(a.date).getTime() - parseDate(b.date).getTime()
+            );
+
+        return { scenario, points };
+    });
+}
+
 function createDifferenceData(
     dataA: ClimateData,
     dataB: ClimateData,
@@ -2145,22 +2302,13 @@ async function loadCompareData(
 async function loadChartData() {
     if (state.canvasView !== "chart") return;
 
-    if (state.chartMode === "range") {
-        state.chartError = "Range mode is not implemented yet.";
-        state.chartBoxes = null;
-        state.chartSamples = [];
-        state.chartLoading = false;
-        state.chartLoadingProgress = { total: 0, done: 0 };
-        render();
-        return;
-    }
-
     if (
         state.chartLocation === "Draw" &&
         (!state.chartPolygon || state.chartPolygon.length < 3)
     ) {
         state.chartError = "Draw a region on the map to load chart data.";
         state.chartBoxes = null;
+        state.chartRangeSeries = null;
         state.chartSamples = [];
         state.chartLoading = false;
         state.chartLoadingProgress = { total: 0, done: 0 };
@@ -2170,6 +2318,7 @@ async function loadChartData() {
     if (state.chartLocation === "Point" && !state.chartPoint) {
         state.chartError = "Click a point on the map to load chart data.";
         state.chartBoxes = null;
+        state.chartRangeSeries = null;
         state.chartSamples = [];
         state.chartLoading = false;
         state.chartLoadingProgress = { total: 0, done: 0 };
@@ -2181,6 +2330,7 @@ async function loadChartData() {
             ? "Searching for a place..."
             : "Search for a place and pick a result.";
         state.chartBoxes = null;
+        state.chartRangeSeries = null;
         state.chartSamples = [];
         state.chartLoading = false;
         state.chartLoadingProgress = { total: 0, done: 0 };
@@ -2221,6 +2371,7 @@ async function loadChartData() {
             state.chartError = "Select at least one scenario and one model.";
             state.chartSamples = [];
             state.chartBoxes = null;
+            state.chartRangeSeries = null;
             state.chartLoading = false;
             state.chartLoadingProgress = { total: 0, done: 0 };
             render();
@@ -2228,91 +2379,227 @@ async function loadChartData() {
         }
 
         const commonRange = intersectScenarioRange(activeScenarios);
-        const targetDate = clipDateToRange(state.chartDate, commonRange);
-        if (targetDate !== state.chartDate) {
-            state.chartDate = targetDate;
-        }
 
-        const totalRequests = activeScenarios.length * activeModels.length;
-        state.chartLoadingProgress = { total: totalRequests, done: 0 };
-        render();
+        if (state.chartMode === "single") {
+            const targetDate = clipDateToRange(state.chartDate, commonRange);
+            if (targetDate !== state.chartDate) {
+                state.chartDate = targetDate;
+            }
 
-        const samples: ChartSample[] = [];
+            const totalRequests = activeScenarios.length * activeModels.length;
+            state.chartLoadingProgress = { total: totalRequests, done: 0 };
+            state.chartRangeSeries = null;
+            render();
 
-        for (const scenario of activeScenarios) {
-            const dateForScenario = clipDateToRange(
-                state.chartDate,
-                getTimeRangeForScenario(scenario)
-            );
-            for (const model of activeModels) {
-                const done = state.chartLoadingProgress.done;
-                setLoadingProgress(
-                    Math.min(
-                        95,
-                        Math.round(((done + 0.1) / totalRequests) * 100)
-                    )
+            const samples: ChartSample[] = [];
+
+            for (const scenario of activeScenarios) {
+                const dateForScenario = clipDateToRange(
+                    state.chartDate,
+                    getTimeRangeForScenario(scenario)
                 );
-                const request = createDataRequest({
-                    variable: state.chartVariable,
-                    date: dateForScenario,
-                    model,
-                    scenario,
-                    resolution: 1,
+                for (const model of activeModels) {
+                    const done = state.chartLoadingProgress.done;
+                    setLoadingProgress(
+                        Math.min(
+                            95,
+                            Math.round(((done + 0.1) / totalRequests) * 100)
+                        )
+                    );
+                    const request = createDataRequest({
+                        variable: state.chartVariable,
+                        date: dateForScenario,
+                        model,
+                        scenario,
+                        resolution: 1,
+                    });
+                    const data = await fetchClimateData(request);
+                    const after = state.chartLoadingProgress.done + 1;
+                    state.chartLoadingProgress = {
+                        total: totalRequests,
+                        done: after,
+                    };
+                    setLoadingProgress(
+                        Math.min(98, Math.round((after / totalRequests) * 100))
+                    );
+                    render();
+                    const arr = dataToArray(data);
+                    if (!arr) {
+                        throw new Error("No data returned for chart request.");
+                    }
+                    const avg =
+                        state.chartLocation === "Draw" &&
+                        state.chartPolygon &&
+                        state.chartPolygon.length >= 3
+                            ? averageArrayInPolygon(
+                                  arr,
+                                  state.chartVariable,
+                                  data.shape,
+                                  state.chartPolygon
+                              )
+                            : (state.chartLocation === "Point" ||
+                                  state.chartLocation === "Search") &&
+                              state.chartPoint
+                            ? valueAtPoint(
+                                  arr,
+                                  state.chartVariable,
+                                  data.shape,
+                                  state.chartPoint
+                              )
+                            : averageArray(arr, state.chartVariable);
+                    samples.push({
+                        scenario,
+                        model,
+                        rawValue: avg,
+                        dateUsed: dateForScenario,
+                    });
+                }
+            }
+
+            state.chartSamples = samples;
+            state.chartBoxes = buildChartBoxes(
+                samples,
+                state.chartVariable,
+                state.chartUnit
+            );
+            state.chartLoadingProgress = {
+                total: totalRequests,
+                done: totalRequests,
+            };
+            setLoadingProgress(100);
+        } else {
+            let rangeStart = clipDateToRange(state.chartRangeStart, commonRange);
+            let rangeEnd = clipDateToRange(state.chartRangeEnd, commonRange);
+            if (parseDate(rangeStart) > parseDate(rangeEnd)) {
+                [rangeStart, rangeEnd] = [rangeEnd, rangeStart];
+            }
+            state.chartRangeStart = rangeStart;
+            state.chartRangeEnd = rangeEnd;
+
+            if (USE_TOY_RANGE_DATA) {
+                const toySeries = generateToyRangeSeries({
+                    scenarios: activeScenarios,
+                    startDate: rangeStart,
+                    endDate: rangeEnd,
+                    modelsPerScenario: Math.max(1, activeModels.length),
                 });
-                const data = await fetchClimateData(request);
-                const after = state.chartLoadingProgress.done + 1;
+                state.chartSamples = flattenSeriesToSamples(toySeries);
+                state.chartRangeSeries = toySeries;
+                state.chartBoxes = null;
+                state.chartLoadingProgress = { total: 0, done: 0 };
+                setLoadingProgress(100);
+            } else {
+                const sampledDates = buildRangeSampleDates(
+                    rangeStart,
+                    rangeEnd,
+                    50
+                );
+                if (!sampledDates.length) {
+                    state.chartError =
+                        "Enter a valid date range within the selected scenarios.";
+                    state.chartSamples = [];
+                    state.chartBoxes = null;
+                    state.chartRangeSeries = null;
+                    state.chartLoading = false;
+                    state.chartLoadingProgress = { total: 0, done: 0 };
+                    render();
+                    return;
+                }
+
+                const totalRequests =
+                    activeScenarios.length *
+                    activeModels.length *
+                    sampledDates.length;
+                state.chartLoadingProgress = { total: totalRequests, done: 0 };
+                state.chartBoxes = null;
+                render();
+
+                const samples: ChartSample[] = [];
+
+                for (const scenario of activeScenarios) {
+                    const scenarioRange = getTimeRangeForScenario(scenario);
+                    for (const dateCandidate of sampledDates) {
+                        const dateForScenario = clipDateToRange(
+                            dateCandidate,
+                            scenarioRange
+                        );
+                        for (const model of activeModels) {
+                            const done = state.chartLoadingProgress.done;
+                            setLoadingProgress(
+                                Math.min(
+                                    95,
+                                    Math.round(((done + 0.1) / totalRequests) * 100)
+                                )
+                            );
+                            const request = createDataRequest({
+                                variable: state.chartVariable,
+                                date: dateForScenario,
+                                model,
+                                scenario,
+                                resolution: 1,
+                            });
+                            const data = await fetchClimateData(request);
+                            const after = state.chartLoadingProgress.done + 1;
+                            state.chartLoadingProgress = {
+                                total: totalRequests,
+                                done: after,
+                            };
+                            setLoadingProgress(
+                                Math.min(
+                                    98,
+                                    Math.round((after / totalRequests) * 100)
+                                )
+                            );
+                            render();
+                            const arr = dataToArray(data);
+                            if (!arr) {
+                                throw new Error(
+                                    "No data returned for chart request."
+                                );
+                            }
+                            const avg =
+                                state.chartLocation === "Draw" &&
+                                state.chartPolygon &&
+                                state.chartPolygon.length >= 3
+                                    ? averageArrayInPolygon(
+                                          arr,
+                                          state.chartVariable,
+                                          data.shape,
+                                          state.chartPolygon
+                                      )
+                                    : (state.chartLocation === "Point" ||
+                                          state.chartLocation === "Search") &&
+                                      state.chartPoint
+                                    ? valueAtPoint(
+                                          arr,
+                                          state.chartVariable,
+                                          data.shape,
+                                          state.chartPoint
+                                      )
+                                    : averageArray(arr, state.chartVariable);
+                            samples.push({
+                                scenario,
+                                model,
+                                rawValue: avg,
+                                dateUsed: dateForScenario,
+                            });
+                        }
+                    }
+                }
+
+                state.chartSamples = samples;
+                state.chartRangeSeries = buildChartRangeSeries(
+                    samples,
+                    state.chartVariable,
+                    state.chartUnit
+                );
                 state.chartLoadingProgress = {
                     total: totalRequests,
-                    done: after,
+                    done: totalRequests,
                 };
-                setLoadingProgress(
-                    Math.min(98, Math.round((after / totalRequests) * 100))
-                );
-                render();
-                const arr = dataToArray(data);
-                if (!arr) {
-                    throw new Error("No data returned for chart request.");
-                }
-                const avg =
-                    state.chartLocation === "Draw" &&
-                    state.chartPolygon &&
-                    state.chartPolygon.length >= 3
-                        ? averageArrayInPolygon(
-                              arr,
-                              state.chartVariable,
-                              data.shape,
-                              state.chartPolygon
-                          )
-                        : (state.chartLocation === "Point" ||
-                              state.chartLocation === "Search") &&
-                          state.chartPoint
-                        ? valueAtPoint(
-                              arr,
-                              state.chartVariable,
-                              data.shape,
-                              state.chartPoint
-                          )
-                        : averageArray(arr, state.chartVariable);
-                samples.push({
-                    scenario,
-                    model,
-                    rawValue: avg,
-                    dateUsed: dateForScenario,
-                });
+                setLoadingProgress(100);
             }
         }
-
-        state.chartSamples = samples;
-        state.chartBoxes = buildChartBoxes(
-            samples,
-            state.chartVariable,
-            state.chartUnit
-        );
-        state.chartLoadingProgress = {
-            total: totalRequests,
-            done: totalRequests,
-        };
-        setLoadingProgress(100);
     } catch (error) {
         state.chartError =
             error instanceof DataClientError && error.statusCode
@@ -2322,6 +2609,7 @@ async function loadChartData() {
                 : String(error);
         state.chartSamples = [];
         state.chartBoxes = null;
+        state.chartRangeSeries = null;
         state.chartLoadingProgress = { total: 1, done: 1 };
     } finally {
         state.chartLoading = false;
@@ -2754,6 +3042,12 @@ function render() {
             }
         }
     }
+
+    // Apply responsive padding to charts after DOM is ready
+    const currentPadding =
+        (state.sidebarOpen ? SIDEBAR_WIDTH + 24 : 24) + 8;
+    const scale = state.sidebarOpen ? 1 : 0.9;
+    applyChartLayoutOffset(currentPadding, scale);
 }
 
 function renderLoadingIndicator() {
@@ -2927,8 +3221,228 @@ function renderChartSvg(boxes: ChartBox[]): string {
     `;
 }
 
+function renderChartRangeSvg(series: ChartSeries[]): string {
+    if (!series.length) {
+        return `<div style="${styleAttr(
+            styles.chartEmpty
+        )}">No chart data loaded yet.</div>`;
+    }
+
+    const palette =
+        paletteOptions.find((p) => p.name === state.palette) ||
+        paletteOptions[0];
+    const colors = palette.colors;
+
+    const width = 960;
+    const height = 460;
+    const margin = { top: 28, right: 32, bottom: 82, left: 86 };
+    const plotWidth = width - margin.left - margin.right;
+    const plotHeight = height - margin.top - margin.bottom;
+
+    const allPoints = series.flatMap((s) => s.points);
+    const allDates = allPoints.map((p) => parseDate(p.date));
+    const minDate = d3.min(allDates);
+    const maxDate = d3.max(allDates);
+
+    if (!minDate || !maxDate) {
+        return `<div style="${styleAttr(
+            styles.chartEmpty
+        )}">No chart data loaded yet.</div>`;
+    }
+
+    const padDayMs = 24 * 60 * 60 * 1000;
+    const domainStart = new Date(minDate.getTime() - padDayMs * 0.25);
+    const domainEnd = new Date(maxDate.getTime() + padDayMs * 0.25);
+
+    const xScale = d3
+        .scaleTime()
+        .domain([domainStart, domainEnd])
+        .range([0, plotWidth]);
+    const xTicks = xScale.ticks(6);
+    const formatTick = d3.timeFormat("%b %Y");
+
+    const allExtrema = allPoints.flatMap((p) => [p.stats.min, p.stats.max]);
+    const minVal = Math.min(...allExtrema);
+    const maxVal = Math.max(...allExtrema);
+    const pad = Math.max(Math.abs(maxVal - minVal) * 0.12, 1e-6);
+
+    const yScale = d3
+        .scaleLinear()
+        .domain([minVal - pad, maxVal + pad])
+        .range([plotHeight, 0]);
+    const yTicks = yScale.ticks(6);
+
+    const axisTicksY = yTicks
+        .map((tick) => {
+            const y = yScale(tick) + margin.top;
+            return `
+        <g>
+          <line x1="${margin.left}" x2="${
+                width - margin.right
+            }" y1="${y}" y2="${y}" stroke="rgba(255,255,255,0.08)" />
+          <text x="${margin.left - 10}" y="${
+                y + 4
+            }" fill="var(--text-secondary)" font-size="11" text-anchor="end">
+            ${formatNumberCompact(tick)}
+          </text>
+        </g>
+      `;
+        })
+        .join("");
+
+    const axisTicksX = xTicks
+        .map((tick) => {
+            const x = xScale(tick) + margin.left;
+            return `
+        <g>
+          <line x1="${x}" x2="${x}" y1="${margin.top}" y2="${
+                height - margin.bottom
+            }" stroke="rgba(255,255,255,0.06)" />
+          <text x="${x}" y="${height - margin.bottom + 26}" fill="var(--text-secondary)" font-size="11" text-anchor="middle">
+            ${formatTick(tick)}
+          </text>
+        </g>
+      `;
+        })
+        .join("");
+
+    const steps = Math.max(variables.length, 4);
+
+    const seriesMarkup = series
+        .map((entry, idx) => {
+            if (!entry.points.length) return "";
+            const color = colors[idx % colors.length];
+
+            // Precompute evenly spaced levels between min and max for each point
+            const pointLevels = entry.points.map((p) => {
+                const levels = Array.from({ length: steps + 1 }, (_, i) => {
+                    const t = i / steps;
+                    return p.stats.min + (p.stats.max - p.stats.min) * t;
+                });
+                return { point: p, levels };
+            });
+
+            const buildSteppedBand = (bandIdx: number) => {
+                const upperPath = pointLevels
+                    .map(({ point, levels }) => {
+                        const x = xScale(parseDate(point.date)) + margin.left;
+                        const y =
+                            yScale(levels[bandIdx + 1]) + margin.top;
+                        return `${x},${y}`;
+                    })
+                    .join(" L ");
+                const lowerPath = [...pointLevels]
+                    .reverse()
+                    .map(({ point, levels }) => {
+                        const x = xScale(parseDate(point.date)) + margin.left;
+                        const y = yScale(levels[bandIdx]) + margin.top;
+                        return `${x},${y}`;
+                    })
+                    .join(" L ");
+                return `M ${upperPath} L ${lowerPath} Z`;
+            };
+
+            const bandPaths = Array.from({ length: steps }, (_, i) => {
+                const path = buildSteppedBand(i);
+                const mid = steps / 2;
+                const centerWeight =
+                    1 - Math.min(Math.abs(i + 0.5 - mid) / mid, 1);
+                const opacity = 0.55 * centerWeight + 0.08;
+                return `<path d="${path}" fill="${color}" fill-opacity="${opacity.toFixed(
+                    3
+                )}" stroke="none" />`;
+            }).join("");
+
+            const medianPath = entry.points
+                .map((p, i) => {
+                    const x = xScale(parseDate(p.date)) + margin.left;
+                    const y = yScale(p.stats.median) + margin.top;
+                    return `${i === 0 ? "M" : "L"} ${x} ${y}`;
+                })
+                .join(" ");
+            const meanPath = entry.points
+                .map((p, i) => {
+                    const x = xScale(parseDate(p.date)) + margin.left;
+                    const y = yScale(p.stats.mean) + margin.top;
+                    return `${i === 0 ? "M" : "L"} ${x} ${y}`;
+                })
+                .join(" ");
+
+            return `
+        <g>
+          ${bandPaths}
+          <path d="${medianPath}" fill="none" stroke="${color}" stroke-width="2.2" />
+          <path d="${meanPath}" fill="none" stroke="${color}" stroke-width="1.6" stroke-dasharray="6 6" stroke-opacity="0.9" />
+          <circle cx="${xScale(
+              parseDate(entry.points[entry.points.length - 1].date)
+          ) + margin.left}" cy="${yScale(
+                entry.points[entry.points.length - 1].stats.median
+            ) + margin.top}" r="4" fill="${color}" stroke="rgba(0,0,0,0.4)" stroke-width="1" />
+        </g>
+      `;
+        })
+        .join("");
+
+    const yLabel = `
+      <text
+        x="${margin.left - 70}"
+        y="${margin.top + plotHeight / 2}"
+        fill="var(--text-secondary)"
+        font-size="12"
+        text-anchor="middle"
+        transform="rotate(-90 ${margin.left - 70} ${margin.top + plotHeight / 2})"
+      >
+        ${state.chartUnit}
+      </text>
+    `;
+
+    return `
+      <div style="width:100%; display:flex; flex-direction:column; gap:12px; align-items:center;">
+        <div style="position:relative; width:100%; display:flex; justify-content:center;">
+          <div style="position:absolute; top:10px; right:16px; display:flex; gap:12px; align-items:center; color:var(--text-secondary); font-size:11.5px; z-index:2;">
+            <div style="display:flex; align-items:center; gap:6px;">
+              <span style="display:inline-block; width:26px; height:0; border-top:1px solid var(--text-primary);"></span>
+              <span>Median</span>
+            </div>
+            <div style="display:flex; align-items:center; gap:6px;">
+              <span style="display:inline-block; width:26px; height:0; border-top:1px dashed var(--text-primary);"></span>
+              <span>Mean</span>
+            </div>
+          </div>
+          <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Distribution over time" preserveAspectRatio="xMidYMid meet" style="width:100%; height:auto;">
+            ${axisTicksY}
+            ${axisTicksX}
+            <path
+              d="M ${margin.left} ${margin.top} L ${margin.left} ${height - margin.bottom} L ${width - margin.right} ${height - margin.bottom}"
+              fill="none"
+              stroke="rgba(255,255,255,0.6)"
+              stroke-width="1.2"
+              stroke-linecap="round"
+            />
+            ${seriesMarkup}
+            ${yLabel}
+          </svg>
+        </div>
+        <div style="${styleAttr(styles.chartLegend)}">
+          ${series
+              .map((entry, idx) => {
+                  const color = colors[idx % colors.length];
+                  return `
+            <div style="display:flex; align-items:center; gap:8px; font-size:12; color:var(--text-secondary);">
+              <span style="display:inline-block; width:16px; height:8px; background:${color}; border-radius:999px;"></span>
+              <span style="color:var(--text-primary); font-weight:700;">${entry.scenario}</span>
+            </div>
+          `;
+              })
+              .join("")}
+        </div>
+      </div>
+    `;
+}
+
 function renderChartArea() {
     let body = "";
+    const isRangeMode = state.chartMode === "range";
     if (state.chartLoading) {
         body = `
           <div style="position:absolute; inset:0; pointer-events:none;">
@@ -2961,20 +3475,31 @@ function renderChartArea() {
             </div>
             ${renderChartLoadingIndicator()}
           </div>
-          ${state.chartBoxes ? renderChartSvg(state.chartBoxes) : ""}
+          ${
+              !isRangeMode && state.chartBoxes
+                  ? renderChartSvg(state.chartBoxes)
+                  : isRangeMode && state.chartRangeSeries
+                  ? renderChartRangeSvg(state.chartRangeSeries)
+                  : ""
+          }
         `;
     } else if (state.chartError) {
         body = `<div style="${styleAttr(styles.chartError)}">${
             state.chartError
         }</div>`;
-    } else if (!state.chartBoxes || !state.chartBoxes.length) {
-        body = `
-          <div style="${styleAttr(styles.chartEmpty)}">
-            Select scenarios and models to fetch the global box plot.
-          </div>
-        `;
+    } else if (
+        (!isRangeMode && (!state.chartBoxes || !state.chartBoxes.length)) ||
+        (isRangeMode &&
+            (!state.chartRangeSeries || !state.chartRangeSeries.length))
+    ) {
+        const emptyCopy = isRangeMode
+            ? "Select scenarios, models, and a date range to see how the distribution evolves over time."
+            : "Select scenarios and models to fetch the global box plot.";
+        body = `<div style="${styleAttr(styles.chartEmpty)}">${emptyCopy}</div>`;
     } else {
-        body = renderChartSvg(state.chartBoxes);
+        body = isRangeMode
+            ? renderChartRangeSvg(state.chartRangeSeries ?? [])
+            : renderChartSvg(state.chartBoxes ?? []);
     }
 
     const chartLocationLabel =
@@ -2988,11 +3513,17 @@ function renderChartArea() {
             : state.chartLocation === "World"
             ? "Global"
             : "");
+    const chartDateLabel =
+        state.chartMode === "range"
+            ? `${formatDisplayDate(state.chartRangeStart)} – ${formatDisplayDate(
+                  state.chartRangeEnd
+              )}`
+            : formatDisplayDate(state.chartDate);
+
+    const paddingRight = state.sidebarOpen ? SIDEBAR_WIDTH + 32 : 24;
 
     return `
-      <div style="pointer-events:auto; width:100%; display:flex; align-items:center; justify-content:center; padding:24px; padding-right:${
-          state.sidebarOpen ? SIDEBAR_WIDTH + 32 : 24
-      }px;">
+      <div data-role="chart-container" style="pointer-events:auto; width:100%; display:flex; align-items:center; justify-content:center; padding:24px; padding-right:${paddingRight}px;">
         <div style="${styleAttr(styles.chartPanel)}">
           <div style="${styleAttr(styles.chartHeader)}">
             <div style="${styleAttr(styles.chartTitle)}">${getVariableLabel(
@@ -3001,10 +3532,8 @@ function renderChartArea() {
     )}</div>
             <div style="${styleAttr(styles.mapSubtitle)}">${
         chartLocationLabel
-            ? `${escapeHtml(chartLocationLabel)} · ${formatDisplayDate(
-                  state.chartDate
-              )}`
-            : formatDisplayDate(state.chartDate)
+            ? `${escapeHtml(chartLocationLabel)} · ${chartDateLabel}`
+            : chartDateLabel
     }</div>
           </div>
           <div style="${styleAttr(
@@ -3789,24 +4318,95 @@ function renderChartSection() {
             )
         )}
       </div>
-
-      <div style="margin-top:14px">
-        <div style="${styleAttr(styles.sectionTitle)}">Color palette</div>
-        ${renderField(
-            "",
-            renderSelect(
-                "palette",
-                paletteOptions.map((p) => p.name),
-                state.palette,
-                { dataKey: "palette" }
-            )
-        )}
-      </div>
     `;
 
     const rangeContent = `
-      <div style="${styleAttr(styles.chartEmpty)}">
-        Range mode will be added later.
+      <div style="${styleAttr(styles.paramGrid)}">
+        ${renderField(
+            "Start date",
+            renderInput("chartRangeStart", state.chartRangeStart, {
+                dataKey: "chartRangeStart",
+                min: commonRange.start,
+                max: commonRange.end,
+            })
+        )}
+        ${renderField(
+            "End date",
+            renderInput("chartRangeEnd", state.chartRangeEnd, {
+                dataKey: "chartRangeEnd",
+                min: commonRange.start,
+                max: commonRange.end,
+            })
+        )}
+      </div>
+
+      <div style="${styleAttr(
+          mergeStyles(styles.paramGrid, { marginTop: 12 })
+      )}">
+        ${renderField(
+            "Variable",
+            renderSelect("chartVariable", variables, state.chartVariable, {
+                dataKey: "chartVariable",
+                infoType: "variable",
+            })
+        )}
+      </div>
+
+      <div style="margin-top:10px">
+        ${renderField(
+            "Location",
+            renderSelect(
+                "chartLocation",
+                ["World", "Draw", "Point"],
+                state.chartLocation,
+                {
+                    dataKey: "chartLocation",
+                    selectedLabel:
+                        state.chartLocation === "Search" &&
+                        state.chartLocationName
+                            ? `Search: ${state.chartLocationName}`
+                            : state.chartLocation,
+                    extraContent: renderChartLocationExtras(),
+                }
+            )
+        )}
+      </div>
+
+      <div style="margin-top:14px">
+        ${renderCollapsible(
+            "Scenarios",
+            state.chartDropdown.scenariosOpen,
+            `${state.chartScenarios.length} selected`,
+            renderChipGroup(
+                availableScenarios,
+                state.chartScenarios,
+                "chartScenarios"
+            ),
+            "chartScenarios"
+        )}
+      </div>
+
+      <div style="margin-top:14px">
+        ${renderCollapsible(
+            "Models",
+            state.chartDropdown.modelsOpen,
+            `${state.chartModels.length} selected`,
+            renderChipGroup(availableModels, state.chartModels, "chartModels"),
+            "chartModels"
+        )}
+      </div>
+
+      <div style="margin-top:14px">
+        <div style="${styleAttr(styles.sectionTitle)}">Unit</div>
+        ${renderField(
+            "",
+            renderSelect(
+                "chartUnit",
+                getUnitOptions(state.chartVariable).map((opt) => opt.label),
+                state.chartUnit,
+                { dataKey: "chartUnit" }
+            )
+        )}
       </div>
     `;
 
@@ -4091,6 +4691,11 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         },
         onTimeSliderUpdate: (isOpen) => {
             updateTimeSliderPosition(isOpen, SIDEBAR_WIDTH);
+        },
+        onCanvasToggleUpdate: (right) => {
+            // keep charts aligned with toggle; +8 matches previous offset
+            const scale = state.sidebarOpen ? 1 : 0.9;
+            applyChartLayoutOffset(right + 8, scale);
         },
     });
 
@@ -4649,11 +5254,20 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             case "chartUnit":
                 state.chartUnit = val;
                 if (state.chartSamples.length) {
-                    state.chartBoxes = buildChartBoxes(
-                        state.chartSamples,
-                        state.chartVariable,
-                        state.chartUnit
-                    );
+                    if (state.chartMode === "range") {
+                        state.chartRangeSeries = buildChartRangeSeries(
+                            state.chartSamples,
+                            state.chartVariable,
+                            state.chartUnit
+                        );
+                        state.chartBoxes = null;
+                    } else {
+                        state.chartBoxes = buildChartBoxes(
+                            state.chartSamples,
+                            state.chartVariable,
+                            state.chartUnit
+                        );
+                    }
                 }
                 render();
                 return;
@@ -4878,6 +5492,14 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                     state.chartScenarios
                 );
                 state.chartDate = clipDateToRange(state.chartDate, commonRange);
+                state.chartRangeStart = clipDateToRange(
+                    state.chartRangeStart,
+                    commonRange
+                );
+                state.chartRangeEnd = clipDateToRange(
+                    state.chartRangeEnd,
+                    commonRange
+                );
             }
 
             if (key === "chartModels") {
@@ -4920,6 +5542,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         })
     );
 
+
     const textInputs = root.querySelectorAll<HTMLInputElement>(
         '[data-action="update-input"]'
     );
@@ -4961,6 +5584,10 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                     ? state.compareDateStart
                     : key === "compareDateEnd"
                     ? state.compareDateEnd
+                    : key === "chartRangeStart"
+                    ? state.chartRangeStart
+                    : key === "chartRangeEnd"
+                    ? state.chartRangeEnd
                     : state.chartDate;
 
             if (currentValue === clippedValue) return; // No change, skip update
@@ -4981,6 +5608,12 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                 case "chartDate":
                     state.chartDate = value;
                     break;
+                case "chartRangeStart":
+                    state.chartRangeStart = value;
+                    break;
+                case "chartRangeEnd":
+                    state.chartRangeEnd = value;
+                    break;
             }
 
             // Only re-render and reload if the date actually changed
@@ -4993,7 +5626,12 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             ) {
                 loadClimateData();
             }
-            if (key === "chartDate" && state.canvasView === "chart") {
+            if (
+                state.canvasView === "chart" &&
+                (key === "chartDate" ||
+                    key === "chartRangeStart" ||
+                    key === "chartRangeEnd")
+            ) {
                 loadChartData();
             }
         };

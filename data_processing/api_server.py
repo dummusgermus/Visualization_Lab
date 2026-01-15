@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import base64
+import json
 import os
 import sys
 from typing import List, Literal, Optional
 
+import h5py
 import numpy as np
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,13 +20,17 @@ if _CURRENT_DIR not in sys.path:
 try:  # pragma: no cover - import path juggling for script/package usage
     from . import data_loader  # type: ignore  # noqa: E402
     from . import utils  # type: ignore  # noqa: E402
+    from . import aggregated_data  # type: ignore  # noqa: E402
     from .data_loader import DataLoadingError  # type: ignore  # noqa: E402
     from .utils import ParameterValidationError  # type: ignore  # noqa: E402
+    from .aggregated_data import AggregatedDataManager, AggregatedDataError  # type: ignore  # noqa: E402
 except ImportError:  # pragma: no cover
     import data_loader  # type: ignore  # noqa: E402
     import utils  # type: ignore  # noqa: E402
+    import aggregated_data  # type: ignore  # noqa: E402
     from data_loader import DataLoadingError  # type: ignore  # noqa: E402
     from utils import ParameterValidationError  # type: ignore  # noqa: E402
+    from aggregated_data import AggregatedDataManager, AggregatedDataError  # type: ignore  # noqa: E402
 
 
 AllowedFormat = Literal["base64", "list", "none"]
@@ -192,6 +198,125 @@ def fetch_time_series(request: TimeSeriesRequest):
         _translate_error(exc)
 
     return [_format_result(entry, request.data_format) for entry in series]
+
+
+# ============================================================================
+# Aggregated data endpoints (fast regional queries)
+# ============================================================================
+
+_aggregated_manager = None
+
+
+def _get_aggregated_manager() -> AggregatedDataManager:
+    """Lazy-load aggregated data manager"""
+    global _aggregated_manager
+    if _aggregated_manager is None:
+        agg_file = os.path.join(_CURRENT_DIR, "aggregated_data.h5")
+        _aggregated_manager = AggregatedDataManager(agg_file)
+    return _aggregated_manager
+
+
+@app.get("/aggregated-data")
+def get_aggregated_data(
+    region: str = "global",
+    variable: str = "tas",
+    scenario: str = "ssp585",
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+):
+    """
+    Fast retrieval of pre-aggregated regional climate data.
+    
+    This endpoint returns mean values pre-computed for specified regions,
+    enabling sub-millisecond queries compared to full data downloads.
+    
+    Example:
+        GET /aggregated-data?region=global&variable=tas&scenario=ssp585
+    
+    Returns: {region, variable, scenario, models: {model_name: [values...]}}
+    """
+    manager = _get_aggregated_manager()
+    
+    if not manager.exists():
+        raise HTTPException(
+            status_code=503,
+            detail="Aggregated data not available. Run precompute script first."
+        )
+    
+    try:
+        data = manager.get_data(
+            region=region,
+            variable=variable,
+            scenario=scenario,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        
+        return {
+            "region": region,
+            "variable": variable,
+            "scenario": scenario,
+            "start_date": start_date,
+            "end_date": end_date,
+            "models": data,
+            "status": "ok"
+        }
+    
+    except AggregatedDataError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/aggregated-regions")
+def get_aggregated_regions():
+    """Get list of available pre-aggregated regions"""
+    manager = _get_aggregated_manager()
+    
+    if not manager.exists():
+        return {"regions": [], "status": "not_available"}
+    
+    try:
+        with h5py.File(str(manager.filepath), "r") as f:
+            regions = [k for k in f.keys() if k != "metadata"]
+        
+        return {
+            "regions": regions,
+            "status": "ok"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/aggregated-status")
+def get_aggregated_status():
+    """Check if aggregated data is available and get metadata"""
+    manager = _get_aggregated_manager()
+    
+    if not manager.exists():
+        return {
+            "available": False,
+            "message": "Aggregated data not precomputed"
+        }
+    
+    try:
+        import h5py
+        with h5py.File(str(manager.filepath), "r") as f:
+            meta = f["metadata"]
+            regions = json.loads(meta.attrs.get("regions", "[]"))
+            models = json.loads(meta.attrs.get("models", "[]"))
+            return {
+                "available": True,
+                "version": meta.attrs.get("version", "unknown"),
+                "created_date": meta.attrs.get("created_date", "unknown"),
+                "regions": regions,
+                "models": models,
+            }
+    except Exception as e:
+        return {
+            "available": False,
+            "error": str(e)
+        }
 
 
 def main():

@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+xarray
+netCDF4
+numpy
+pandas
+scipy
+OpenVisus

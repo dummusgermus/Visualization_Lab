@@ -1,0 +1,6 @@
+﻿# Sample regions config
+# global uses full grid (mask not required)
+global: null
+# Uncomment and provide masks to enable more regions
+# eu: eu.npy
+# greenland: greenland.npy

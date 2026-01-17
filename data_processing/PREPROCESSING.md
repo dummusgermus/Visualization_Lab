@@ -4,12 +4,13 @@
 Provide fast, cache-friendly access to NEX-GDDP-CMIP6 data and pre-aggregations so the frontend avoids downloading full global grids.
 
 ## Main Modules
-- `config.py`: Lists variables/models/scenarios/resolutions, grid specs, cache dirs, concurrency settings.
-- `utils.py`: Parameter validation, date<->timestep conversion, field name generation, scenario inference, cache init.
-- `data_loader.py`: Reads via OpenVisus; supports single/batch/multi-variable/time-series/windowed reads with memory+disk cache.
-- `aggregated_data.py`: HDF5 read/write for aggregated data (region/variable/scenario/date range -> per-model series).
-- `precompute_aggregates.py`: Bulk precompute (default global mean) into `aggregated_data.h5`; env vars can limit models/variables/scenarios or sampling step.
-- `api_server.py`: FastAPI service exposing health, metadata, raw data/batch/time-series, window reads, on-demand aggregation, and precomputed aggregation queries.
+  - `config.py`: Lists variables/models/scenarios/resolutions, grid specs, cache dirs, concurrency settings.
+  - `utils.py`: Parameter validation, date<->timestep conversion, field name generation, scenario inference, cache init.
+  - `data_loader.py`: Reads via OpenVisus; supports single/batch/multi-variable/time-series/windowed reads with memory+disk cache.
+  - `aggregated_data.py`: HDF5 read/write for aggregated data (region/variable/scenario/date range -> per-model series).
+  - `precompute_aggregates.py`: Bulk precompute into `aggregated_data.h5`; now supports region masks, sampling step, and quick subset via env vars.
+  - `api_server.py`: FastAPI service exposing health, metadata, raw data/batch/time-series, window reads, on-demand aggregation, and precomputed aggregation queries.
+  - `regions/` (optional): store region masks as `.npy` (shape = `config.GRID_SHAPE`, values 1/0/NaN) for precompute.
 
 ## Key API Endpoints (frontend quick guide)
 - `/metadata` (GET): Returns available variables/models/scenarios/resolutions, metadata, and time ranges. Call first to build dropdowns.
@@ -51,7 +52,9 @@ Provide fast, cache-friendly access to NEX-GDDP-CMIP6 data and pre-aggregations 
   - `/aggregated-status` (GET): Precompute file version, created date, available models/regions; reports unavailable if missing.
 
 ## Precompute Notes
-- Full run: `cd data_processing && python precompute_aggregates.py`.
+- Full run (default regions = `global` or env override): `cd data_processing && python precompute_aggregates.py`.
+- Region masks & multi-region: precompute iterates over regions (global or mask-driven). Place `regions/<region>.npy` (shape `(600,1440)`, values 1/0/NaN), or list them in `regions/regions.yaml` (sample provided). Configure regions via `NEX_GDDP_REGIONS=global,eu,greenland`; override mask directory with `NEX_GDDP_REGION_DIR` (default `data_processing/regions`); override config file with `NEX_GDDP_REGIONS_CONFIG`. Sparse masks use their bounding box to minimize reads.
+- Sampling cadence: `SAMPLE_EVERY_N_DAYS=30` means take one timestep every 30 days when precomputing; lowering it (e.g., 7 or 1) gives finer time resolution but increases runtime/IO.
 - Quick subset/sampling (for fast test builds): set env vars before running, e.g. (PowerShell):
   ```powershell
   cd data_processing
@@ -67,6 +70,7 @@ Provide fast, cache-friendly access to NEX-GDDP-CMIP6 data and pre-aggregations 
   - `NEX_GDDP_AGG_TEST_MODELS`: number of models (default 2)
   - `NEX_GDDP_AGG_TEST_VARIABLES`: number of variables (default 2)
   - `NEX_GDDP_AGG_TEST_SCENARIOS`: number of scenarios (default 2)
+  - Quick mode is for smoke/preview: it trims models/variables/scenarios and time span to cut runtime; for production curves, run without `NEX_GDDP_AGG_TEST`.
 
 ## Runtime & Config
 - Cache: set `NEX_GDDP_CACHE_DIR` to persistent storage; `NEX_GDDP_DISABLE_DISK_CACHE=1` disables disk cache.

@@ -70,7 +70,7 @@ export class DataClientError extends Error {
     }
 }
 
-function normalizeScenario(scenario: string): string {
+export function normalizeScenario(scenario: string): string {
     const mapping: Record<string, string> = {
         Historical: "historical",
         SSP245: "ssp245",
@@ -235,6 +235,172 @@ export function createDataRequest(params: {
         resolution: resolutionNumberToString(params.resolution),
         data_format: params.dataFormat || "base64",
     };
+}
+
+export interface PixelDataRequest {
+    variable: string;
+    model: string;
+    x0: number;
+    x1: number;
+    y0: number;
+    y1: number;
+    start_date: string;
+    end_date: string;
+    scenario?: string;
+    resolution?: Resolution;
+    step_days?: number;
+}
+
+export interface PixelDataResponse {
+    pixel: [number, number];
+    window: [number, number, number, number];
+    variable: string;
+    model: string;
+    scenario: string;
+    unit: string;
+    resolution: string;
+    timestamps: string[];
+    values: (number | null)[];
+    valid_count: number;
+    nan_count: number;
+    status: string;
+    metadata?: {
+        variable?: Record<string, any>;
+    };
+}
+
+export interface AggregateOnDemandRequest {
+    variable: string;
+    models: string[];
+    x0: number;
+    x1: number;
+    y0: number;
+    y1: number;
+    start_date: string;
+    end_date: string;
+    scenario?: string;
+    resolution?: Resolution;
+    step_days?: number;
+    mask?: number[][];
+}
+
+export interface AggregateOnDemandResponse {
+    window: [number, number, number, number];
+    variable: string;
+    scenario: string;
+    resolution: string;
+    step_days: number;
+    mask_applied: boolean;
+    models: Record<
+        string,
+        {
+            timestamps: string[];
+            values: (number | null)[];
+            valid_count: number;
+            nan_count: number;
+        }
+    >;
+    status: string;
+}
+
+export async function fetchPixelData(
+    request: PixelDataRequest,
+    options?: { apiUrl?: string }
+): Promise<PixelDataResponse> {
+    const apiUrl = options?.apiUrl || API_BASE_URL;
+    const url = `${apiUrl}/pixel-data`;
+
+    try {
+        const response = await fetch(url, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                ...request,
+                scenario: request.scenario
+                    ? normalizeScenario(request.scenario)
+                    : undefined,
+                resolution: request.resolution || "medium",
+                step_days: request.step_days || 1,
+            }),
+        });
+
+        if (!response.ok) {
+            const error = await response
+                .json()
+                .catch(() => ({ detail: response.statusText }));
+            throw new DataClientError(
+                error.detail ||
+                    `HTTP ${response.status}: ${response.statusText}`,
+                response.status,
+                error
+            );
+        }
+
+        return await response.json();
+    } catch (error) {
+        if (error instanceof DataClientError) {
+            throw error;
+        }
+        throw new DataClientError(
+            `Failed to fetch pixel data: ${
+                error instanceof Error ? error.message : String(error)
+            }`,
+            undefined,
+            error
+        );
+    }
+}
+
+export async function fetchAggregateOnDemand(
+    request: AggregateOnDemandRequest,
+    options?: { apiUrl?: string }
+): Promise<AggregateOnDemandResponse> {
+    const apiUrl = options?.apiUrl || API_BASE_URL;
+    const url = `${apiUrl}/aggregate-on-demand`;
+
+    try {
+        const response = await fetch(url, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                ...request,
+                scenario: request.scenario
+                    ? normalizeScenario(request.scenario)
+                    : undefined,
+                resolution: request.resolution || "medium",
+                step_days: request.step_days || 1,
+            }),
+        });
+
+        if (!response.ok) {
+            const error = await response
+                .json()
+                .catch(() => ({ detail: response.statusText }));
+            throw new DataClientError(
+                error.detail ||
+                    `HTTP ${response.status}: ${response.statusText}`,
+                response.status,
+                error
+            );
+        }
+
+        return await response.json();
+    } catch (error) {
+        if (error instanceof DataClientError) {
+            throw error;
+        }
+        throw new DataClientError(
+            `Failed to fetch aggregate data: ${
+                error instanceof Error ? error.message : String(error)
+            }`,
+            undefined,
+            error
+        );
+    }
 }
 
 export async function checkApiHealth(options?: {

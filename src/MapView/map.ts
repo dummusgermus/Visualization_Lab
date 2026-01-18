@@ -423,7 +423,7 @@ export function renderMapData(
     console.log("Rendering map data");
 
     // Pre-calculate cell size
-    const cellSize = Math.max(viewWidth / width, viewHeight / height) * 0.8;
+    const cellSize = Math.max(viewWidth / width, viewHeight / height);
     const halfCell = Math.ceil(cellSize / 2);
 
     const lonStep = 360 / width;

@@ -1124,6 +1124,7 @@ export type AppState = {
     mapInfoError: string | null;
     mapInfoLoadingProgress: ChartLoadingProgress;
     mapInfoOpen: boolean;
+    mapPolygon: LatLon[] | null;
     chartPolygon: LatLon[] | null;
     chartPoint: LatLon | null;
     drawState: DrawState;
@@ -1201,6 +1202,7 @@ const state: AppState = {
     mapInfoError: null,
     mapInfoLoadingProgress: { total: 0, done: 0 },
     mapInfoOpen: false,
+    mapPolygon: null,
     chartPolygon: null,
     chartPoint: null,
     drawState: { active: false, points: [], previewPoint: null },
@@ -1764,13 +1766,25 @@ function renderDrawOverlayPaths() {
     ctx.scale(scale, scale);
     ctx.clearRect(0, 0, rect.width, rect.height);
 
-    const basePoints = [...state.drawState.points];
-    const points = state.drawState.previewPoint
-        ? [...basePoints, state.drawState.previewPoint]
-        : basePoints;
+    // Get points to render - either from active drawing or completed polygon
+    let pointsToRender: LatLon[] = [];
+    if (state.drawState.active) {
+        // Active drawing mode - show current points with preview
+        const basePoints = [...state.drawState.points];
+        pointsToRender = state.drawState.previewPoint
+            ? [...basePoints, state.drawState.previewPoint]
+            : basePoints;
+    } else if (state.mapPolygon && state.mapPolygon.length >= 3) {
+        // Completed polygon - show the stored polygon
+        pointsToRender = state.mapPolygon;
+    } else {
+        // Nothing to render
+        ctx.restore();
+        return;
+    }
 
     const projected: { x: number; y: number }[] = [];
-    points.forEach((p) => {
+    pointsToRender.forEach((p) => {
         const proj = projectLonLatToCanvas(canvas, p.lon, p.lat);
         if (proj) {
             projected.push(proj);
@@ -1796,33 +1810,32 @@ function renderDrawOverlayPaths() {
     }
     ctx.stroke();
 
-    projected.forEach(({ x, y }, idx) => {
-        ctx.beginPath();
-        ctx.fillStyle = idx === 0 ? "#10b981" : "#34d399";
-        ctx.arc(x, y, 4, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.strokeStyle = "#0f172a";
-        ctx.lineWidth = 1;
-        ctx.stroke();
-    });
+    // Only show point markers when actively drawing
+    if (state.drawState.active) {
+        projected.forEach(({ x, y }, idx) => {
+            ctx.beginPath();
+            ctx.fillStyle = idx === 0 ? "#10b981" : "#34d399";
+            ctx.arc(x, y, 4, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = "#0f172a";
+            ctx.lineWidth = 1;
+            ctx.stroke();
+        });
+    }
 
     ctx.restore();
 }
 
 function renderDrawOverlay() {
-    if (!state.drawState.active) return "";
+    // Always render the overlay canvas if we're drawing or have a completed polygon
+    const shouldShowOverlay = state.drawState.active || (state.mapPolygon !== null && state.mapPolygon.length >= 3);
+    if (!shouldShowOverlay) return "";
+    
     return `
-      <div style="${styleAttr(styles.drawOverlay)}"></div>
       <canvas
         id="draw-overlay-canvas"
         style="${styleAttr(styles.drawOverlayCanvas)}"
       ></canvas>
-      <div style="${styleAttr(styles.drawPrompt)}">
-        <div>Draw the region you want to explore</div>
-        <div style="${styleAttr(styles.drawPromptSub)}">
-          Click to add points · Enter or click first point to finish
-        </div>
-      </div>
     `;
 }
 
@@ -1850,63 +1863,115 @@ function renderMapMarkerPosition() {
         appRoot.querySelector<HTMLDivElement>("#map-info-panel");
     const canvas =
         mapCanvas || appRoot.querySelector<HTMLCanvasElement>("#map-canvas");
-    if (!marker || !canvas) return;
+    if (!canvas) return;
 
-    if (!state.mapMarker) {
-        marker.style.opacity = "0";
-        marker.style.transform = "translate(-9999px, -9999px)";
-        marker.title = "Selected location";
-        if (infoPanel) {
-            infoPanel.style.opacity = "0";
-            infoPanel.style.transform = "translate(-9999px, -9999px)";
-            infoPanel.style.pointerEvents = "none";
-            infoPanel.style.visibility = "hidden";
+    const hasPolygon = state.mapPolygon !== null && state.mapPolygon.length >= 3;
+
+    // Handle marker visibility
+    if (marker) {
+        if (!state.mapMarker) {
+            marker.style.opacity = "0";
+            marker.style.transform = "translate(-9999px, -9999px)";
+            marker.title = "Selected location";
+        } else {
+            const projected = projectLonLatToCanvas(
+                canvas,
+                state.mapMarker.lon,
+                state.mapMarker.lat
+            );
+            marker.title = state.mapMarker.name
+                ? state.mapMarker.name
+                : `Pixel ${state.mapMarker.pixel.x}, ${state.mapMarker.pixel.y}`;
+            if (!projected) {
+                marker.style.opacity = "0";
+                marker.style.transform = "translate(-9999px, -9999px)";
+            } else {
+                marker.style.opacity = "1";
+                marker.style.transform = `translate(${projected.x}px, ${projected.y}px) translate(-50%, -100%)`;
+            }
         }
-        return;
     }
 
-    const projected = projectLonLatToCanvas(
-        canvas,
-        state.mapMarker.lon,
-        state.mapMarker.lat
-    );
-    marker.title = state.mapMarker.name
-        ? state.mapMarker.name
-        : `Pixel ${state.mapMarker.pixel.x}, ${state.mapMarker.pixel.y}`;
-    if (!projected) {
-        marker.style.opacity = "0";
-        marker.style.transform = "translate(-9999px, -9999px)";
-        if (infoPanel) {
-            infoPanel.style.opacity = "0";
-            infoPanel.style.transform = "translate(-9999px, -9999px)";
-            infoPanel.style.pointerEvents = "none";
-            infoPanel.style.visibility = "hidden";
-        }
-        return;
-    }
-
-    marker.style.opacity = "1";
-    marker.style.transform = `translate(${projected.x}px, ${projected.y}px) translate(-50%, -100%)`;
-
-    if (infoPanel) {
+    // Handle info panel positioning - show for both marker and polygon
+    if (infoPanel && state.mapInfoOpen) {
         const rect = canvas.getBoundingClientRect();
         const panelWidth = infoPanel.offsetWidth || 360;
         const panelHeight = infoPanel.offsetHeight || 240;
         const padding = 12;
-        let left = projected.x - panelWidth - 24;
-        if (left < padding) {
-            left = projected.x + 24;
+
+        let left: number;
+        let top: number;
+
+        if (state.mapMarker) {
+            // Position relative to marker
+            const projected = projectLonLatToCanvas(
+                canvas,
+                state.mapMarker.lon,
+                state.mapMarker.lat
+            );
+            if (!projected) {
+                infoPanel.style.opacity = "0";
+                infoPanel.style.transform = "translate(-9999px, -9999px)";
+                infoPanel.style.pointerEvents = "none";
+                infoPanel.style.visibility = "hidden";
+                return;
+            }
+            left = projected.x - panelWidth - 24;
+            if (left < padding) {
+                left = projected.x + 24;
+            }
+            top = projected.y - panelHeight / 2;
+        } else if (hasPolygon && state.mapPolygon) {
+            // Find leftmost point and position window to the left of it
+            let leftmostPoint = state.mapPolygon[0];
+            for (const point of state.mapPolygon) {
+                if (point.lon < leftmostPoint.lon) {
+                    leftmostPoint = point;
+                }
+            }
+            
+            const leftmostProjected = projectLonLatToCanvas(canvas, leftmostPoint.lon, leftmostPoint.lat);
+            if (leftmostProjected) {
+                left = leftmostProjected.x - panelWidth - 24;
+                if (left < padding) {
+                    left = leftmostProjected.x + 24;
+                }
+                top = leftmostProjected.y - panelHeight / 2;
+            } else {
+                // Fallback to center-right if projection fails
+                left = rect.width - panelWidth - padding - 24;
+                top = rect.height / 2 - panelHeight / 2;
+            }
+        } else {
+            // Hide if neither marker nor polygon
+            infoPanel.style.opacity = "0";
+            infoPanel.style.transform = "translate(-9999px, -9999px)";
+            infoPanel.style.pointerEvents = "none";
+            infoPanel.style.visibility = "hidden";
+            return;
         }
+
         left = Math.max(padding, Math.min(left, rect.width - panelWidth - padding));
-        let top = projected.y - panelHeight / 2;
         top = Math.max(padding, Math.min(top, rect.height - panelHeight - padding));
 
-        infoPanel.style.left = `${left}px`;
-        infoPanel.style.top = `${top}px`;
+        // Only update position if it hasn't been set yet (to prevent glitching during data updates)
+        const currentLeft = infoPanel.style.left;
+        const currentTop = infoPanel.style.top;
+        if (!currentLeft || currentLeft === "0px" || !currentTop || currentTop === "0px") {
+            infoPanel.style.left = `${left}px`;
+            infoPanel.style.top = `${top}px`;
+        }
+        
         infoPanel.style.opacity = "1";
         infoPanel.style.transform = "translate(0, 0)";
         infoPanel.style.pointerEvents = "none";
         infoPanel.style.visibility = "visible";
+    } else if (infoPanel && !state.mapInfoOpen) {
+        // Hide if not open
+        infoPanel.style.opacity = "0";
+        infoPanel.style.transform = "translate(-9999px, -9999px)";
+        infoPanel.style.pointerEvents = "none";
+        infoPanel.style.visibility = "hidden";
     }
 }
 
@@ -1981,10 +2046,13 @@ function renderMapMarkerOverlay() {
 }
 
 function renderMapInfoBody(): string {
-    if (!state.mapMarker) {
+    const hasPoint = state.mapMarker !== null;
+    const hasPolygon = state.mapPolygon !== null && state.mapPolygon.length >= 3;
+    
+    if (!hasPoint && !hasPolygon) {
         return `<div style="${styleAttr(
             styles.chartEmpty
-        )}">Click a location to load boxplots.</div>`;
+        )}">Click a location or draw a region to load boxplots.</div>`;
     }
 
     if (state.mapInfoLoading) {
@@ -2025,7 +2093,10 @@ function renderMapInfoBody(): string {
 function renderMapInfoWindow() {
     if (!state.mapInfoOpen) return "";
     const marker = state.mapMarker;
-    const locationLabel = marker?.name
+    const hasPolygon = state.mapPolygon !== null && state.mapPolygon.length >= 3;
+    const locationLabel = hasPolygon
+        ? "Drawn Region"
+        : marker?.name
         ? marker.name
         : marker
         ? `Pixel ${marker.pixel.x}, ${marker.pixel.y}`
@@ -2061,7 +2132,7 @@ function renderMapInfoWindow() {
             </button>
           </div>
         </div>
-        <div style="${styleAttr(styles.mapInfoBody)}">
+        <div class="map-info-body" style="${styleAttr(styles.mapInfoBody)}">
           ${renderMapInfoBody()}
         </div>
         <button
@@ -2106,6 +2177,41 @@ function startRegionDrawing() {
 function stopRegionDrawing() {
     state.drawState = resetDrawState();
     removeDrawKeyListener();
+}
+
+function startMapDrawing() {
+    if (state.canvasView !== "map") return;
+    state.mapPolygon = null;
+    state.mapMarker = null;
+    state.mapInfoOpen = false;
+    state.drawState = { active: true, points: [], previewPoint: null };
+    state.pointSelectActive = false;
+    ensureDrawKeyListener(completeMapDrawing);
+    render();
+}
+
+function stopMapDrawing() {
+    state.drawState = resetDrawState();
+    removeDrawKeyListener();
+}
+
+function completeMapDrawing() {
+    if (!state.drawState.active) return;
+    if (state.drawState.points.length < 3) {
+        state.mapInfoError = "Draw at least three points to define a region.";
+        state.mapInfoOpen = true;
+        render();
+        return;
+    }
+    state.mapPolygon = state.drawState.points;
+    state.mapMarker = null;
+    state.drawState = resetDrawState();
+    removeDrawKeyListener();
+    state.mapInfoError = null;
+    // Open info window immediately for polygon
+    state.mapInfoOpen = true;
+    render(); // Render immediately to show the completed polygon and info window
+    void loadMapInfoData();
 }
 
 function startPointSelection() {
@@ -2354,6 +2460,9 @@ async function handleMapClick(coords: LatLon) {
     if (state.canvasView !== "map") return;
     if (state.drawState.active || state.pointSelectActive) return;
     
+    // Clear polygon when clicking a new point
+    state.mapPolygon = null;
+    
     // Initially set marker with null name (will show pixel coordinates temporarily)
     setMapMarker(coords.lat, coords.lon, null);
     if (mapCanvas) {
@@ -2394,7 +2503,9 @@ function scheduleMapInfoOpen(delayMs = 700) {
     }
     mapInfoDelayTimer = window.setTimeout(() => {
         mapInfoDelayTimer = null;
-        if (!state.mapMarker) return;
+        const hasPoint = state.mapMarker !== null;
+        const hasPolygon = state.mapPolygon !== null && state.mapPolygon.length >= 3;
+        if (!hasPoint && !hasPolygon) return;
         state.mapInfoOpen = true;
         render();
         void loadMapInfoData();
@@ -2423,12 +2534,34 @@ function updateMapInfoPreview(samples: ChartSample[]) {
     } catch {
         return;
     }
+    
+    // Update only the body content without repositioning the window
+    if (!appRoot) {
+        render();
+        return;
+    }
+    
+    const infoPanel = appRoot.querySelector<HTMLDivElement>("#map-info-panel");
+    if (infoPanel) {
+        const bodyElement = infoPanel.querySelector<HTMLDivElement>(".map-info-body");
+        if (bodyElement) {
+            // Update only the body content without triggering a full render
+            bodyElement.innerHTML = renderMapInfoBody();
+            return;
+        }
+    }
+    
+    // Fallback to full render if elements not found
     render();
 }
 
 async function loadMapInfoData() {
     if (state.canvasView !== "map") return;
-    if (!state.mapMarker) {
+    // Check if we have either a marker (point) or a polygon
+    const hasPoint = state.mapMarker !== null;
+    const hasPolygon = state.mapPolygon !== null && state.mapPolygon.length >= 3;
+    
+    if (!hasPoint && !hasPolygon) {
         state.mapInfoLoading = false;
         state.mapInfoError = null;
         state.mapInfoSamples = [];
@@ -2481,10 +2614,6 @@ async function loadMapInfoData() {
         render();
 
         const samples: ChartSample[] = [];
-        const [x, y] = latLonToGridIndices(
-            state.mapMarker.lat,
-            state.mapMarker.lon
-        );
 
         for (const scenario of activeScenarios) {
             if (requestId !== mapInfoRequestId) return;
@@ -2493,103 +2622,201 @@ async function loadMapInfoData() {
                 getTimeRangeForScenario(scenario)
             );
 
-            const pixelPromises = modelOptions.map((model) =>
-                fetchPixelData({
-                    variable: state.variable,
-                    model,
-                    x0: x,
-                    x1: x,
-                    y0: y,
-                    y1: y,
-                    start_date: dateForScenario,
-                    end_date: dateForScenario,
-                    scenario: normalizeScenario(scenario),
-                    resolution: "low",
-                    step_days: 1,
-                }).catch((error) => {
-                    console.warn(
-                        `Pixel API failed for model ${model}, falling back:`,
-                        error
-                    );
-                    const request = createDataRequest({
+            if (hasPoint && state.mapMarker) {
+                // Point selection - use pixel API
+                const [x, y] = latLonToGridIndices(
+                    state.mapMarker.lat,
+                    state.mapMarker.lon
+                );
+
+                const pixelPromises = modelOptions.map((model) =>
+                    fetchPixelData({
                         variable: state.variable,
-                        date: dateForScenario,
                         model,
-                        scenario,
-                        resolution: 1,
-                    });
-                    return fetchClimateData(request).then((data) => {
-                        const arr = dataToArray(data);
-                        if (!arr) {
-                            throw new Error(
-                                "No data returned for map info request."
-                            );
-                        }
-                        const avg = valueAtPoint(
-                            arr,
-                            state.variable,
-                            data.shape,
-                            { lat: state.mapMarker!.lat, lon: state.mapMarker!.lon }
+                        x0: x,
+                        x1: x,
+                        y0: y,
+                        y1: y,
+                        start_date: dateForScenario,
+                        end_date: dateForScenario,
+                        scenario: normalizeScenario(scenario),
+                        resolution: "low",
+                        step_days: 1,
+                    }).catch((error) => {
+                        console.warn(
+                            `Pixel API failed for model ${model}, falling back:`,
+                            error
                         );
-                        return {
+                        const request = createDataRequest({
+                            variable: state.variable,
+                            date: dateForScenario,
                             model,
-                            value: avg,
-                            fallback: true,
-                        } as {
-                            model: string;
-                            value: number;
-                            fallback: boolean;
-                        };
-                    });
-                })
-            );
-
-            const pixelResults = await Promise.allSettled(pixelPromises);
-            if (requestId !== mapInfoRequestId) return;
-
-            for (const result of pixelResults) {
-                if (result.status === "fulfilled") {
-                    const data = result.value;
-                    if (
-                        typeof data === "object" &&
-                        "fallback" in data &&
-                        data.fallback
-                    ) {
-                        samples.push({
                             scenario,
-                            model: data.model,
-                            rawValue: data.value,
-                            dateUsed: dateForScenario,
+                            resolution: 1,
                         });
-                    } else {
-                        const pixelData = data as any;
-                        const value = pixelData.values[0];
-                        if (value !== null && isFinite(value)) {
-                            const rawValue =
-                                state.variable === "hurs"
-                                    ? Math.min(value, 100)
-                                    : value;
+                        return fetchClimateData(request).then((data) => {
+                            const arr = dataToArray(data);
+                            if (!arr) {
+                                throw new Error(
+                                    "No data returned for map info request."
+                                );
+                            }
+                            const avg = valueAtPoint(
+                                arr,
+                                state.variable,
+                                data.shape,
+                                { lat: state.mapMarker!.lat, lon: state.mapMarker!.lon }
+                            );
+                            return {
+                                model,
+                                value: avg,
+                                fallback: true,
+                            } as {
+                                model: string;
+                                value: number;
+                                fallback: boolean;
+                            };
+                        });
+                    })
+                );
+
+                const pixelResults = await Promise.allSettled(pixelPromises);
+                if (requestId !== mapInfoRequestId) return;
+
+                for (const result of pixelResults) {
+                    if (result.status === "fulfilled") {
+                        const data = result.value;
+                        if (
+                            typeof data === "object" &&
+                            "fallback" in data &&
+                            data.fallback
+                        ) {
                             samples.push({
                                 scenario,
-                                model: pixelData.model,
-                                rawValue,
+                                model: data.model,
+                                rawValue: data.value,
                                 dateUsed: dateForScenario,
                             });
+                        } else {
+                            const pixelData = data as any;
+                            const value = pixelData.values[0];
+                            if (value !== null && isFinite(value)) {
+                                const rawValue =
+                                    state.variable === "hurs"
+                                        ? Math.min(value, 100)
+                                        : value;
+                                samples.push({
+                                    scenario,
+                                    model: pixelData.model,
+                                    rawValue,
+                                    dateUsed: dateForScenario,
+                                });
+                            }
+                        }
+                    } else {
+                        console.warn(
+                            "Failed to fetch pixel data for map info:",
+                            result.reason
+                        );
+                    }
+                }
+
+                state.mapInfoLoadingProgress = {
+                    total: totalRequests,
+                    done: state.mapInfoLoadingProgress.done + modelOptions.length,
+                };
+                updateMapInfoPreview(samples);
+            } else if (hasPolygon && state.mapPolygon) {
+                // Polygon selection - use aggregate API
+                const [x0, x1, y0, y1] = polygonToGridBounds(state.mapPolygon);
+                const mask = createPolygonMask(state.mapPolygon, x0, x1, y0, y1);
+
+                try {
+                    const aggregateData = await fetchAggregateOnDemand({
+                        variable: state.variable,
+                        models: modelOptions,
+                        x0,
+                        x1,
+                        y0,
+                        y1,
+                        start_date: dateForScenario,
+                        end_date: dateForScenario,
+                        scenario: normalizeScenario(scenario),
+                        resolution: "low",
+                        step_days: 1,
+                        mask,
+                    });
+
+                    for (const model of modelOptions) {
+                        const modelData = aggregateData.models[model];
+                        if (modelData) {
+                            const value = modelData.values[0];
+                            if (value !== null && isFinite(value)) {
+                                const rawValue =
+                                    state.variable === "hurs"
+                                        ? Math.min(value, 100)
+                                        : value;
+                                samples.push({
+                                    scenario,
+                                    model,
+                                    rawValue,
+                                    dateUsed: dateForScenario,
+                                });
+                            }
                         }
                     }
-                } else {
+
+                    state.mapInfoLoadingProgress = {
+                        total: totalRequests,
+                        done: state.mapInfoLoadingProgress.done + modelOptions.length,
+                    };
+                    updateMapInfoPreview(samples);
+                } catch (error) {
+                    // If batch fails, fall back to old method for all models
                     console.warn(
-                        "Failed to fetch pixel data for map info:",
-                        result.reason
+                        `Aggregate API failed for scenario ${scenario}, falling back to full map load:`,
+                        error
                     );
+                    for (const model of modelOptions) {
+                        if (requestId !== mapInfoRequestId) return;
+                        const request = createDataRequest({
+                            variable: state.variable,
+                            date: dateForScenario,
+                            model,
+                            scenario,
+                            resolution: 1,
+                        });
+                        try {
+                            const data = await fetchClimateData(request);
+                            const arr = dataToArray(data);
+                            if (arr) {
+                                const avg = averageArrayInPolygon(
+                                    arr,
+                                    state.variable,
+                                    data.shape,
+                                    state.mapPolygon
+                                );
+                                samples.push({
+                                    scenario,
+                                    model,
+                                    rawValue: avg,
+                                    dateUsed: dateForScenario,
+                                });
+                            }
+                        } catch (modelError) {
+                            console.warn(
+                                `Failed to load data for model ${model}:`,
+                                modelError
+                            );
+                        }
+                        state.mapInfoLoadingProgress = {
+                            total: totalRequests,
+                            done: state.mapInfoLoadingProgress.done + 1,
+                        };
+                        updateMapInfoPreview(samples);
+                    }
                 }
             }
-
-            state.mapInfoLoadingProgress = {
-                total: totalRequests,
-                done: state.mapInfoLoadingProgress.done + modelOptions.length,
-            };
-            updateMapInfoPreview(samples);
         }
 
         if (requestId !== mapInfoRequestId) return;
@@ -2617,7 +2844,12 @@ function handleDrawClick(coords: LatLon) {
     if (!state.drawState.active) return;
     const points = state.drawState.points;
     if (points.length >= 3 && isPointNear(coords, points[0])) {
-        completeRegionDrawing();
+        // Complete drawing - check if we're in chart mode or map mode
+        if (state.canvasView === "chart" || state.chartLocation === "Draw") {
+            completeRegionDrawing();
+        } else if (state.canvasView === "map") {
+            completeMapDrawing();
+        }
         return;
     }
     state.drawState = {
@@ -4586,7 +4818,8 @@ function render() {
                 paletteOptions[0];
             drawLegendGradient("legend-gradient-canvas", palette.colors);
 
-            if (state.drawState.active) {
+            // Render overlay if actively drawing or if there's a completed polygon
+            if (state.drawState.active || (state.mapPolygon !== null && state.mapPolygon.length >= 3)) {
                 requestAnimationFrame(renderDrawOverlayPaths);
             }
         }
@@ -5885,20 +6118,47 @@ function renderMapSearchBar() {
     );
     const shift = state.sidebarOpen ? -SIDEBAR_WIDTH / 2 : 0;
     const wrapStyle = mergeStyles(styles.mapSearchWrap, {
-        top: state.drawState.active || state.pointSelectActive ? 78 : 18,
+        top: 18,
         transform: `translateX(calc(-50% + ${shift}px))`,
     });
 
     return `
       <div data-role="map-location-search" style="${styleAttr(wrapStyle)}">
-        <div class="location-search-row">
+        <div class="location-search-row" style="display: flex; align-items: center; gap: 8px;">
           <input
             type="text"
             class="location-search-input"
             value="${escapeHtml(state.mapLocationSearchQuery)}"
             placeholder="Search a place (e.g. Aachen)"
             data-role="map-location-search-input"
+            style="flex: 1;"
           />
+          <button
+            type="button"
+            data-action="toggle-map-draw"
+            aria-label="${state.drawState.active ? "Stop drawing" : "Start drawing"}"
+            style="
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              width: 36px;
+              height: 36px;
+              padding: 0;
+              border: 1px solid rgba(148, 163, 184, 0.3);
+              border-radius: 6px;
+              background: ${state.drawState.active ? "rgba(52, 211, 153, 0.1)" : "rgba(15, 23, 42, 0.85)"};
+              color: ${state.drawState.active ? "#34d399" : "var(--text-secondary)"};
+              cursor: pointer;
+              transition: all 0.2s ease;
+            "
+            onmouseover="this.style.background='rgba(52, 211, 153, 0.2)';this.style.color='#34d399';"
+            onmouseout="this.style.background='${state.drawState.active ? "rgba(52, 211, 153, 0.1)" : "rgba(15, 23, 42, 0.85)"}';this.style.color='${state.drawState.active ? "#34d399" : "var(--text-secondary)"}';"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+            </svg>
+          </button>
         </div>
         ${state.mapLocationSearchLoading ? statusMessage : ""}
         ${
@@ -7071,7 +7331,9 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         render();
         if (state.canvasView === "map" && triggerMapReload) {
             loadClimateData();
-            if (state.mapMarker && state.mapInfoOpen) {
+            const hasPoint = state.mapMarker !== null;
+            const hasPolygon = state.mapPolygon !== null && state.mapPolygon.length >= 3;
+            if ((hasPoint || hasPolygon) && state.mapInfoOpen) {
                 void loadMapInfoData();
             }
         }
@@ -7481,7 +7743,9 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                     (key === "compareDateStart" || key === "compareDateEnd"))
             ) {
                 loadClimateData();
-                if (state.mapMarker && state.mapInfoOpen) {
+                const hasPoint = state.mapMarker !== null;
+                const hasPolygon = state.mapPolygon !== null && state.mapPolygon.length >= 3;
+                if ((hasPoint || hasPolygon) && state.mapInfoOpen) {
                     void loadMapInfoData();
                 }
             }
@@ -7567,15 +7831,23 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
     );
     mapInfoExpandBtn?.addEventListener("click", (e) => {
         e.preventDefault();
-        if (!state.mapMarker) return;
+        if (!state.mapMarker && !state.mapPolygon) return;
         state.canvasView = "chart";
         state.chartMode = "single";
-        state.chartLocation = "Point";
-        state.chartPoint = {
-            lat: state.mapMarker.lat,
-            lon: state.mapMarker.lon,
-        };
-        state.chartLocationName = state.mapMarker.name ?? null;
+        if (state.mapPolygon && state.mapPolygon.length >= 3) {
+            state.chartLocation = "Draw";
+            state.chartPolygon = state.mapPolygon;
+            state.chartPoint = null;
+            state.chartLocationName = null;
+        } else if (state.mapMarker) {
+            state.chartLocation = "Point";
+            state.chartPoint = {
+                lat: state.mapMarker.lat,
+                lon: state.mapMarker.lon,
+            };
+            state.chartLocationName = state.mapMarker.name ?? null;
+            state.chartPolygon = null;
+        }
         state.chartVariable = state.variable;
         state.chartUnit = state.selectedUnit;
         state.chartDate = state.date;
@@ -7584,13 +7856,27 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         loadChartData();
     });
 
+    const mapDrawToggleBtn = root.querySelector<HTMLButtonElement>(
+        '[data-action="toggle-map-draw"]'
+    );
+    mapDrawToggleBtn?.addEventListener("click", (e) => {
+        e.preventDefault();
+        if (state.drawState.active) {
+            stopMapDrawing();
+        } else {
+            startMapDrawing();
+        }
+    });
+
     attachTimeSliderHandlers({
         root,
         getTimeRange: () => state.timeRange,
-        onDateChange: (date) => {
+            onDateChange: (date) => {
             state.date = date;
             loadClimateData();
-            if (state.mapMarker && state.mapInfoOpen) {
+            const hasPoint = state.mapMarker !== null;
+            const hasPolygon = state.mapPolygon !== null && state.mapPolygon.length >= 3;
+            if ((hasPoint || hasPolygon) && state.mapInfoOpen) {
                 void loadMapInfoData();
             }
         },

@@ -380,7 +380,7 @@ input[type="date"]:hover::-webkit-calendar-picker-indicator {
 
 .location-search-input {
     width: 100%;
-    background: var(--gradient-bg);
+    background: rgba(8, 14, 26, 0.78);
     border: 1px solid var(--border-medium);
     border-radius: 10px;
     color: var(--text-primary);
@@ -415,12 +415,16 @@ input[type="date"]:hover::-webkit-calendar-picker-indicator {
     flex-direction: column;
     gap: 6px;
     margin-top: 10px;
+    background: rgba(8, 14, 26, 0.78);
+    border: 1px solid var(--border-medium);
+    border-radius: 12px;
+    padding: 6px;
 }
 
 .location-search-result {
     width: 100%;
     text-align: left;
-    background: var(--bg-subtle);
+    background: rgba(12, 18, 32, 0.85);
     border: 1px solid var(--border-subtle);
     color: var(--text-primary);
     border-radius: 10px;
@@ -498,6 +502,12 @@ input[type="date"]:hover::-webkit-calendar-picker-indicator {
     font-size: 12px;
     line-height: 1.5;
     color: var(--text-secondary);
+}
+
+.map-info-panel {
+    user-select: none;
+    -webkit-user-select: none;
+    -ms-user-select: none;
 }
 
 .custom-select-info-panel.visible {

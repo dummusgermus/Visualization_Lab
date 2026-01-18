@@ -6,9 +6,11 @@ import {
 } from "./Components/sidebar";
 import { drawLegendGradient, renderMapLegend } from "./MapView/legend";
 import {
+    getCurrentZoomLevel,
     projectLonLatToCanvas,
     renderMapData,
     setupMapInteractions,
+    zoomToLocation,
 } from "./MapView/map";
 import {
     attachTimeSliderHandlers,
@@ -61,6 +63,12 @@ type LocationSearchResult = {
 };
 
 type LatLon = { lat: number; lon: number };
+type MapMarker = {
+    lat: number;
+    lon: number;
+    name: string | null;
+    pixel: { x: number; y: number };
+};
 type DrawState = {
     active: boolean;
     points: LatLon[];
@@ -378,6 +386,110 @@ const styles: Record<string, Style> = {
         textAlign: "center",
         pointerEvents: "none",
         zIndex: 1,
+    },
+    mapSearchWrap: {
+        position: "absolute",
+        top: 18,
+        left: "50%",
+        transform: "translateX(-50%)",
+        width: "min(360px, 70vw)",
+        pointerEvents: "auto",
+        zIndex: 12,
+        transition: "transform 220ms ease, width 220ms ease",
+    },
+    mapSearchResults: {
+        maxHeight: 220,
+        overflowY: "auto",
+    },
+    mapMarker: {
+        position: "absolute",
+        left: 0,
+        top: 0,
+        width: 28,
+        height: 36,
+        pointerEvents: "none",
+        zIndex: 11,
+        transform: "translate(-9999px, -9999px)",
+        opacity: 0,
+        transition: "opacity 160ms ease",
+        filter: "drop-shadow(0 10px 18px rgba(0,0,0,0.45))",
+    },
+    mapInfoPanel: {
+        position: "absolute",
+        left: 0,
+        top: 0,
+        width: 360,
+        maxWidth: "min(360px, 80vw)",
+        opacity: 0,
+        userSelect: "none",
+        transform: "translate(-9999px, -9999px)",
+        transition: "opacity 160ms ease",
+        zIndex: 12,
+    },
+    mapInfoHeader: {
+        display: "flex",
+        alignItems: "flex-start",
+        justifyContent: "space-between",
+        gap: 8,
+    },
+    mapInfoTitleGroup: {
+        display: "flex",
+        flexDirection: "column",
+        gap: 2,
+        flex: 1,
+        minWidth: 0,
+    },
+    mapInfoActions: {
+        display: "flex",
+        gap: 6,
+        alignItems: "center",
+    },
+    mapInfoActionBtn: {
+        width: 30,
+        height: 30,
+        borderRadius: 8,
+        border: "none",
+        background: "transparent",
+        color: "var(--text-secondary)",
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        cursor: "pointer",
+        pointerEvents: "auto",
+        transition: "all 120ms ease",
+    },
+    mapInfoExpandBtn: {
+        position: "absolute",
+        right: 12,
+        bottom: 12,
+    },
+    mapInfoSubtitle: {
+        fontSize: 11.5,
+        color: "var(--text-secondary)",
+        marginTop: 2,
+    },
+    mapInfoBody: {
+        marginTop: 10,
+        display: "flex",
+        flexDirection: "column",
+        gap: 10,
+        paddingBottom: 36,
+    },
+    mapInfoLoadingRow: {
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        fontSize: 11,
+        color: "var(--text-secondary)",
+    },
+    mapInfoLoadingSpinner: {
+        width: 14,
+        height: 14,
+        borderRadius: "50%",
+        border: "2px solid rgba(255,255,255,0.18)",
+        borderTop: "2px solid #34d399",
+        animation: "sv-spin 1s linear infinite",
+        flexShrink: 0,
     },
     drawOverlay: {
         position: "absolute",
@@ -998,6 +1110,20 @@ export type AppState = {
     chartLocationSearchResults: LocationSearchResult[];
     chartLocationSearchLoading: boolean;
     chartLocationSearchError: string | null;
+    mapLocationSearchQuery: string;
+    mapLocationSearchResults: LocationSearchResult[];
+    mapLocationSearchLoading: boolean;
+    mapLocationSearchError: string | null;
+    mapLocationSearchSelection: string | null;
+    mapLocationSearchFocused: boolean;
+    mapLocationSearchCursor: { start: number; end: number };
+    mapMarker: MapMarker | null;
+    mapInfoSamples: ChartSample[];
+    mapInfoBoxes: ChartBox[] | null;
+    mapInfoLoading: boolean;
+    mapInfoError: string | null;
+    mapInfoLoadingProgress: ChartLoadingProgress;
+    mapInfoOpen: boolean;
     chartPolygon: LatLon[] | null;
     chartPoint: LatLon | null;
     drawState: DrawState;
@@ -1061,6 +1187,20 @@ const state: AppState = {
     chartLocationSearchResults: [],
     chartLocationSearchLoading: false,
     chartLocationSearchError: null,
+    mapLocationSearchQuery: "",
+    mapLocationSearchResults: [],
+    mapLocationSearchLoading: false,
+    mapLocationSearchError: null,
+    mapLocationSearchSelection: null,
+    mapLocationSearchFocused: false,
+    mapLocationSearchCursor: { start: 0, end: 0 },
+    mapMarker: null,
+    mapInfoSamples: [],
+    mapInfoBoxes: null,
+    mapInfoLoading: false,
+    mapInfoError: null,
+    mapInfoLoadingProgress: { total: 0, done: 0 },
+    mapInfoOpen: false,
     chartPolygon: null,
     chartPoint: null,
     drawState: { active: false, points: [], previewPoint: null },
@@ -1099,6 +1239,10 @@ let brandBlinkTimeout: number | null = null;
 let brandEyeIdleTimeout: number | null = null;
 let locationSearchDebounce: number | null = null;
 let locationSearchRequestId = 0;
+let mapLocationSearchDebounce: number | null = null;
+let mapLocationSearchRequestId = 0;
+let mapInfoRequestId = 0;
+let mapInfoDelayTimer: number | null = null;
 const LOCATION_SEARCH_DEBOUNCE_MS = 500;
 
 function toKebab(input: string) {
@@ -1585,13 +1729,16 @@ function applyMapInteractions(canvas: HTMLCanvasElement) {
                 ? handlePointClick
                 : handleDrawClick,
             onDrawMove: state.drawState.active ? handleDrawMove : undefined,
+            onMapClick: handleMapClick,
             onTransform: () => {
                 renderDrawOverlayPaths();
                 renderPointOverlayMarker();
+                renderMapMarkerPosition();
             },
         }
     );
     renderPointOverlayMarker();
+    renderMapMarkerPosition();
 }
 
 function renderDrawOverlayPaths() {
@@ -1696,6 +1843,83 @@ function renderPointOverlayMarker() {
     marker.style.height = "100%";
 }
 
+function renderMapMarkerPosition() {
+    if (!appRoot) return;
+    const marker = appRoot.querySelector<HTMLDivElement>("#map-location-marker");
+    const infoPanel =
+        appRoot.querySelector<HTMLDivElement>("#map-info-panel");
+    const canvas =
+        mapCanvas || appRoot.querySelector<HTMLCanvasElement>("#map-canvas");
+    if (!marker || !canvas) return;
+
+    if (!state.mapMarker) {
+        marker.style.opacity = "0";
+        marker.style.transform = "translate(-9999px, -9999px)";
+        marker.title = "Selected location";
+        if (infoPanel) {
+            infoPanel.style.opacity = "0";
+            infoPanel.style.transform = "translate(-9999px, -9999px)";
+            infoPanel.style.pointerEvents = "none";
+            infoPanel.style.visibility = "hidden";
+        }
+        return;
+    }
+
+    const projected = projectLonLatToCanvas(
+        canvas,
+        state.mapMarker.lon,
+        state.mapMarker.lat
+    );
+    marker.title = state.mapMarker.name
+        ? state.mapMarker.name
+        : `Pixel ${state.mapMarker.pixel.x}, ${state.mapMarker.pixel.y}`;
+    if (!projected) {
+        marker.style.opacity = "0";
+        marker.style.transform = "translate(-9999px, -9999px)";
+        if (infoPanel) {
+            infoPanel.style.opacity = "0";
+            infoPanel.style.transform = "translate(-9999px, -9999px)";
+            infoPanel.style.pointerEvents = "none";
+            infoPanel.style.visibility = "hidden";
+        }
+        return;
+    }
+
+    marker.style.opacity = "1";
+    marker.style.transform = `translate(${projected.x}px, ${projected.y}px) translate(-50%, -100%)`;
+
+    if (infoPanel) {
+        const rect = canvas.getBoundingClientRect();
+        const panelWidth = infoPanel.offsetWidth || 360;
+        const panelHeight = infoPanel.offsetHeight || 240;
+        const padding = 12;
+        let left = projected.x - panelWidth - 24;
+        if (left < padding) {
+            left = projected.x + 24;
+        }
+        left = Math.max(padding, Math.min(left, rect.width - panelWidth - padding));
+        let top = projected.y - panelHeight / 2;
+        top = Math.max(padding, Math.min(top, rect.height - panelHeight - padding));
+
+        infoPanel.style.left = `${left}px`;
+        infoPanel.style.top = `${top}px`;
+        infoPanel.style.opacity = "1";
+        infoPanel.style.transform = "translate(0, 0)";
+        infoPanel.style.pointerEvents = "none";
+        infoPanel.style.visibility = "visible";
+    }
+}
+
+function updateMapSearchPosition() {
+    if (!appRoot) return;
+    const wrapper = appRoot.querySelector<HTMLDivElement>(
+        '[data-role="map-location-search"]'
+    );
+    if (!wrapper) return;
+    const shift = state.sidebarOpen ? -SIDEBAR_WIDTH / 2 : 0;
+    wrapper.style.transform = `translateX(calc(-50% + ${shift}px))`;
+}
+
 function renderPointOverlay() {
     if (!state.pointSelectActive) return "";
     return `
@@ -1714,6 +1938,150 @@ function renderPointOverlay() {
         <div style="${styleAttr(styles.drawPromptSub)}">
           The chart will load data for this single location
         </div>
+      </div>
+    `;
+}
+
+function renderMapMarkerOverlay() {
+    const marker = state.mapMarker;
+    const title = marker?.name
+        ? escapeHtml(marker.name)
+        : marker
+        ? `Pixel ${marker.pixel.x}, ${marker.pixel.y}`
+        : "Selected location";
+    return `
+      <div
+        id="map-location-marker"
+        style="${styleAttr(styles.mapMarker)}"
+        aria-hidden="true"
+        title="${title}"
+      >
+        <svg
+          viewBox="0 0 28 36"
+          width="28"
+          height="36"
+          aria-hidden="true"
+          focusable="false"
+        >
+          <defs>
+            <linearGradient id="map-marker-gradient" x1="0" x2="1">
+              <stop offset="0%" stop-color="var(--accent-blue)" />
+              <stop offset="100%" stop-color="var(--accent-purple)" />
+            </linearGradient>
+          </defs>
+          <path
+            d="M14 2C8.48 2 4 6.48 4 12c0 7.72 8.4 19.3 9.1 20.25.5.68 1.3.68 1.8 0C15.6 31.3 24 19.72 24 12 24 6.48 19.52 2 14 2Z"
+            fill="url(#map-marker-gradient)"
+          />
+          <circle cx="14" cy="12" r="4.5" fill="rgba(9, 14, 28, 0.9)" />
+          <circle cx="14" cy="12" r="3" fill="white" opacity="0.9" />
+        </svg>
+      </div>
+    `;
+}
+
+function renderMapInfoBody(): string {
+    if (!state.mapMarker) {
+        return `<div style="${styleAttr(
+            styles.chartEmpty
+        )}">Click a location to load boxplots.</div>`;
+    }
+
+    if (state.mapInfoLoading) {
+        const progressText =
+            state.mapInfoLoadingProgress.total > 0
+                ? `${state.mapInfoLoadingProgress.done}/${state.mapInfoLoadingProgress.total} datasets loaded`
+                : "Preparing datasets";
+        const preview =
+            state.mapInfoBoxes && state.mapInfoBoxes.length
+                ? renderMiniChartSvg(state.mapInfoBoxes, state.selectedUnit)
+                : `<div style="${styleAttr(
+                      styles.chartEmpty
+                  )}">Loading boxplots...</div>`;
+        return `
+          <div style="${styleAttr(styles.mapInfoLoadingRow)}">
+            <div style="${styleAttr(styles.mapInfoLoadingSpinner)}"></div>
+            <div>${progressText}</div>
+          </div>
+          ${preview}
+        `;
+    }
+
+    if (state.mapInfoError) {
+        return `<div style="${styleAttr(styles.chartError)}">${escapeHtml(
+            state.mapInfoError
+        )}</div>`;
+    }
+
+    if (!state.mapInfoBoxes || !state.mapInfoBoxes.length) {
+        return `<div style="${styleAttr(
+            styles.chartEmpty
+        )}">Click a location to load boxplots.</div>`;
+    }
+
+    return renderMiniChartSvg(state.mapInfoBoxes, state.selectedUnit);
+}
+
+function renderMapInfoWindow() {
+    if (!state.mapInfoOpen) return "";
+    const marker = state.mapMarker;
+    const locationLabel = marker?.name
+        ? marker.name
+        : marker
+        ? `Pixel ${marker.pixel.x}, ${marker.pixel.y}`
+        : "Selected location";
+    const variableLabel = getVariableLabel(state.variable, state.metaData);
+    const title = `${locationLabel} · ${variableLabel}`;
+    const subtitle = `${formatDisplayDate(state.date)} · ${state.selectedUnit}`;
+    return `
+      <div id="map-info-panel" class="custom-select-info-panel map-info-panel" style="${styleAttr(
+          styles.mapInfoPanel
+      )}">
+        <div style="${styleAttr(styles.mapInfoHeader)}">
+          <div style="${styleAttr(styles.mapInfoTitleGroup)}">
+            <div class="custom-select-info-panel-title">${escapeHtml(
+                title
+            )}</div>
+            <div style="${styleAttr(styles.mapInfoSubtitle)}">${escapeHtml(
+                subtitle
+            )}</div>
+          </div>
+          <div style="${styleAttr(styles.mapInfoActions)}">
+            <button
+              type="button"
+              data-action="close-map-info"
+              aria-label="Close info"
+              style="${styleAttr(styles.mapInfoActionBtn)}"
+              onmouseover="this.style.color='var(--text-primary)';this.style.background='rgba(15, 23, 42, 0.85)';"
+              onmouseout="this.style.color='var(--text-secondary)';this.style.background='transparent';"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M6 6l12 12M18 6l-12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div style="${styleAttr(styles.mapInfoBody)}">
+          ${renderMapInfoBody()}
+        </div>
+        <button
+          type="button"
+          data-action="open-map-info-chart"
+          aria-label="Open chart view"
+          style="${styleAttr({
+              ...styles.mapInfoActionBtn,
+              ...styles.mapInfoExpandBtn,
+          })}"
+          onmouseover="this.style.color='var(--text-primary)';this.style.background='rgba(15, 23, 42, 0.85)';"
+          onmouseout="this.style.color='var(--text-secondary)';this.style.background='transparent';"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M9 5H5v4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M15 5h4v4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M9 19H5v-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M15 19h4v-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
       </div>
     `;
 }
@@ -1800,6 +2168,29 @@ async function fetchLocationSuggestions(
         );
 }
 
+async function fetchReverseGeocode(
+    lat: number,
+    lon: number
+): Promise<string | null> {
+    const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&addressdetails=1`;
+    const response = await fetch(url, {
+        headers: {
+            Accept: "application/json",
+            "User-Agent": "climate-visualization-app/1.0",
+        },
+    });
+
+    if (!response.ok) {
+        return null;
+    }
+
+    const payload = (await response.json()) as {
+        display_name?: string;
+    };
+
+    return payload.display_name || null;
+}
+
 function applySearchedLocation(result: LocationSearchResult) {
     if (locationSearchDebounce !== null) {
         window.clearTimeout(locationSearchDebounce);
@@ -1865,6 +2256,353 @@ async function handleLocationSearch(query: string) {
     } finally {
         if (requestId !== locationSearchRequestId) return;
         state.chartLocationSearchLoading = false;
+        render();
+    }
+}
+
+function setMapMarker(lat: number, lon: number, name: string | null) {
+    const [x, y] = latLonToGridIndices(lat, lon);
+    state.mapMarker = { lat, lon, name, pixel: { x, y } };
+}
+
+function applyMapSearchedLocation(result: LocationSearchResult) {
+    if (mapLocationSearchDebounce !== null) {
+        window.clearTimeout(mapLocationSearchDebounce);
+        mapLocationSearchDebounce = null;
+    }
+    state.mapLocationSearchError = null;
+    state.mapLocationSearchResults = [];
+    state.mapLocationSearchLoading = false;
+    state.mapLocationSearchQuery = result.displayName;
+    state.mapLocationSearchSelection = result.displayName;
+    state.mapLocationSearchFocused = true;
+    setMapMarker(result.lat, result.lon, result.displayName);
+    render();
+    if (mapCanvas) {
+        const targetZoom = Math.max(getCurrentZoomLevel(), 3.2);
+        zoomToLocation(mapCanvas, result.lon, result.lat, targetZoom);
+        renderMapMarkerPosition();
+    }
+    scheduleMapInfoOpen();
+}
+
+async function handleMapLocationSearch(query: string) {
+    const trimmed = query.trim();
+    const requestId = ++mapLocationSearchRequestId;
+    state.mapLocationSearchQuery = query;
+    state.mapLocationSearchError = null;
+    state.mapLocationSearchResults = [];
+    state.mapLocationSearchSelection = null;
+
+    if (!trimmed) {
+        state.mapLocationSearchLoading = false;
+        state.mapLocationSearchResults = [];
+        state.mapLocationSearchError = null;
+        render();
+        return;
+    }
+
+    state.mapLocationSearchLoading = true;
+    render();
+
+    try {
+        const results = await fetchLocationSuggestions(trimmed);
+        if (requestId !== mapLocationSearchRequestId) return;
+        state.mapLocationSearchResults = results;
+        if (!results.length) {
+            state.mapLocationSearchError = "No places found for that query.";
+        }
+    } catch (error) {
+        if (requestId !== mapLocationSearchRequestId) return;
+        state.mapLocationSearchError =
+            error instanceof Error ? error.message : "Search failed.";
+    } finally {
+        if (requestId !== mapLocationSearchRequestId) return;
+        state.mapLocationSearchLoading = false;
+        render();
+    }
+}
+
+function updateMapMarkerNameOnly(placeName: string) {
+    // Update state without triggering full re-render
+    if (state.mapMarker) {
+        state.mapMarker.name = placeName;
+    }
+    
+    // Update only the DOM elements that display the name, without repositioning
+    if (!appRoot) return;
+    
+    // Update marker title attribute
+    const marker = appRoot.querySelector<HTMLDivElement>("#map-location-marker");
+    if (marker && state.mapMarker) {
+        marker.title = placeName;
+    }
+    
+    // Update info panel title if it's open
+    if (state.mapInfoOpen && state.mapMarker) {
+        const titleElement = appRoot.querySelector<HTMLDivElement>(".custom-select-info-panel-title");
+        if (titleElement) {
+            const variableLabel = getVariableLabel(state.variable, state.metaData);
+            const locationLabel = placeName;
+            const title = `${locationLabel} · ${variableLabel}`;
+            titleElement.textContent = title;
+        }
+    }
+}
+
+async function handleMapClick(coords: LatLon) {
+    if (state.canvasView !== "map") return;
+    if (state.drawState.active || state.pointSelectActive) return;
+    
+    // Initially set marker with null name (will show pixel coordinates temporarily)
+    setMapMarker(coords.lat, coords.lon, null);
+    if (mapCanvas) {
+        const targetZoom = Math.max(getCurrentZoomLevel(), 3.2);
+        zoomToLocation(mapCanvas, coords.lon, coords.lat, targetZoom);
+        renderMapMarkerPosition();
+    }
+    scheduleMapInfoOpen();
+    
+    // Fetch place name from OpenStreetMap reverse geocoding
+    try {
+        const placeName = await fetchReverseGeocode(coords.lat, coords.lon);
+        if (placeName) {
+            // Update only the name, without repositioning the marker
+            updateMapMarkerNameOnly(placeName);
+        }
+    } catch (error) {
+        // Silently fail - keep showing pixel coordinates if reverse geocoding fails
+        console.error("Failed to fetch reverse geocode:", error);
+    }
+}
+
+function scheduleMapInfoOpen(delayMs = 700) {
+    if (mapInfoDelayTimer !== null) {
+        window.clearTimeout(mapInfoDelayTimer);
+        mapInfoDelayTimer = null;
+    }
+    const wasOpen = state.mapInfoOpen;
+    state.mapInfoOpen = false;
+    if (wasOpen && appRoot) {
+        const infoPanel = appRoot.querySelector<HTMLDivElement>("#map-info-panel");
+        if (infoPanel) {
+            infoPanel.style.opacity = "0";
+            infoPanel.style.transform = "translate(-9999px, -9999px)";
+            infoPanel.style.pointerEvents = "none";
+            infoPanel.style.visibility = "hidden";
+        }
+    }
+    mapInfoDelayTimer = window.setTimeout(() => {
+        mapInfoDelayTimer = null;
+        if (!state.mapMarker) return;
+        state.mapInfoOpen = true;
+        render();
+        void loadMapInfoData();
+    }, delayMs);
+}
+
+function closeMapInfoWindow() {
+    if (mapInfoDelayTimer !== null) {
+        window.clearTimeout(mapInfoDelayTimer);
+        mapInfoDelayTimer = null;
+    }
+    mapInfoRequestId += 1;
+    state.mapInfoOpen = false;
+    state.mapInfoLoading = false;
+    render();
+}
+
+function updateMapInfoPreview(samples: ChartSample[]) {
+    state.mapInfoSamples = samples;
+    try {
+        state.mapInfoBoxes = buildChartBoxes(
+            samples,
+            state.variable,
+            state.selectedUnit
+        );
+    } catch {
+        return;
+    }
+    render();
+}
+
+async function loadMapInfoData() {
+    if (state.canvasView !== "map") return;
+    if (!state.mapMarker) {
+        state.mapInfoLoading = false;
+        state.mapInfoError = null;
+        state.mapInfoSamples = [];
+        state.mapInfoBoxes = null;
+        state.mapInfoLoadingProgress = { total: 0, done: 0 };
+        state.mapInfoOpen = false;
+        render();
+        return;
+    }
+
+    const requestId = ++mapInfoRequestId;
+    state.mapInfoLoading = true;
+    state.mapInfoError = null;
+    state.mapInfoSamples = [];
+    state.mapInfoBoxes = null;
+    state.mapInfoLoadingProgress = { total: 0, done: 0 };
+    render();
+
+    try {
+        const metaData = state.metaData ?? (await fetchMetadata());
+        if (!state.metaData) {
+            state.metaData = metaData;
+        }
+
+        const scenarioOptions = metaData?.scenarios?.length
+            ? Array.from(
+                  new Set(metaData.scenarios.map(normalizeScenarioLabel))
+              )
+            : scenarios;
+        const matchingScenarios = scenarioOptions.filter((scenario) =>
+            isDateWithinRange(state.date, getTimeRangeForScenario(scenario))
+        );
+        const activeScenarios = matchingScenarios.length
+            ? matchingScenarios.includes("Historical")
+                ? ["Historical"]
+                : matchingScenarios
+            : scenarioOptions;
+        const modelOptions = metaData?.models?.length ? metaData.models : models;
+
+        if (!scenarioOptions.length || !modelOptions.length) {
+            state.mapInfoError = "Select at least one scenario and one model.";
+            state.mapInfoLoading = false;
+            state.mapInfoLoadingProgress = { total: 0, done: 0 };
+            render();
+            return;
+        }
+
+        const totalRequests = activeScenarios.length * modelOptions.length;
+        state.mapInfoLoadingProgress = { total: totalRequests, done: 0 };
+        render();
+
+        const samples: ChartSample[] = [];
+        const [x, y] = latLonToGridIndices(
+            state.mapMarker.lat,
+            state.mapMarker.lon
+        );
+
+        for (const scenario of activeScenarios) {
+            if (requestId !== mapInfoRequestId) return;
+            const dateForScenario = clipDateToRange(
+                state.date,
+                getTimeRangeForScenario(scenario)
+            );
+
+            const pixelPromises = modelOptions.map((model) =>
+                fetchPixelData({
+                    variable: state.variable,
+                    model,
+                    x0: x,
+                    x1: x,
+                    y0: y,
+                    y1: y,
+                    start_date: dateForScenario,
+                    end_date: dateForScenario,
+                    scenario: normalizeScenario(scenario),
+                    resolution: "low",
+                    step_days: 1,
+                }).catch((error) => {
+                    console.warn(
+                        `Pixel API failed for model ${model}, falling back:`,
+                        error
+                    );
+                    const request = createDataRequest({
+                        variable: state.variable,
+                        date: dateForScenario,
+                        model,
+                        scenario,
+                        resolution: 1,
+                    });
+                    return fetchClimateData(request).then((data) => {
+                        const arr = dataToArray(data);
+                        if (!arr) {
+                            throw new Error(
+                                "No data returned for map info request."
+                            );
+                        }
+                        const avg = valueAtPoint(
+                            arr,
+                            state.variable,
+                            data.shape,
+                            { lat: state.mapMarker!.lat, lon: state.mapMarker!.lon }
+                        );
+                        return {
+                            model,
+                            value: avg,
+                            fallback: true,
+                        } as {
+                            model: string;
+                            value: number;
+                            fallback: boolean;
+                        };
+                    });
+                })
+            );
+
+            const pixelResults = await Promise.allSettled(pixelPromises);
+            if (requestId !== mapInfoRequestId) return;
+
+            for (const result of pixelResults) {
+                if (result.status === "fulfilled") {
+                    const data = result.value;
+                    if (
+                        typeof data === "object" &&
+                        "fallback" in data &&
+                        data.fallback
+                    ) {
+                        samples.push({
+                            scenario,
+                            model: data.model,
+                            rawValue: data.value,
+                            dateUsed: dateForScenario,
+                        });
+                    } else {
+                        const pixelData = data as any;
+                        const value = pixelData.values[0];
+                        if (value !== null && isFinite(value)) {
+                            const rawValue =
+                                state.variable === "hurs"
+                                    ? Math.min(value, 100)
+                                    : value;
+                            samples.push({
+                                scenario,
+                                model: pixelData.model,
+                                rawValue,
+                                dateUsed: dateForScenario,
+                            });
+                        }
+                    }
+                } else {
+                    console.warn(
+                        "Failed to fetch pixel data for map info:",
+                        result.reason
+                    );
+                }
+            }
+
+            state.mapInfoLoadingProgress = {
+                total: totalRequests,
+                done: state.mapInfoLoadingProgress.done + modelOptions.length,
+            };
+            updateMapInfoPreview(samples);
+        }
+
+        if (requestId !== mapInfoRequestId) return;
+        state.mapInfoLoading = false;
+        render();
+    } catch (error) {
+        if (requestId !== mapInfoRequestId) return;
+        state.mapInfoError =
+            error instanceof Error
+                ? error.message
+                : "Failed to load map chart data.";
+        state.mapInfoLoading = false;
+        state.mapInfoLoadingProgress = { total: 0, done: 0 };
         render();
     }
 }
@@ -3636,8 +4374,11 @@ function render() {
                 id="map-canvas"
                 style="position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; pointer-events: auto;"
               ></canvas>
+              ${renderMapSearchBar()}
               ${renderDrawOverlay()}
               ${renderPointOverlay()}
+              ${renderMapMarkerOverlay()}
+              ${renderMapInfoWindow()}
               ${renderLoadingIndicator()}
               ${
                   state.dataError
@@ -3856,6 +4597,7 @@ function render() {
         (state.sidebarOpen ? SIDEBAR_WIDTH + 24 : 24) + 8;
     const scale = state.sidebarOpen ? 1 : 0.9;
     applyChartLayoutOffset(currentPadding, scale);
+    updateMapSearchPosition();
 }
 
 function renderLoadingIndicator() {
@@ -4025,6 +4767,121 @@ function renderChartSvg(boxes: ChartBox[]): string {
         ${axisTicks}
         ${boxesMarkup}
         ${yLabel}
+      </svg>
+    `;
+}
+
+function renderMiniChartSvg(boxes: ChartBox[], unitLabel: string): string {
+    if (!boxes.length) {
+        return `<div style="${styleAttr(
+            styles.chartEmpty
+        )}">No chart data loaded yet.</div>`;
+    }
+
+    const sortedBoxes = [...boxes].sort((a, b) => {
+        return scenarios.indexOf(a.scenario) - scenarios.indexOf(b.scenario);
+    });
+
+    const palette =
+        paletteOptions.find((p) => p.name === state.palette) ||
+        paletteOptions[0];
+    const colors = palette.colors;
+
+    const width = 560;
+    const height = 300;
+    const margin = { top: 18, right: 16, bottom: 52, left: 48 };
+    const plotWidth = width - margin.left - margin.right;
+    const plotHeight = height - margin.top - margin.bottom;
+
+    const allExtrema = sortedBoxes.flatMap((b) => [b.stats.min, b.stats.max]);
+    const minVal = Math.min(...allExtrema);
+    const maxVal = Math.max(...allExtrema);
+    const pad = Math.max(Math.abs(maxVal - minVal) * 0.12, 1e-6);
+
+    const yScale = d3
+        .scaleLinear()
+        .domain([minVal - pad, maxVal + pad])
+        .range([plotHeight, 0]);
+    const yTicks = yScale.ticks(4);
+
+    const xStep = plotWidth / (sortedBoxes.length + 1);
+
+    const axisTicks = yTicks
+        .map((tick) => {
+            const y = yScale(tick) + margin.top;
+            return `
+        <g>
+          <line x1="${margin.left}" x2="${
+                width - margin.right
+            }" y1="${y}" y2="${y}" stroke="rgba(255,255,255,0.06)" />
+          <text x="${margin.left - 8}" y="${
+                y + 3
+            }" fill="var(--text-secondary)" font-size="9" text-anchor="end">
+            ${formatNumberCompact(tick)}
+          </text>
+        </g>
+      `;
+        })
+        .join("");
+
+    const boxesMarkup = sortedBoxes
+        .map((box, idx) => {
+            const x = margin.left + xStep * (idx + 1);
+            const color = colors[idx % colors.length];
+            const { min, q1, median, q3, max, mean } = box.stats;
+            const boxTop = yScale(q3) + margin.top;
+            const boxBottom = yScale(q1) + margin.top;
+            const rectHeight = Math.max(2, boxBottom - boxTop);
+            return `
+        <g>
+          <line x1="${x}" x2="${x}" y1="${yScale(min) + margin.top}" y2="${
+                yScale(max) + margin.top
+            }" stroke="${color}" stroke-width="1.6" stroke-linecap="round" />
+          <rect x="${
+              x - 16
+          }" y="${boxTop}" width="32" height="${rectHeight}" fill="rgba(255,255,255,0.06)" stroke="${color}" stroke-width="1.6" rx="5" />
+          <line x1="${x - 16}" x2="${x + 16}" y1="${
+                yScale(median) + margin.top
+            }" y2="${
+                yScale(median) + margin.top
+            }" stroke="${color}" stroke-width="2" />
+          <circle cx="${x}" cy="${
+                yScale(mean) + margin.top
+            }" r="3.2" fill="${color}" stroke="rgba(0,0,0,0.55)" stroke-width="0.8" />
+          <text x="${x}" y="${
+                height - margin.bottom + 26
+            }" fill="var(--text-primary)" font-weight="700" font-size="10" text-anchor="middle">${
+                box.scenario
+            }</text>
+          <text x="${x}" y="${
+                height - margin.bottom + 40
+            }" fill="var(--text-secondary)" font-size="9" text-anchor="middle">${
+                box.samples.length
+            } model${box.samples.length === 1 ? "" : "s"}</text>
+        </g>
+      `;
+        })
+        .join("");
+
+    const axisLine = `
+      <line
+        x1="${margin.left}"
+        x2="${margin.left}"
+        y1="${margin.top}"
+        y2="${height - margin.bottom}"
+        stroke="rgba(255,255,255,0.55)"
+        stroke-width="1"
+      />
+    `;
+
+    return `
+      <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Mini box plots" preserveAspectRatio="xMidYMid meet" style="width:100%; height:auto;">
+        ${axisLine}
+        ${axisTicks}
+        ${boxesMarkup}
+        <text x="${margin.left}" y="${margin.top - 6}" fill="var(--text-secondary)" font-size="9">${escapeHtml(
+            unitLabel
+        )}</text>
       </svg>
     `;
 }
@@ -4983,6 +5840,84 @@ function renderChartLocationExtras() {
     `;
 }
 
+function renderMapSearchBar() {
+    if (state.canvasView !== "map") return "";
+    const results =
+        state.mapLocationSearchResults.length > 0
+            ? state.mapLocationSearchResults
+                  .map(
+                      (res) => `
+                <button
+                  type="button"
+                  class="location-search-result"
+                  data-role="map-location-search-result"
+                  data-name="${escapeHtml(res.displayName)}"
+                  data-lat="${res.lat}"
+                  data-lon="${res.lon}"
+                >
+                  <div class="location-search-result-name">${escapeHtml(
+                      res.displayName
+                  )}</div>
+                  <div class="location-search-result-coord">
+                    ${res.lat.toFixed(3)}, ${res.lon.toFixed(3)}
+                  </div>
+                </button>
+              `
+                  )
+                  .join("")
+            : "";
+
+    const hasQuery = state.mapLocationSearchQuery.trim().length > 0;
+    const statusMessage = state.mapLocationSearchError
+        ? `<div class="location-search-error">${escapeHtml(
+              state.mapLocationSearchError
+          )}</div>`
+        : state.mapLocationSearchLoading
+        ? `<div class="location-search-status">Searching...</div>`
+        : state.mapLocationSearchResults.length === 0 &&
+          hasQuery &&
+          !state.mapLocationSearchSelection
+        ? `<div class="location-search-status">No places found. Try refining your query.</div>`
+        : "";
+
+    const showResultsPanel = Boolean(
+        results || (statusMessage && !state.mapLocationSearchLoading)
+    );
+    const shift = state.sidebarOpen ? -SIDEBAR_WIDTH / 2 : 0;
+    const wrapStyle = mergeStyles(styles.mapSearchWrap, {
+        top: state.drawState.active || state.pointSelectActive ? 78 : 18,
+        transform: `translateX(calc(-50% + ${shift}px))`,
+    });
+
+    return `
+      <div data-role="map-location-search" style="${styleAttr(wrapStyle)}">
+        <div class="location-search-row">
+          <input
+            type="text"
+            class="location-search-input"
+            value="${escapeHtml(state.mapLocationSearchQuery)}"
+            placeholder="Search a place (e.g. Aachen)"
+            data-role="map-location-search-input"
+          />
+        </div>
+        ${state.mapLocationSearchLoading ? statusMessage : ""}
+        ${
+            showResultsPanel
+                ? `
+        ${!state.mapLocationSearchLoading ? statusMessage : ""}
+        <div
+          class="location-search-results"
+          data-role="map-location-search-results"
+          style="${styleAttr(styles.mapSearchResults)}"
+        >
+          ${results || ""}
+        </div>`
+                : ""
+        }
+      </div>
+    `;
+}
+
 function renderChartSection() {
     const chartModeIndicatorTransform =
         state.chartMode === "single" ? "translateX(0%)" : "translateX(100%)";
@@ -5504,6 +6439,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             // keep charts aligned with toggle; +8 matches previous offset
             const scale = state.sidebarOpen ? 1 : 0.9;
             applyChartLayoutOffset(right + 8, scale);
+            updateMapSearchPosition();
         },
     });
 
@@ -5976,6 +6912,20 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                         );
                     }
                 }
+                if (state.mapMarker) {
+                    if (state.mapInfoOpen) {
+                        if (state.mapInfoSamples.length) {
+                            state.mapInfoBoxes = buildChartBoxes(
+                                state.mapInfoSamples,
+                                state.variable,
+                                state.selectedUnit
+                            );
+                            render();
+                        } else if (!state.mapInfoLoading) {
+                            void loadMapInfoData();
+                        }
+                    }
+                }
                 return;
             case "palette":
                 state.palette = val;
@@ -6121,6 +7071,9 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         render();
         if (state.canvasView === "map" && triggerMapReload) {
             loadClimateData();
+            if (state.mapMarker && state.mapInfoOpen) {
+                void loadMapInfoData();
+            }
         }
         if (
             state.canvasView === "chart" &&
@@ -6231,6 +7184,101 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             if (input) {
                 setTimeout(() => input.focus(), 0);
             }
+        }
+    }
+
+    const mapSearchInputs = root.querySelectorAll<HTMLInputElement>(
+        '[data-role="map-location-search-input"]'
+    );
+    const mapSearchResults = root.querySelectorAll<HTMLElement>(
+        '[data-role="map-location-search-result"]'
+    );
+
+    const clearMapSearchDebounce = () => {
+        if (mapLocationSearchDebounce !== null) {
+            window.clearTimeout(mapLocationSearchDebounce);
+            mapLocationSearchDebounce = null;
+        }
+    };
+
+    const triggerMapSearch = (query: string) => {
+        clearMapSearchDebounce();
+        void handleMapLocationSearch(query);
+    };
+
+    mapSearchInputs.forEach((input) => {
+        input.addEventListener("focus", () => {
+            state.mapLocationSearchFocused = true;
+        });
+        const syncCursor = () => {
+            const start = input.selectionStart ?? input.value.length;
+            const end = input.selectionEnd ?? input.value.length;
+            state.mapLocationSearchCursor = { start, end };
+        };
+        input.addEventListener("input", () => {
+            const hadResults = state.mapLocationSearchResults.length > 0;
+            const wasLoading = state.mapLocationSearchLoading;
+            const hadError = Boolean(state.mapLocationSearchError);
+
+            state.mapLocationSearchQuery = input.value;
+            state.mapLocationSearchError = null;
+            state.mapLocationSearchSelection = null;
+            state.mapLocationSearchFocused = true;
+            syncCursor();
+
+            clearMapSearchDebounce();
+
+            const trimmed = input.value.trim();
+
+            if (!trimmed) {
+                state.mapLocationSearchResults = [];
+                state.mapLocationSearchLoading = false;
+                render();
+                return;
+            }
+
+            if (hadResults || wasLoading || hadError) {
+                state.mapLocationSearchResults = [];
+                state.mapLocationSearchLoading = false;
+                render();
+            }
+
+            mapLocationSearchDebounce = window.setTimeout(() => {
+                triggerMapSearch(input.value);
+            }, LOCATION_SEARCH_DEBOUNCE_MS);
+        });
+        input.addEventListener("keyup", syncCursor);
+        input.addEventListener("click", syncCursor);
+        input.addEventListener("select", syncCursor);
+        input.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") {
+                e.preventDefault();
+                clearMapSearchDebounce();
+                triggerMapSearch(input.value);
+            }
+        });
+    });
+
+    mapSearchResults.forEach((resultEl) => {
+        resultEl.addEventListener("click", () => {
+            const lat = Number(resultEl.dataset.lat);
+            const lon = Number(resultEl.dataset.lon);
+            const name = resultEl.dataset.name ?? "Selected place";
+            if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+            applyMapSearchedLocation({ displayName: name, lat, lon });
+        });
+    });
+
+    if (state.mapLocationSearchFocused) {
+        const input = root.querySelector<HTMLInputElement>(
+            '[data-role="map-location-search-input"]'
+        );
+        if (input) {
+            setTimeout(() => input.focus(), 0);
+            const { start, end } = state.mapLocationSearchCursor;
+            const safeStart = Math.min(start, input.value.length);
+            const safeEnd = Math.min(end, input.value.length);
+            setTimeout(() => input.setSelectionRange(safeStart, safeEnd), 0);
         }
     }
 
@@ -6433,6 +7481,9 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                     (key === "compareDateStart" || key === "compareDateEnd"))
             ) {
                 loadClimateData();
+                if (state.mapMarker && state.mapInfoOpen) {
+                    void loadMapInfoData();
+                }
             }
             if (
                 state.canvasView === "chart" &&
@@ -6503,12 +7554,45 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         })
     );
 
+    const mapInfoCloseBtn = root.querySelector<HTMLButtonElement>(
+        '[data-action="close-map-info"]'
+    );
+    mapInfoCloseBtn?.addEventListener("click", (e) => {
+        e.preventDefault();
+        closeMapInfoWindow();
+    });
+
+    const mapInfoExpandBtn = root.querySelector<HTMLButtonElement>(
+        '[data-action="open-map-info-chart"]'
+    );
+    mapInfoExpandBtn?.addEventListener("click", (e) => {
+        e.preventDefault();
+        if (!state.mapMarker) return;
+        state.canvasView = "chart";
+        state.chartMode = "single";
+        state.chartLocation = "Point";
+        state.chartPoint = {
+            lat: state.mapMarker.lat,
+            lon: state.mapMarker.lon,
+        };
+        state.chartLocationName = state.mapMarker.name ?? null;
+        state.chartVariable = state.variable;
+        state.chartUnit = state.selectedUnit;
+        state.chartDate = state.date;
+        state.chartError = null;
+        render();
+        loadChartData();
+    });
+
     attachTimeSliderHandlers({
         root,
         getTimeRange: () => state.timeRange,
         onDateChange: (date) => {
             state.date = date;
             loadClimateData();
+            if (state.mapMarker && state.mapInfoOpen) {
+                void loadMapInfoData();
+            }
         },
         getMode: () => state.mode,
         getCompareMode: () => state.compareMode,

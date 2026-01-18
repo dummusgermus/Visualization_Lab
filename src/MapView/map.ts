@@ -38,6 +38,10 @@ export function resetMapTransform(): void {
     }
 }
 
+export function getCurrentZoomLevel(): number {
+    return currentTransform.k;
+}
+
 // Helper function to setup canvas with proper DPI scaling
 function setupCanvas(canvas: HTMLCanvasElement): {
     ctx: CanvasRenderingContext2D;
@@ -141,8 +145,8 @@ function pointerToLonLat(
     // Calculate longitude from normalized coordinate (will be in [-180, 180) range)
     const lon = (normalizedX / mapWidth) * 360 - 180;
 
-    // Calculate latitude (will be in [-90, 90] range)
-    const lat = 90 - (worldY / mapHeight) * 180;
+    // Latitude range is -60°S to 90°N (150° total)
+    const lat = 90 - (worldY / mapHeight) * 150;
 
     // Final safety clamp to ensure values are in valid ranges
     const clampedLon = Math.max(-180, Math.min(180, lon));
@@ -176,7 +180,8 @@ export function projectLonLatToCanvas(
     while (normalizedLon < -180) normalizedLon += 360;
 
     const projectedX = ((normalizedLon + 180) / 360) * mapWidth;
-    const projectedY = ((90 - lat) / 180) * mapHeight;
+    // Latitude range is -60°S to 90°N (150° total)
+    const projectedY = ((90 - lat) / 150) * mapHeight;
 
     // Apply D3 zoom transform
     const x = projectedX * currentTransform.k + currentTransform.x;
@@ -221,6 +226,7 @@ export function setupMapInteractions(
         drawMode?: boolean;
         onDrawClick?: (coords: { lat: number; lon: number }) => void;
         onDrawMove?: (coords: { lat: number; lon: number }) => void;
+        onMapClick?: (coords: { lat: number; lon: number }) => void;
         onTransform?: () => void;
     }
 ): void {
@@ -242,7 +248,9 @@ export function setupMapInteractions(
         })
         .on("zoom", (e: d3.D3ZoomEvent<HTMLCanvasElement, unknown>) => {
             currentTransform = e.transform;
-            if (currentData) {
+            if (cachedMapCanvas) {
+                redrawCachedMap(canvas);
+            } else if (currentData) {
                 redrawCachedMap(canvas);
             }
             transformCallback?.();
@@ -256,14 +264,17 @@ export function setupMapInteractions(
         });
 
     selection.call(zoomBehavior);
+    // Preserve the current zoom/pan state across re-renders
+    selection.call(zoomBehavior.transform, currentTransform);
 
     selection.on("click.draw", (e: MouseEvent) => {
+        const coords = pointerToLonLat(canvas, e.clientX, e.clientY);
+        if (!coords) return;
         if (drawMode) {
-            const coords = pointerToLonLat(canvas, e.clientX, e.clientY);
-            if (coords) {
-                drawCallbacks?.onClick?.(coords);
-            }
+            drawCallbacks?.onClick?.(coords);
+            return;
         }
+        options?.onMapClick?.(coords);
     });
 
     selection.on("pointermove.tooltip", (e: PointerEvent) => {
@@ -515,6 +526,57 @@ export function renderMapData(
     }
 
     ctx.restore();
+}
+
+export function zoomToLocation(
+    canvas: HTMLCanvasElement,
+    lon: number,
+    lat: number,
+    zoomLevel = 3.2,
+    durationMs = 550
+): void {
+    if (!cachedMapCanvas || !zoomBehavior) return;
+    const rect = canvas.getBoundingClientRect();
+    const mapWidth = cachedMapCanvas.width;
+    const mapHeight = cachedMapCanvas.height;
+
+    let normalizedLon = lon;
+    while (normalizedLon > 180) normalizedLon -= 360;
+    while (normalizedLon < -180) normalizedLon += 360;
+
+    const projectedX = ((normalizedLon + 180) / 360) * mapWidth;
+    const projectedY = ((90 - lat) / 150) * mapHeight;
+
+    const candidates = [
+        projectedX - mapWidth,
+        projectedX,
+        projectedX + mapWidth,
+    ];
+
+    let bestTargetX = rect.width / 2 - projectedX * zoomLevel;
+    let bestDistance = Math.abs(bestTargetX - currentTransform.x);
+
+    for (const candidateX of candidates) {
+        const targetX = rect.width / 2 - candidateX * zoomLevel;
+        const distance = Math.abs(targetX - currentTransform.x);
+        if (distance < bestDistance) {
+            bestDistance = distance;
+            bestTargetX = targetX;
+        }
+    }
+
+    const targetY = rect.height / 2 - projectedY * zoomLevel;
+    const nextTransform = d3.zoomIdentity
+        .translate(bestTargetX, targetY)
+        .scale(zoomLevel);
+
+    d3.select(canvas)
+        .transition()
+        .duration(durationMs)
+        .ease(d3.easeCubicOut)
+        .call(zoomBehavior.transform, nextTransform);
+    currentTransform = nextTransform;
+    transformCallback?.();
 }
 
 function updateTooltip(

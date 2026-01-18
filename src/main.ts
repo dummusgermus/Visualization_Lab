@@ -41,6 +41,11 @@ import {
     type ChartSeries,
     type ChartStats,
 } from "./types/chartTypes";
+import {
+    buildChatContext,
+    sendChatMessage,
+    type ChatMessage as ChatClientMessage,
+} from "./Utils/chatClient";
 
 // Toggle to switch between real API data and toy mock chart data (range mode)
 const USE_TOY_RANGE_DATA = false;
@@ -796,21 +801,27 @@ const styles: Record<string, Style> = {
     chatMessages: {
         display: "flex",
         flexDirection: "column",
-        gap: 10,
-        padding: "4px 0 6px",
+        gap: 12,
+        padding: "8px 4px",
         paddingRight: 0,
         width: "100%",
         boxSizing: "border-box",
+        overflowY: "auto",
+        maxHeight: "400px",
     },
     chatBubble: {
-        maxWidth: "100%",
+        maxWidth: "85%",
         width: "fit-content",
-        padding: "16px 16px",
+        padding: "12px 16px",
         borderRadius: 12,
-        fontSize: 13,
-        lineHeight: 1.4,
+        fontSize: 14,
+        lineHeight: 1.8,
         boxShadow: "0 6px 14px rgba(0,0,0,0.3)",
         boxSizing: "border-box",
+        whiteSpace: "normal",
+        wordBreak: "break-word",
+        overflowWrap: "break-word",
+        overflow: "visible",
     },
     chatBubbleUser: {
         alignSelf: "flex-end",
@@ -1017,6 +1028,7 @@ export type AppState = {
     metaData?: Metadata;
     dataMin: number | null;
     dataMax: number | null;
+    dataMean: number | null;
     timeRange: {
         start: string;
         end: string;
@@ -1079,12 +1091,12 @@ const state: AppState = {
     apiAvailable: null,
     dataMin: null,
     dataMax: null,
+    dataMean: null,
     timeRange: null,
     metaData: undefined,
     compareInfoOpen: false,
 };
 
-let agentReplyTimer: number | null = null;
 let mapCanvas: HTMLCanvasElement | null = null;
 let drawKeyHandler: ((e: KeyboardEvent) => void) | null = null;
 
@@ -2113,7 +2125,7 @@ function createDifferenceData(
     dataB: ClimateData,
     labelA: string,
     labelB: string
-): { data: ClimateData; min: number; max: number } {
+): { data: ClimateData; min: number; max: number; mean: number } {
     const arrayA = dataToArray(dataA);
     const arrayB = dataToArray(dataB);
 
@@ -2132,6 +2144,8 @@ function createDifferenceData(
     const differenceArray = new Float32Array(arrayA.length);
     let min = Infinity;
     let max = -Infinity;
+    let sum = 0;
+    let count = 0;
 
     for (let i = 0; i < arrayA.length; i++) {
         const a = arrayA[i];
@@ -2148,12 +2162,16 @@ function createDifferenceData(
         if (isFinite(diff)) {
             min = Math.min(min, diff);
             max = Math.max(max, diff);
+            sum += diff;
+            count += 1;
         }
     }
 
     if (!isFinite(min) || !isFinite(max)) {
         throw new Error("Comparison produced no valid numeric values.");
     }
+
+    const mean = count > 0 ? sum / count : NaN;
 
     const differenceData: ClimateData = {
         ...dataA,
@@ -2169,7 +2187,7 @@ function createDifferenceData(
         },
     };
 
-    return { data: differenceData, min, max };
+    return { data: differenceData, min, max, mean };
 }
 
 function setLoadingProgress(value: number, forceRender = false) {
@@ -2184,7 +2202,7 @@ function setLoadingProgress(value: number, forceRender = false) {
 async function loadCompareData(
     activeScenarioForRange: string,
     onProgress?: (progress: number) => void
-): Promise<{ data: ClimateData; min: number; max: number }> {
+): Promise<{ data: ClimateData; min: number; max: number; mean: number }> {
     let requestA = createDataRequest({
         variable: state.variable,
         date: state.date,
@@ -2681,6 +2699,8 @@ async function loadClimateData() {
                           const clamped = new Float32Array(arrayData.length);
                           let min = Infinity;
                           let max = -Infinity;
+                          let sum = 0;
+                          let count = 0;
                           for (let i = 0; i < arrayData.length; i++) {
                               const val = arrayData[i];
                               if (!isFinite(val)) {
@@ -2691,24 +2711,29 @@ async function loadClimateData() {
                               clamped[i] = capped;
                               min = Math.min(min, capped);
                               max = Math.max(max, capped);
+                              sum += capped;
+                              count += 1;
                           }
+                          const mean = count > 0 ? sum / count : NaN;
                           data = {
                               ...data,
                               data: clamped,
                               data_encoding: "none",
                           };
                           arrayData = clamped;
-                          return { data, min, max };
+                          return { data, min, max, mean };
                       }
 
                       const { min, max } = calculateMinMax(arrayData);
+                      const mean = averageArray(arrayData, state.variable);
                       setLoadingProgress(95);
-                      return { data, min, max };
+                      return { data, min, max, mean };
                   })();
 
         state.currentData = result.data;
         state.dataMin = result.min;
         state.dataMax = result.max;
+        state.dataMean = result.mean;
 
         setLoadingProgress(100);
         state.isLoading = false;
@@ -2734,6 +2759,7 @@ async function loadClimateData() {
         state.currentData = null;
         state.dataMin = null;
         state.dataMax = null;
+        state.dataMean = null;
         render();
     }
 }
@@ -4447,6 +4473,60 @@ function renderChartSection() {
     `;
 }
 
+function formatChatMessage(text: string): string {
+    // Escape HTML first
+    let formatted = text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+
+    // Convert code blocks first (before other markdown)
+    formatted = formatted.replace(/```(.+?)```/gs, '<code style="background: rgba(255,255,255,0.1); padding: 2px 6px; border-radius: 4px; font-family: monospace; display: inline-block; margin: 4px 0; line-height: 1.4;">$1</code>');
+
+    // Inline code
+    formatted = formatted.replace(/`(.+?)`/g, '<code style="background: rgba(255,255,255,0.1); padding: 2px 4px; border-radius: 3px; font-family: monospace; font-size: 0.9em; vertical-align: middle; line-height: 1.4;">$1</code>');
+    // Bold: **text** or __text__
+    formatted = formatted.replace(/\*\*(.+?)\*\*/g, '<strong style="font-weight: 700;">$1</strong>');
+    formatted = formatted.replace(/__(.+?)__/g, '<strong style="font-weight: 700;">$1</strong>');
+
+    // Split into lines
+    const lines = formatted.split('\n');
+    const result: string[] = [];
+
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+
+        // Check if it's a list item (starts with "- ")
+        if (line.startsWith('- ')) {
+            const listContent = line.substring(2);
+            result.push(`<div style="display: flex; gap: 8px; margin: 6px 0;"><span style="flex-shrink: 0;">•</span><span style="flex: 1; line-height: 1.6; word-break: break-word; overflow-wrap: break-word;">${listContent}</span></div>`);
+        }
+        // Check if it's a numbered list (starts with "1. ", "2. ", etc.)
+        else if (/^\d+\.\s/.test(line)) {
+            const match = line.match(/^(\d+)\.\s(.+)$/);
+            if (match) {
+                const number = match[1];
+                const content = match[2];
+                result.push(`<div style="display: flex; gap: 8px; margin: 6px 0;"><span style="flex-shrink: 0; font-weight: 600; line-height: 1.6;">${number}.</span><span style="flex: 1; line-height: 1.6; word-break: break-word; overflow-wrap: break-word;">${content}</span></div>`);
+            } else {
+                result.push(line);
+            }
+        }
+        // Regular line
+        else if (line.length > 0) {
+            result.push(`<div style="margin: 8px 0; line-height: 1.6;">${line}</div>`);
+        }
+        // Empty line
+        else {
+            result.push('<div style="height: 12px;"></div>');
+        }
+    }
+
+    return result.join('');
+}
+
 function renderChatSection() {
     return `
     <div style="${styleAttr({
@@ -4474,7 +4554,7 @@ function renderChatSection() {
                                 styles.chatBubbleAgent
                             );
                   return `<div style="${styleAttr(bubbleStyle)}">${
-                      msg.text
+                      formatChatMessage(msg.text)
                   }</div>`;
               })
               .join("")}
@@ -5733,29 +5813,75 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
     chatSend?.addEventListener("click", sendChat);
 }
 
-function sendChat() {
+async function sendChat() {
     const text = state.chatInput.trim();
     if (!text) return;
 
+    // Add user message
     const userMessage: ChatMessage = { id: Date.now(), sender: "user", text };
     state.chatMessages = [...state.chatMessages, userMessage];
     state.chatInput = "";
+    render();
 
-    if (agentReplyTimer) {
-        window.clearTimeout(agentReplyTimer);
-    }
+    // Build chat history for context (limit to last 10 messages to avoid payload issues)
+    const history: ChatClientMessage[] = state.chatMessages
+        .slice(Math.max(0, state.chatMessages.length - 11), -1) // Last 10 messages, excluding current
+        .map((msg) => ({
+            role: msg.sender === "user" ? "user" : "assistant",
+            content: msg.text,
+        }));
 
-    agentReplyTimer = window.setTimeout(() => {
+    // Build current application context
+    const context = buildChatContext({
+        mode: state.mode,
+        canvasView: state.canvasView,
+        selectedVariable: state.variable,
+        selectedModel: state.model,
+        selectedScenario: state.scenario,
+        selectedDate: state.date,
+        compareMode: state.compareMode,
+        chartMode: state.chartMode,
+        selectedScenario1: state.compareScenarioA,
+        selectedScenario2: state.compareScenarioB,
+        selectedModel1: state.compareModelA,
+        selectedModel2: state.compareModelB,
+        selectedDate1: state.compareDateStart,
+        selectedDate2: state.compareDateEnd,
+        currentDataStats: state.dataMin !== null && state.dataMax !== null ? {
+            min: state.dataMin,
+            max: state.dataMax,
+            mean: state.dataMean ?? undefined,
+        } : undefined,
+    });
+
+    try {
+        // Send request to chat API
+        const response = await sendChatMessage({
+            message: text,
+            context: context,
+            history: history,
+        });
+
+        // Add assistant response
         const reply: ChatMessage = {
             id: Date.now() + 1,
             sender: "agent",
-            text: "I don't work yet.",
+            text: response.message,
         };
         state.chatMessages = [...state.chatMessages, reply];
         render();
-    }, 1000);
-
-    render();
+    } catch (error) {
+        // Add error message
+        const errorReply: ChatMessage = {
+            id: Date.now() + 1,
+            sender: "agent",
+            text: `Entschuldigung, es gab einen Fehler: ${
+                error instanceof Error ? error.message : "Unbekannter Fehler"
+            }`,
+        };
+        state.chatMessages = [...state.chatMessages, errorReply];
+        render();
+    }
 }
 
 async function init() {

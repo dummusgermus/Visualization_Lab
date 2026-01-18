@@ -18,11 +18,13 @@ if _CURRENT_DIR not in sys.path:
 try:  # pragma: no cover - import path juggling for script/package usage
     from . import data_loader  # type: ignore  # noqa: E402
     from . import utils  # type: ignore  # noqa: E402
+    from . import llm_chat  # type: ignore  # noqa: E402
     from .data_loader import DataLoadingError  # type: ignore  # noqa: E402
     from .utils import ParameterValidationError  # type: ignore  # noqa: E402
 except ImportError:  # pragma: no cover
     import data_loader  # type: ignore  # noqa: E402
     import utils  # type: ignore  # noqa: E402
+    import llm_chat  # type: ignore  # noqa: E402
     from data_loader import DataLoadingError  # type: ignore  # noqa: E402
     from utils import ParameterValidationError  # type: ignore  # noqa: E402
 
@@ -192,6 +194,30 @@ def fetch_time_series(request: TimeSeriesRequest):
         _translate_error(exc)
 
     return [_format_result(entry, request.data_format) for entry in series]
+
+
+@app.post("/chat")
+def chat(request: llm_chat.ChatRequest):
+    """
+    Process a chat message with LLM and return a response.
+
+    The request can include:
+    - message: The user's question or message
+    - context: Current application state (selected variable, model, scenario, etc.)
+    - history: Previous chat messages for context
+    """
+    try:
+        response = llm_chat.process_chat_message(
+            message=request.message,
+            context=request.context,
+            history=request.history
+        )
+        return response
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=500,
+            detail=f"Chat processing failed: {str(exc)}"
+        ) from exc
 
 
 def main():

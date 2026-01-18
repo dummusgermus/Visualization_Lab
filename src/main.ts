@@ -1,5 +1,11 @@
 import * as d3 from "d3";
 import {
+    attachChatHandlers,
+    type ChatContextData,
+    type ChatMessage,
+    renderChatSection,
+} from "./Components/agentChat";
+import {
     attachSidebarHandlers,
     renderSidebarToggle,
     SIDEBAR_WIDTH,
@@ -19,38 +25,33 @@ import {
 } from "./MapView/timeSlider";
 import "./style.css";
 import {
-    checkApiHealth,
-    type ClimateData,
-    createDataRequest,
-    DataClientError,
-    dataToArray,
-    fetchClimateData,
-    fetchMetadata,
-    type Metadata,
-    fetchPixelData,
-    fetchAggregateOnDemand,
-    normalizeScenario,
-} from "./Utils/dataClient";
-import {
-    convertValue,
-    getDefaultUnitOption,
-    getUnitOptions,
-} from "./Utils/unitConverter";
-import {
-    generateToyRangeSeries,
-    flattenSeriesToSamples,
-} from "./Utils/mockChartData";
-import {
     type ChartBox,
     type ChartSample,
     type ChartSeries,
     type ChartStats,
 } from "./types/chartTypes";
 import {
-    buildChatContext,
-    sendChatMessage,
-    type ChatMessage as ChatClientMessage,
-} from "./Utils/chatClient";
+    checkApiHealth,
+    type ClimateData,
+    createDataRequest,
+    DataClientError,
+    dataToArray,
+    fetchAggregateOnDemand,
+    fetchClimateData,
+    fetchMetadata,
+    fetchPixelData,
+    type Metadata,
+    normalizeScenario,
+} from "./Utils/dataClient";
+import {
+    flattenSeriesToSamples,
+    generateToyRangeSeries,
+} from "./Utils/mockChartData";
+import {
+    convertValue,
+    getDefaultUnitOption,
+    getUnitOptions,
+} from "./Utils/unitConverter";
 
 // Toggle to switch between real API data and toy mock chart data (range mode)
 const USE_TOY_RANGE_DATA = false;
@@ -92,7 +93,7 @@ type ChartLoadingProgress = {
 
 function applyChartLayoutOffset(offset: number, scale?: number) {
     const containers = document.querySelectorAll<HTMLElement>(
-        "[data-role='chart-container']"
+        "[data-role='chart-container']",
     );
     containers.forEach((el) => {
         el.style.transition =
@@ -866,91 +867,6 @@ const styles: Record<string, Style> = {
         minHeight: 0,
         maxHeight: "100%",
     },
-    chatBox: {
-        display: "flex",
-        alignItems: "center",
-        gap: 10,
-        padding: "12px 14px",
-        borderRadius: 14,
-        border: "1px solid var(--border-default)",
-        background: "rgba(15,18,25,0.96)",
-        boxShadow:
-            "inset 0 1px 0 rgba(255,255,255,0.05), 0 8px 20px rgba(0,0,0,0.38)",
-    },
-    chatInput: {
-        flex: 1,
-        padding: "12px 0",
-        borderRadius: 8,
-        border: "none",
-        background: "var(--bg-transparent)",
-        color: "white",
-        fontSize: 14,
-        lineHeight: 1.4,
-        outline: "none",
-        minHeight: 24,
-    },
-    chatSend: {
-        padding: "10px 14px",
-        borderRadius: 12,
-        border: "1px solid var(--accent-border-strong)",
-        background: "var(--gradient-primary)",
-        color: "white",
-        fontWeight: 700,
-        fontSize: 14,
-        letterSpacing: 0.1,
-        cursor: "pointer",
-        boxShadow: "0 10px 22px rgba(0,0,0,0.38), var(--shadow-inset)",
-        transition: "transform 120ms ease, box-shadow 120ms ease",
-    },
-    chatStack: {
-        display: "flex",
-        flexDirection: "column",
-        gap: 12,
-    },
-    chatLead: {
-        fontSize: 13,
-        color: "var(--text-secondary)",
-        lineHeight: 1.45,
-        marginTop: 10,
-    },
-    chatMessages: {
-        display: "flex",
-        flexDirection: "column",
-        gap: 12,
-        padding: "8px 4px",
-        paddingRight: 0,
-        width: "100%",
-        boxSizing: "border-box",
-        overflowY: "auto",
-        maxHeight: "400px",
-    },
-    chatBubble: {
-        maxWidth: "85%",
-        width: "fit-content",
-        padding: "12px 16px",
-        borderRadius: 12,
-        fontSize: 14,
-        lineHeight: 1.8,
-        boxShadow: "0 6px 14px rgba(0,0,0,0.3)",
-        boxSizing: "border-box",
-        whiteSpace: "normal",
-        wordBreak: "break-word",
-        overflowWrap: "break-word",
-        overflow: "visible",
-    },
-    chatBubbleUser: {
-        alignSelf: "flex-end",
-        background: "var(--gradient-chat-user)",
-        border: "1px solid rgba(125,211,252,0.45)",
-        color: "white",
-        marginRight: 26,
-    },
-    chatBubbleAgent: {
-        alignSelf: "flex-start",
-        background: "rgba(20,24,31,0.95)",
-        border: "1px solid var(--border-medium)",
-        color: "var(--text-primary)",
-    },
     sectionTitle: {
         fontSize: 13,
         fontWeight: 700,
@@ -1086,8 +1002,6 @@ const styles: Record<string, Style> = {
     },
 };
 
-type ChatMessage = { id: number; sender: "user" | "agent"; text: string };
-
 export type AppState = {
     mode: Mode;
     panelTab: PanelTab;
@@ -1142,6 +1056,7 @@ export type AppState = {
     pointSelectActive: boolean;
     chatInput: string;
     chatMessages: ChatMessage[];
+    chatIsLoading: boolean;
     availableModels: string[];
     compareMode: CompareMode;
     compareScenarioA: string;
@@ -1221,6 +1136,7 @@ const state: AppState = {
     pointSelectActive: false,
     chatInput: "",
     chatMessages: [],
+    chatIsLoading: false,
     compareMode: "Scenarios",
     availableModels: [],
     compareScenarioA: "SSP245",
@@ -1372,7 +1288,6 @@ function describeCompareContext(state: AppState): {
     }
 }
 
-
 function renderCompareInfo(state: AppState): string {
     if (state.mode !== "Compare" || state.canvasView !== "map") return "";
     const info = describeCompareContext(state);
@@ -1383,7 +1298,7 @@ function renderCompareInfo(state: AppState): string {
             // Highlight X in the text
             const highlightedText = p.replace(
                 /(\bX\b|ΔX)/g,
-                '<span style="color: var(--accent-purple);">$1</span>'
+                '<span style="color: var(--accent-purple);">$1</span>',
             );
             return `<p style="display:block; margin:${margin}; line-height:1.6; white-space: normal; word-break: break-word;">${highlightedText}</p>`;
         })
@@ -1408,15 +1323,15 @@ function renderCompareInfo(state: AppState): string {
     const modal = state.compareInfoOpen
         ? `
       <div data-role="compare-info-overlay" class="compare-info-overlay" style="${styleAttr(
-          overlayStyle
+          overlayStyle,
       )}">
         <div style="${styleAttr(
-            modalStyle
+            modalStyle,
         )}" role="dialog" aria-modal="true" aria-label="${info.title}">
           <div style="${styleAttr(styles.infoModalHeader)}">
             <div style="${styleAttr(styles.infoModalTitle)}">${info.title}</div>
             <button type="button" data-action="close-compare-info" style="${styleAttr(
-                styles.infoModalClose
+                styles.infoModalClose,
             )}" aria-label="Close info dialog">✕</button>
           </div>
           <div style="${styleAttr(styles.infoModalBody)}">
@@ -1424,7 +1339,7 @@ function renderCompareInfo(state: AppState): string {
           </div>
           <div style="${styleAttr(styles.infoModalFooter)}">
             <button type="button" data-action="close-compare-info" style="${styleAttr(
-                styles.infoModalConfirm
+                styles.infoModalConfirm,
             )}">Got it</button>
           </div>
         </div>
@@ -1437,10 +1352,10 @@ function renderCompareInfo(state: AppState): string {
           mergeStyles(styles.compareInfoWrap, {
               right: compareRight,
               bottom: compareBottom,
-          })
+          }),
       )}">
         <button type="button" data-action="open-compare-info" style="${styleAttr(
-            styles.compareInfoButton
+            styles.compareInfoButton,
         )}">
           What am I seeing?
         </button>
@@ -1560,7 +1475,7 @@ function calculateMinMax(arrayData: Float32Array | Float64Array): {
 
 function averageArray(
     arrayData: Float32Array | Float64Array,
-    variable: string
+    variable: string,
 ): number {
     let sum = 0;
     let count = 0;
@@ -1599,7 +1514,7 @@ function averageArrayInPolygon(
     arrayData: Float32Array | Float64Array,
     variable: string,
     shape: [number, number],
-    polygon: LatLon[]
+    polygon: LatLon[],
 ): number {
     const [height, width] = shape;
     const lonStep = 360 / width;
@@ -1628,7 +1543,7 @@ function averageArrayInPolygon(
 
     if (!count) {
         throw new Error(
-            "The selected region does not contain valid data points."
+            "The selected region does not contain valid data points.",
         );
     }
 
@@ -1645,7 +1560,7 @@ function valueAtPoint(
     array: Float32Array | Float64Array,
     variable: string,
     shape: [number, number],
-    point: LatLon
+    point: LatLon,
 ): number {
     const [height, width] = shape;
 
@@ -1749,7 +1664,7 @@ function applyMapInteractions(canvas: HTMLCanvasElement) {
                 renderPointOverlayMarker();
                 renderMapMarkerPosition();
             },
-        }
+        },
     );
     renderPointOverlayMarker();
     renderMapMarkerPosition();
@@ -1758,7 +1673,7 @@ function applyMapInteractions(canvas: HTMLCanvasElement) {
 function renderDrawOverlayPaths() {
     if (!appRoot) return;
     const overlay = appRoot.querySelector<HTMLCanvasElement>(
-        "#draw-overlay-canvas"
+        "#draw-overlay-canvas",
     );
     const canvas =
         mapCanvas || appRoot.querySelector<HTMLCanvasElement>("#map-canvas");
@@ -1840,9 +1755,11 @@ function renderDrawOverlayPaths() {
 
 function renderDrawOverlay() {
     // Always render the overlay canvas if we're drawing or have a completed polygon
-    const shouldShowOverlay = state.drawState.active || (state.mapPolygon !== null && state.mapPolygon.length >= 3);
+    const shouldShowOverlay =
+        state.drawState.active ||
+        (state.mapPolygon !== null && state.mapPolygon.length >= 3);
     if (!shouldShowOverlay) return "";
-    
+
     return `
       <canvas
         id="draw-overlay-canvas"
@@ -1854,7 +1771,7 @@ function renderDrawOverlay() {
 function renderPointOverlayMarker() {
     if (!appRoot) return;
     const marker = appRoot.querySelector<HTMLDivElement>(
-        "#point-overlay-marker"
+        "#point-overlay-marker",
     );
     const canvas =
         mapCanvas || appRoot.querySelector<HTMLCanvasElement>("#map-canvas");
@@ -1870,14 +1787,16 @@ function renderPointOverlayMarker() {
 
 function renderMapMarkerPosition() {
     if (!appRoot) return;
-    const marker = appRoot.querySelector<HTMLDivElement>("#map-location-marker");
-    const infoPanel =
-        appRoot.querySelector<HTMLDivElement>("#map-info-panel");
+    const marker = appRoot.querySelector<HTMLDivElement>(
+        "#map-location-marker",
+    );
+    const infoPanel = appRoot.querySelector<HTMLDivElement>("#map-info-panel");
     const canvas =
         mapCanvas || appRoot.querySelector<HTMLCanvasElement>("#map-canvas");
     if (!canvas) return;
 
-    const hasPolygon = state.mapPolygon !== null && state.mapPolygon.length >= 3;
+    const hasPolygon =
+        state.mapPolygon !== null && state.mapPolygon.length >= 3;
 
     // Handle marker visibility
     if (marker) {
@@ -1889,7 +1808,7 @@ function renderMapMarkerPosition() {
             const projected = projectLonLatToCanvas(
                 canvas,
                 state.mapMarker.lon,
-                state.mapMarker.lat
+                state.mapMarker.lat,
             );
             marker.title = state.mapMarker.name
                 ? state.mapMarker.name
@@ -1919,7 +1838,7 @@ function renderMapMarkerPosition() {
             const projected = projectLonLatToCanvas(
                 canvas,
                 state.mapMarker.lon,
-                state.mapMarker.lat
+                state.mapMarker.lat,
             );
             if (!projected) {
                 infoPanel.style.opacity = "0";
@@ -1941,8 +1860,12 @@ function renderMapMarkerPosition() {
                     leftmostPoint = point;
                 }
             }
-            
-            const leftmostProjected = projectLonLatToCanvas(canvas, leftmostPoint.lon, leftmostPoint.lat);
+
+            const leftmostProjected = projectLonLatToCanvas(
+                canvas,
+                leftmostPoint.lon,
+                leftmostPoint.lat,
+            );
             if (leftmostProjected) {
                 left = leftmostProjected.x - panelWidth - 24;
                 if (left < padding) {
@@ -1963,17 +1886,28 @@ function renderMapMarkerPosition() {
             return;
         }
 
-        left = Math.max(padding, Math.min(left, rect.width - panelWidth - padding));
-        top = Math.max(padding, Math.min(top, rect.height - panelHeight - padding));
+        left = Math.max(
+            padding,
+            Math.min(left, rect.width - panelWidth - padding),
+        );
+        top = Math.max(
+            padding,
+            Math.min(top, rect.height - panelHeight - padding),
+        );
 
         // Only update position if it hasn't been set yet (to prevent glitching during data updates)
         const currentLeft = infoPanel.style.left;
         const currentTop = infoPanel.style.top;
-        if (!currentLeft || currentLeft === "0px" || !currentTop || currentTop === "0px") {
+        if (
+            !currentLeft ||
+            currentLeft === "0px" ||
+            !currentTop ||
+            currentTop === "0px"
+        ) {
             infoPanel.style.left = `${left}px`;
             infoPanel.style.top = `${top}px`;
         }
-        
+
         infoPanel.style.opacity = "1";
         infoPanel.style.transform = "translate(0, 0)";
         infoPanel.style.pointerEvents = "none";
@@ -1990,7 +1924,7 @@ function renderMapMarkerPosition() {
 function updateMapSearchPosition() {
     if (!appRoot) return;
     const wrapper = appRoot.querySelector<HTMLDivElement>(
-        '[data-role="map-location-search"]'
+        '[data-role="map-location-search"]',
     );
     if (!wrapper) return;
     const shift = state.sidebarOpen ? -SIDEBAR_WIDTH / 2 : 0;
@@ -2024,8 +1958,8 @@ function renderMapMarkerOverlay() {
     const title = marker?.name
         ? escapeHtml(marker.name)
         : marker
-        ? `Pixel ${marker.pixel.x}, ${marker.pixel.y}`
-        : "Selected location";
+          ? `Pixel ${marker.pixel.x}, ${marker.pixel.y}`
+          : "Selected location";
     return `
       <div
         id="map-location-marker"
@@ -2059,11 +1993,12 @@ function renderMapMarkerOverlay() {
 
 function renderMapInfoBody(): string {
     const hasPoint = state.mapMarker !== null;
-    const hasPolygon = state.mapPolygon !== null && state.mapPolygon.length >= 3;
-    
+    const hasPolygon =
+        state.mapPolygon !== null && state.mapPolygon.length >= 3;
+
     if (!hasPoint && !hasPolygon) {
         return `<div style="${styleAttr(
-            styles.chartEmpty
+            styles.chartEmpty,
         )}">Click a location or draw a region to load boxplots.</div>`;
     }
 
@@ -2076,7 +2011,7 @@ function renderMapInfoBody(): string {
             state.mapInfoBoxes && state.mapInfoBoxes.length
                 ? renderMiniChartSvg(state.mapInfoBoxes, state.selectedUnit)
                 : `<div style="${styleAttr(
-                      styles.chartEmpty
+                      styles.chartEmpty,
                   )}">Loading boxplots...</div>`;
         return `
           <div style="${styleAttr(styles.mapInfoLoadingRow)}">
@@ -2089,13 +2024,13 @@ function renderMapInfoBody(): string {
 
     if (state.mapInfoError) {
         return `<div style="${styleAttr(styles.chartError)}">${escapeHtml(
-            state.mapInfoError
+            state.mapInfoError,
         )}</div>`;
     }
 
     if (!state.mapInfoBoxes || !state.mapInfoBoxes.length) {
         return `<div style="${styleAttr(
-            styles.chartEmpty
+            styles.chartEmpty,
         )}">Click a location to load boxplots.</div>`;
     }
 
@@ -2105,28 +2040,29 @@ function renderMapInfoBody(): string {
 function renderMapInfoWindow() {
     if (!state.mapInfoOpen) return "";
     const marker = state.mapMarker;
-    const hasPolygon = state.mapPolygon !== null && state.mapPolygon.length >= 3;
+    const hasPolygon =
+        state.mapPolygon !== null && state.mapPolygon.length >= 3;
     const locationLabel = hasPolygon
         ? "Drawn Region"
         : marker?.name
-        ? marker.name
-        : marker
-        ? `Pixel ${marker.pixel.x}, ${marker.pixel.y}`
-        : "Selected location";
+          ? marker.name
+          : marker
+            ? `Pixel ${marker.pixel.x}, ${marker.pixel.y}`
+            : "Selected location";
     const variableLabel = getVariableLabel(state.variable, state.metaData);
     const title = `${locationLabel} · ${variableLabel}`;
     const subtitle = `${formatDisplayDate(state.date)} · ${state.selectedUnit}`;
     return `
       <div id="map-info-panel" class="custom-select-info-panel map-info-panel" style="${styleAttr(
-          styles.mapInfoPanel
+          styles.mapInfoPanel,
       )}">
         <div style="${styleAttr(styles.mapInfoHeader)}">
           <div style="${styleAttr(styles.mapInfoTitleGroup)}">
             <div class="custom-select-info-panel-title">${escapeHtml(
-                title
+                title,
             )}</div>
             <div style="${styleAttr(styles.mapInfoSubtitle)}">${escapeHtml(
-                subtitle
+                subtitle,
             )}</div>
           </div>
           <div style="${styleAttr(styles.mapInfoActions)}">
@@ -2250,13 +2186,13 @@ function stopPointSelection() {
 }
 
 async function fetchLocationSuggestions(
-    query: string
+    query: string,
 ): Promise<LocationSearchResult[]> {
     const trimmed = query.trim();
     if (!trimmed) return [];
 
     const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(
-        trimmed
+        trimmed,
     )}&limit=5&addressdetails=1`;
     const response = await fetch(url, {
         headers: {
@@ -2282,13 +2218,13 @@ async function fetchLocationSuggestions(
             lon: Number(item.lon),
         }))
         .filter(
-            (item) => Number.isFinite(item.lat) && Number.isFinite(item.lon)
+            (item) => Number.isFinite(item.lat) && Number.isFinite(item.lon),
         );
 }
 
 async function fetchReverseGeocode(
     lat: number,
-    lon: number
+    lon: number,
 ): Promise<string | null> {
     const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&addressdetails=1`;
     const response = await fetch(url, {
@@ -2446,21 +2382,28 @@ function updateMapMarkerNameOnly(placeName: string) {
     if (state.mapMarker) {
         state.mapMarker.name = placeName;
     }
-    
+
     // Update only the DOM elements that display the name, without repositioning
     if (!appRoot) return;
-    
+
     // Update marker title attribute
-    const marker = appRoot.querySelector<HTMLDivElement>("#map-location-marker");
+    const marker = appRoot.querySelector<HTMLDivElement>(
+        "#map-location-marker",
+    );
     if (marker && state.mapMarker) {
         marker.title = placeName;
     }
-    
+
     // Update info panel title if it's open
     if (state.mapInfoOpen && state.mapMarker) {
-        const titleElement = appRoot.querySelector<HTMLDivElement>(".custom-select-info-panel-title");
+        const titleElement = appRoot.querySelector<HTMLDivElement>(
+            ".custom-select-info-panel-title",
+        );
         if (titleElement) {
-            const variableLabel = getVariableLabel(state.variable, state.metaData);
+            const variableLabel = getVariableLabel(
+                state.variable,
+                state.metaData,
+            );
             const locationLabel = placeName;
             const title = `${locationLabel} · ${variableLabel}`;
             titleElement.textContent = title;
@@ -2471,10 +2414,10 @@ function updateMapMarkerNameOnly(placeName: string) {
 async function handleMapClick(coords: LatLon) {
     if (state.canvasView !== "map") return;
     if (state.drawState.active || state.pointSelectActive) return;
-    
+
     // Clear polygon when clicking a new point
     state.mapPolygon = null;
-    
+
     // Initially set marker with null name (will show pixel coordinates temporarily)
     setMapMarker(coords.lat, coords.lon, null);
     if (mapCanvas) {
@@ -2483,7 +2426,7 @@ async function handleMapClick(coords: LatLon) {
         renderMapMarkerPosition();
     }
     scheduleMapInfoOpen();
-    
+
     // Fetch place name from OpenStreetMap reverse geocoding
     try {
         const placeName = await fetchReverseGeocode(coords.lat, coords.lon);
@@ -2505,7 +2448,8 @@ function scheduleMapInfoOpen(delayMs = 700) {
     const wasOpen = state.mapInfoOpen;
     state.mapInfoOpen = false;
     if (wasOpen && appRoot) {
-        const infoPanel = appRoot.querySelector<HTMLDivElement>("#map-info-panel");
+        const infoPanel =
+            appRoot.querySelector<HTMLDivElement>("#map-info-panel");
         if (infoPanel) {
             infoPanel.style.opacity = "0";
             infoPanel.style.transform = "translate(-9999px, -9999px)";
@@ -2516,7 +2460,8 @@ function scheduleMapInfoOpen(delayMs = 700) {
     mapInfoDelayTimer = window.setTimeout(() => {
         mapInfoDelayTimer = null;
         const hasPoint = state.mapMarker !== null;
-        const hasPolygon = state.mapPolygon !== null && state.mapPolygon.length >= 3;
+        const hasPolygon =
+            state.mapPolygon !== null && state.mapPolygon.length >= 3;
         if (!hasPoint && !hasPolygon) return;
         state.mapInfoOpen = true;
         render();
@@ -2541,28 +2486,29 @@ function updateMapInfoPreview(samples: ChartSample[]) {
         state.mapInfoBoxes = buildChartBoxes(
             samples,
             state.variable,
-            state.selectedUnit
+            state.selectedUnit,
         );
     } catch {
         return;
     }
-    
+
     // Update only the body content without repositioning the window
     if (!appRoot) {
         render();
         return;
     }
-    
+
     const infoPanel = appRoot.querySelector<HTMLDivElement>("#map-info-panel");
     if (infoPanel) {
-        const bodyElement = infoPanel.querySelector<HTMLDivElement>(".map-info-body");
+        const bodyElement =
+            infoPanel.querySelector<HTMLDivElement>(".map-info-body");
         if (bodyElement) {
             // Update only the body content without triggering a full render
             bodyElement.innerHTML = renderMapInfoBody();
             return;
         }
     }
-    
+
     // Fallback to full render if elements not found
     render();
 }
@@ -2571,8 +2517,9 @@ async function loadMapInfoData() {
     if (state.canvasView !== "map") return;
     // Check if we have either a marker (point) or a polygon
     const hasPoint = state.mapMarker !== null;
-    const hasPolygon = state.mapPolygon !== null && state.mapPolygon.length >= 3;
-    
+    const hasPolygon =
+        state.mapPolygon !== null && state.mapPolygon.length >= 3;
+
     if (!hasPoint && !hasPolygon) {
         state.mapInfoLoading = false;
         state.mapInfoError = null;
@@ -2600,18 +2547,20 @@ async function loadMapInfoData() {
 
         const scenarioOptions = metaData?.scenarios?.length
             ? Array.from(
-                  new Set(metaData.scenarios.map(normalizeScenarioLabel))
+                  new Set(metaData.scenarios.map(normalizeScenarioLabel)),
               )
             : scenarios;
         const matchingScenarios = scenarioOptions.filter((scenario) =>
-            isDateWithinRange(state.date, getTimeRangeForScenario(scenario))
+            isDateWithinRange(state.date, getTimeRangeForScenario(scenario)),
         );
         const activeScenarios = matchingScenarios.length
             ? matchingScenarios.includes("Historical")
                 ? ["Historical"]
                 : matchingScenarios
             : scenarioOptions;
-        const modelOptions = metaData?.models?.length ? metaData.models : models;
+        const modelOptions = metaData?.models?.length
+            ? metaData.models
+            : models;
 
         if (!scenarioOptions.length || !modelOptions.length) {
             state.mapInfoError = "Select at least one scenario and one model.";
@@ -2631,14 +2580,14 @@ async function loadMapInfoData() {
             if (requestId !== mapInfoRequestId) return;
             const dateForScenario = clipDateToRange(
                 state.date,
-                getTimeRangeForScenario(scenario)
+                getTimeRangeForScenario(scenario),
             );
 
             if (hasPoint && state.mapMarker) {
                 // Point selection - use pixel API
                 const [x, y] = latLonToGridIndices(
                     state.mapMarker.lat,
-                    state.mapMarker.lon
+                    state.mapMarker.lon,
                 );
 
                 const pixelPromises = modelOptions.map((model) =>
@@ -2657,7 +2606,7 @@ async function loadMapInfoData() {
                     }).catch((error) => {
                         console.warn(
                             `Pixel API failed for model ${model}, falling back:`,
-                            error
+                            error,
                         );
                         const request = createDataRequest({
                             variable: state.variable,
@@ -2670,14 +2619,17 @@ async function loadMapInfoData() {
                             const arr = dataToArray(data);
                             if (!arr) {
                                 throw new Error(
-                                    "No data returned for map info request."
+                                    "No data returned for map info request.",
                                 );
                             }
                             const avg = valueAtPoint(
                                 arr,
                                 state.variable,
                                 data.shape,
-                                { lat: state.mapMarker!.lat, lon: state.mapMarker!.lon }
+                                {
+                                    lat: state.mapMarker!.lat,
+                                    lon: state.mapMarker!.lon,
+                                },
                             );
                             return {
                                 model,
@@ -2689,7 +2641,7 @@ async function loadMapInfoData() {
                                 fallback: boolean;
                             };
                         });
-                    })
+                    }),
                 );
 
                 const pixelResults = await Promise.allSettled(pixelPromises);
@@ -2728,20 +2680,27 @@ async function loadMapInfoData() {
                     } else {
                         console.warn(
                             "Failed to fetch pixel data for map info:",
-                            result.reason
+                            result.reason,
                         );
                     }
                 }
 
                 state.mapInfoLoadingProgress = {
                     total: totalRequests,
-                    done: state.mapInfoLoadingProgress.done + modelOptions.length,
+                    done:
+                        state.mapInfoLoadingProgress.done + modelOptions.length,
                 };
                 updateMapInfoPreview(samples);
             } else if (hasPolygon && state.mapPolygon) {
                 // Polygon selection - use aggregate API
                 const [x0, x1, y0, y1] = polygonToGridBounds(state.mapPolygon);
-                const mask = createPolygonMask(state.mapPolygon, x0, x1, y0, y1);
+                const mask = createPolygonMask(
+                    state.mapPolygon,
+                    x0,
+                    x1,
+                    y0,
+                    y1,
+                );
 
                 try {
                     const aggregateData = await fetchAggregateOnDemand({
@@ -2780,14 +2739,16 @@ async function loadMapInfoData() {
 
                     state.mapInfoLoadingProgress = {
                         total: totalRequests,
-                        done: state.mapInfoLoadingProgress.done + modelOptions.length,
+                        done:
+                            state.mapInfoLoadingProgress.done +
+                            modelOptions.length,
                     };
                     updateMapInfoPreview(samples);
                 } catch (error) {
                     // If batch fails, fall back to old method for all models
                     console.warn(
                         `Aggregate API failed for scenario ${scenario}, falling back to full map load:`,
-                        error
+                        error,
                     );
                     for (const model of modelOptions) {
                         if (requestId !== mapInfoRequestId) return;
@@ -2806,7 +2767,7 @@ async function loadMapInfoData() {
                                     arr,
                                     state.variable,
                                     data.shape,
-                                    state.mapPolygon
+                                    state.mapPolygon,
                                 );
                                 samples.push({
                                     scenario,
@@ -2818,7 +2779,7 @@ async function loadMapInfoData() {
                         } catch (modelError) {
                             console.warn(
                                 `Failed to load data for model ${model}:`,
-                                modelError
+                                modelError,
                             );
                         }
                         state.mapInfoLoadingProgress = {
@@ -2924,7 +2885,7 @@ function computeChartStats(values: number[]): ChartStats {
 function buildChartBoxes(
     samples: ChartSample[],
     variable: string,
-    unitLabel: string
+    unitLabel: string,
 ): ChartBox[] {
     const byScenario = new Map<string, ChartSample[]>();
     samples.forEach((sample) => {
@@ -2951,7 +2912,7 @@ function buildChartBoxes(
 function buildSampleDates(
     start: string,
     end: string,
-    maxPoints = 50
+    maxPoints = 50,
 ): string[] {
     const startDate = parseDate(start);
     const endDate = parseDate(end);
@@ -2991,14 +2952,14 @@ function buildSampleDates(
     collected.add(to.toISOString().slice(0, 10));
 
     return Array.from(collected).sort(
-        (a, b) => parseDate(a).getTime() - parseDate(b).getTime()
+        (a, b) => parseDate(a).getTime() - parseDate(b).getTime(),
     );
 }
 
 function buildRangeSampleDates(
     start: string,
     end: string,
-    maxPoints = 50
+    maxPoints = 50,
 ): string[] {
     const startDate = parseDate(start);
     const endDate = parseDate(end);
@@ -3022,7 +2983,7 @@ function buildRangeSampleDates(
         return buildSampleDates(
             from.toISOString().slice(0, 10),
             to.toISOString().slice(0, 10),
-            maxPoints
+            maxPoints,
         );
     }
 
@@ -3068,14 +3029,15 @@ function buildRangeSampleDates(
     });
 
     return Array.from(new Set(dates)).sort(
-        (a, b) => parseDate(a).getTime() - parseDate(b).getTime()
+        (a, b) => parseDate(a).getTime() - parseDate(b).getTime(),
     );
 }
 
 function shouldUseFixedAnnualSamples(start: string, end: string): boolean {
     const from = parseDate(start);
     const to = parseDate(end);
-    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return false;
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()))
+        return false;
     const dayMs = 24 * 60 * 60 * 1000;
     const spanDays = Math.abs(to.getTime() - from.getTime()) / dayMs;
     return spanDays / 365.25 >= 20;
@@ -3095,7 +3057,7 @@ function isSameMonthDay(date: string, reference: string): boolean {
 
 function isDateWithinRange(
     date: string,
-    range: { start: string; end: string }
+    range: { start: string; end: string },
 ): boolean {
     const candidate = parseDate(date);
     const start = parseDate(range.start);
@@ -3114,7 +3076,7 @@ function buildFixedAnnualSampleDates(
     referenceStart: string,
     start: string,
     end: string,
-    maxPoints = 50
+    maxPoints = 50,
 ): string[] {
     const ref = parseDate(referenceStart);
     const from = parseDate(start);
@@ -3157,14 +3119,14 @@ function buildFixedAnnualSampleDates(
     });
 
     return Array.from(new Set(dates)).sort(
-        (a, b) => parseDate(a).getTime() - parseDate(b).getTime()
+        (a, b) => parseDate(a).getTime() - parseDate(b).getTime(),
     );
 }
 
 function buildChartRangeSeries(
     samples: ChartSample[],
     variable: string,
-    unitLabel: string
+    unitLabel: string,
 ): ChartSeries[] {
     const byScenario = new Map<string, ChartSample[]>();
     samples.forEach((sample) => {
@@ -3174,7 +3136,10 @@ function buildChartRangeSeries(
     });
 
     return Array.from(byScenario.entries()).map(([scenario, entries]) => {
-        const byDate = new Map<string, Array<ChartSample & { value: number }>>();
+        const byDate = new Map<
+            string,
+            Array<ChartSample & { value: number }>
+        >();
         entries.forEach((entry) => {
             const value = convertValue(entry.rawValue, variable, unitLabel);
             const current = byDate.get(entry.dateUsed) ?? [];
@@ -3189,7 +3154,8 @@ function buildChartRangeSeries(
                 stats: computeChartStats(list.map((item) => item.value)),
             }))
             .sort(
-                (a, b) => parseDate(a.date).getTime() - parseDate(b.date).getTime()
+                (a, b) =>
+                    parseDate(a.date).getTime() - parseDate(b.date).getTime(),
             );
 
         return { scenario, points };
@@ -3200,7 +3166,7 @@ function createDifferenceData(
     dataA: ClimateData,
     dataB: ClimateData,
     labelA: string,
-    labelB: string
+    labelB: string,
 ): { data: ClimateData; min: number; max: number; mean: number } {
     const arrayA = dataToArray(dataA);
     const arrayB = dataToArray(dataB);
@@ -3277,7 +3243,7 @@ function setLoadingProgress(value: number, forceRender = false) {
 
 async function loadCompareData(
     activeScenarioForRange: string,
-    onProgress?: (progress: number) => void
+    onProgress?: (progress: number) => void,
 ): Promise<{ data: ClimateData; min: number; max: number; mean: number }> {
     let requestA = createDataRequest({
         variable: state.variable,
@@ -3296,7 +3262,7 @@ async function loadCompareData(
             const scenarioB = state.compareScenarioB;
             const compareDate = clipDateToScenarioRange(
                 state.date,
-                activeScenarioForRange
+                activeScenarioForRange,
             );
             if (compareDate !== state.date) {
                 state.date = compareDate;
@@ -3323,7 +3289,7 @@ async function loadCompareData(
         case "Models": {
             const compareDate = clipDateToScenarioRange(
                 state.date,
-                activeScenarioForRange
+                activeScenarioForRange,
             );
             if (compareDate !== state.date) {
                 state.date = compareDate;
@@ -3350,11 +3316,11 @@ async function loadCompareData(
         case "Dates": {
             const startDate = clipDateToScenarioRange(
                 state.compareDateStart,
-                state.scenario
+                state.scenario,
             );
             const endDate = clipDateToScenarioRange(
                 state.compareDateEnd,
-                state.scenario
+                state.scenario,
             );
 
             if (startDate !== state.compareDateStart) {
@@ -3422,7 +3388,9 @@ function latLonToGridIndices(lat: number, lon: number): [number, number] {
  * Compute bounding box of a polygon in grid coordinates
  * Returns [x0, x1, y0, y1] where x0 <= x1 and y0 <= y1
  */
-function polygonToGridBounds(polygon: LatLon[]): [number, number, number, number] {
+function polygonToGridBounds(
+    polygon: LatLon[],
+): [number, number, number, number] {
     if (!polygon || polygon.length < 3) {
         throw new Error("Polygon must have at least 3 points");
     }
@@ -3458,7 +3426,7 @@ function createPolygonMask(
     x0: number,
     x1: number,
     y0: number,
-    y1: number
+    y1: number,
 ): number[][] {
     const mask: number[][] = [];
 
@@ -3494,7 +3462,7 @@ async function loadChartData() {
                 state.chartBoxes = buildChartBoxes(
                     samples,
                     state.chartVariable,
-                    state.chartUnit
+                    state.chartUnit,
                 );
                 state.chartRangeSeries = null;
             } catch {
@@ -3505,7 +3473,7 @@ async function loadChartData() {
                 state.chartRangeSeries = buildChartRangeSeries(
                     samples,
                     state.chartVariable,
-                    state.chartUnit
+                    state.chartUnit,
                 );
                 state.chartBoxes = null;
             } catch {
@@ -3568,7 +3536,7 @@ async function loadChartData() {
 
         const scenarioOptions = metaData?.scenarios?.length
             ? Array.from(
-                  new Set(metaData.scenarios.map(normalizeScenarioLabel))
+                  new Set(metaData.scenarios.map(normalizeScenarioLabel)),
               )
             : scenarios;
         const modelOptions = metaData?.models?.length
@@ -3611,8 +3579,9 @@ async function loadChartData() {
 
             // Check if we should use pixel-data API (Point, Search, or Draw locations)
             const usePixelApi =
-                (state.chartLocation === "Point" || state.chartLocation === "Search") &&
-                    state.chartPoint
+                (state.chartLocation === "Point" ||
+                    state.chartLocation === "Search") &&
+                state.chartPoint
                     ? true
                     : state.chartLocation === "Draw" &&
                       state.chartPolygon &&
@@ -3624,7 +3593,7 @@ async function loadChartData() {
                 for (const scenario of activeScenarios) {
                     const dateForScenario = clipDateToRange(
                         state.chartDate,
-                        getTimeRangeForScenario(scenario)
+                        getTimeRangeForScenario(scenario),
                     );
 
                     try {
@@ -3636,10 +3605,10 @@ async function loadChartData() {
                             // Single point: parallelize pixel-data API requests for all models
                             const [x, y] = latLonToGridIndices(
                                 state.chartPoint.lat,
-                                state.chartPoint.lon
+                                state.chartPoint.lon,
                             );
                             console.log(
-                                `Fetching pixel data for point (${x}, ${y}) for ${activeModels.length} models`
+                                `Fetching pixel data for point (${x}, ${y}) for ${activeModels.length} models`,
                             );
 
                             // Parallelize requests for all models
@@ -3659,7 +3628,7 @@ async function loadChartData() {
                                 }).catch((error) => {
                                     console.warn(
                                         `Pixel API failed for model ${model}, falling back:`,
-                                        error
+                                        error,
                                     );
                                     // Fallback to old method for this model
                                     if (!state.chartPoint) {
@@ -3677,17 +3646,19 @@ async function loadChartData() {
                                             const arr = dataToArray(data);
                                             if (!arr) {
                                                 throw new Error(
-                                                    "No data returned for chart request."
+                                                    "No data returned for chart request.",
                                                 );
                                             }
                                             if (!state.chartPoint) {
-                                                throw new Error("No chart point selected");
+                                                throw new Error(
+                                                    "No chart point selected",
+                                                );
                                             }
                                             const avg = valueAtPoint(
                                                 arr,
                                                 state.chartVariable,
                                                 data.shape,
-                                                state.chartPoint
+                                                state.chartPoint,
                                             );
                                             return {
                                                 model,
@@ -3698,14 +3669,13 @@ async function loadChartData() {
                                                 value: number;
                                                 fallback: boolean;
                                             };
-                                        }
+                                        },
                                     );
-                                })
+                                }),
                             );
 
-                            const pixelResults = await Promise.allSettled(
-                                pixelPromises
-                            );
+                            const pixelResults =
+                                await Promise.allSettled(pixelPromises);
 
                             // Process results
                             for (const result of pixelResults) {
@@ -3743,7 +3713,7 @@ async function loadChartData() {
                                 } else {
                                     console.warn(
                                         `Failed to fetch pixel data:`,
-                                        result.reason
+                                        result.reason,
                                     );
                                 }
                             }
@@ -3751,7 +3721,9 @@ async function loadChartData() {
                             // Update progress for all models at once
                             state.chartLoadingProgress = {
                                 total: totalRequests,
-                                done: state.chartLoadingProgress.done + activeModels.length,
+                                done:
+                                    state.chartLoadingProgress.done +
+                                    activeModels.length,
                             };
                             setLoadingProgress(
                                 Math.min(
@@ -3759,9 +3731,9 @@ async function loadChartData() {
                                     Math.round(
                                         (state.chartLoadingProgress.done /
                                             totalRequests) *
-                                            100
-                                    )
-                                )
+                                            100,
+                                    ),
+                                ),
                             );
                             updateChartPreview(samples);
                         } else if (
@@ -3771,18 +3743,18 @@ async function loadChartData() {
                         ) {
                             // Polygon: batch all models in a single aggregate-on-demand request
                             const [x0, x1, y0, y1] = polygonToGridBounds(
-                                state.chartPolygon
+                                state.chartPolygon,
                             );
                             const mask = createPolygonMask(
                                 state.chartPolygon,
                                 x0,
                                 x1,
                                 y0,
-                                y1
+                                y1,
                             );
 
                             console.log(
-                                `Fetching aggregate data for polygon window [${x0},${x1},${y0},${y1}] for ${activeModels.length} models`
+                                `Fetching aggregate data for polygon window [${x0},${x1},${y0},${y1}] for ${activeModels.length} models`,
                             );
 
                             try {
@@ -3805,7 +3777,8 @@ async function loadChartData() {
 
                                 // Process all models from the batch response
                                 for (const model of activeModels) {
-                                    const modelData = aggregateData.models[model];
+                                    const modelData =
+                                        aggregateData.models[model];
                                     if (modelData) {
                                         const value = modelData.values[0];
                                         if (value !== null && isFinite(value)) {
@@ -3836,16 +3809,16 @@ async function loadChartData() {
                                         Math.round(
                                             (state.chartLoadingProgress.done /
                                                 totalRequests) *
-                                                100
-                                        )
-                                    )
+                                                100,
+                                        ),
+                                    ),
                                 );
                                 updateChartPreview(samples);
                             } catch (error) {
                                 // If batch fails, fall back to old method for all models
                                 console.warn(
                                     "Batch aggregate API failed, falling back to full map load:",
-                                    error
+                                    error,
                                 );
                                 for (const model of activeModels) {
                                     const request = createDataRequest({
@@ -3855,7 +3828,8 @@ async function loadChartData() {
                                         scenario,
                                         resolution: 1,
                                     });
-                                    const data = await fetchClimateData(request);
+                                    const data =
+                                        await fetchClimateData(request);
                                     const arr = dataToArray(data);
                                     if (!arr) {
                                         continue;
@@ -3864,7 +3838,7 @@ async function loadChartData() {
                                         arr,
                                         state.chartVariable,
                                         data.shape,
-                                        state.chartPolygon
+                                        state.chartPolygon,
                                     );
                                     samples.push({
                                         scenario,
@@ -3886,15 +3860,17 @@ async function loadChartData() {
                 for (const scenario of activeScenarios) {
                     const dateForScenario = clipDateToRange(
                         state.chartDate,
-                        getTimeRangeForScenario(scenario)
+                        getTimeRangeForScenario(scenario),
                     );
                     for (const model of activeModels) {
                         const done = state.chartLoadingProgress.done;
                         setLoadingProgress(
                             Math.min(
                                 95,
-                                Math.round(((done + 0.1) / totalRequests) * 100)
-                            )
+                                Math.round(
+                                    ((done + 0.1) / totalRequests) * 100,
+                                ),
+                            ),
                         );
                         const request = createDataRequest({
                             variable: state.chartVariable,
@@ -3910,12 +3886,17 @@ async function loadChartData() {
                             done: after,
                         };
                         setLoadingProgress(
-                            Math.min(98, Math.round((after / totalRequests) * 100))
+                            Math.min(
+                                98,
+                                Math.round((after / totalRequests) * 100),
+                            ),
                         );
                         updateChartPreview(samples);
                         const arr = dataToArray(data);
                         if (!arr) {
-                            throw new Error("No data returned for chart request.");
+                            throw new Error(
+                                "No data returned for chart request.",
+                            );
                         }
                         const avg = averageArray(arr, state.chartVariable);
                         samples.push({
@@ -3932,7 +3913,7 @@ async function loadChartData() {
             state.chartBoxes = buildChartBoxes(
                 samples,
                 state.chartVariable,
-                state.chartUnit
+                state.chartUnit,
             );
             state.chartLoadingProgress = {
                 total: totalRequests,
@@ -3940,7 +3921,10 @@ async function loadChartData() {
             };
             setLoadingProgress(100);
         } else {
-            let rangeStart = clipDateToRange(state.chartRangeStart, commonRange);
+            let rangeStart = clipDateToRange(
+                state.chartRangeStart,
+                commonRange,
+            );
             let rangeEnd = clipDateToRange(state.chartRangeEnd, commonRange);
             if (parseDate(rangeStart) > parseDate(rangeEnd)) {
                 [rangeStart, rangeEnd] = [rangeEnd, rangeStart];
@@ -3949,7 +3933,7 @@ async function loadChartData() {
             state.chartRangeEnd = rangeEnd;
             const useFixedAnnualSamples = shouldUseFixedAnnualSamples(
                 rangeStart,
-                rangeEnd
+                rangeEnd,
             );
             const fixedReferenceDate = rangeStart;
 
@@ -3970,7 +3954,7 @@ async function loadChartData() {
                 const usePixelApi =
                     (state.chartLocation === "Point" ||
                         state.chartLocation === "Search") &&
-                        state.chartPoint
+                    state.chartPoint
                         ? true
                         : state.chartLocation === "Draw" &&
                           state.chartPolygon &&
@@ -3997,14 +3981,16 @@ async function loadChartData() {
                             // Clip date range to scenario's valid range
                             const clippedStart = clipDateToRange(
                                 rangeStart,
-                                scenarioRange
+                                scenarioRange,
                             );
                             const clippedEnd = clipDateToRange(
                                 rangeEnd,
-                                scenarioRange
+                                scenarioRange,
                             );
 
-                            if (parseDate(clippedStart) > parseDate(clippedEnd)) {
+                            if (
+                                parseDate(clippedStart) > parseDate(clippedEnd)
+                            ) {
                                 continue; // Skip if no valid date range for this scenario
                             }
 
@@ -4012,8 +3998,10 @@ async function loadChartData() {
                             setLoadingProgress(
                                 Math.min(
                                     95,
-                                    Math.round(((done + 0.1) / totalRequests) * 100)
-                                )
+                                    Math.round(
+                                        ((done + 0.1) / totalRequests) * 100,
+                                    ),
+                                ),
                             );
 
                             try {
@@ -4025,7 +4013,7 @@ async function loadChartData() {
                                     // Single point: use pixel-data API with date range
                                     const [x, y] = latLonToGridIndices(
                                         state.chartPoint.lat,
-                                        state.chartPoint.lon
+                                        state.chartPoint.lon,
                                     );
                                     const pixelData = await fetchPixelData({
                                         variable: state.chartVariable,
@@ -4047,12 +4035,13 @@ async function loadChartData() {
                                         i < pixelData.timestamps.length;
                                         i++
                                     ) {
-                                        const timestamp = pixelData.timestamps[i];
+                                        const timestamp =
+                                            pixelData.timestamps[i];
                                         if (
                                             useFixedAnnualSamples &&
                                             !isSameMonthDay(
                                                 timestamp,
-                                                fixedReferenceDate
+                                                fixedReferenceDate,
                                             )
                                         ) {
                                             continue;
@@ -4078,15 +4067,14 @@ async function loadChartData() {
                                     state.chartPolygon.length >= 3
                                 ) {
                                     // Polygon: use aggregate-on-demand API with date range
-                                    const [x0, x1, y0, y1] = polygonToGridBounds(
-                                        state.chartPolygon
-                                    );
+                                    const [x0, x1, y0, y1] =
+                                        polygonToGridBounds(state.chartPolygon);
                                     const mask = createPolygonMask(
                                         state.chartPolygon,
                                         x0,
                                         x1,
                                         y0,
-                                        y1
+                                        y1,
                                     );
 
                                     const aggregateData =
@@ -4099,13 +4087,15 @@ async function loadChartData() {
                                             y1,
                                             start_date: clippedStart,
                                             end_date: clippedEnd,
-                                            scenario: normalizeScenario(scenario),
+                                            scenario:
+                                                normalizeScenario(scenario),
                                             resolution: "low",
                                             step_days: 1,
                                             mask,
                                         });
 
-                                    const modelData = aggregateData.models[model];
+                                    const modelData =
+                                        aggregateData.models[model];
                                     if (modelData) {
                                         // Convert time series response to samples
                                         for (
@@ -4113,12 +4103,13 @@ async function loadChartData() {
                                             i < modelData.timestamps.length;
                                             i++
                                         ) {
-                                            const timestamp = modelData.timestamps[i];
+                                            const timestamp =
+                                                modelData.timestamps[i];
                                             if (
                                                 useFixedAnnualSamples &&
                                                 !isSameMonthDay(
                                                     timestamp,
-                                                    fixedReferenceDate
+                                                    fixedReferenceDate,
                                                 )
                                             ) {
                                                 continue;
@@ -4129,7 +4120,8 @@ async function loadChartData() {
                                                 isFinite(value)
                                             ) {
                                                 const rawValue =
-                                                    state.chartVariable === "hurs"
+                                                    state.chartVariable ===
+                                                    "hurs"
                                                         ? Math.min(value, 100)
                                                         : value;
                                                 samples.push({
@@ -4147,32 +4139,33 @@ async function loadChartData() {
                                 // If pixel API fails, fall back to old method with sampled dates
                                 console.warn(
                                     "Pixel API failed, falling back to full map load:",
-                                    error
+                                    error,
                                 );
                                 const sampledDates = useFixedAnnualSamples
                                     ? buildFixedAnnualSampleDates(
                                           fixedReferenceDate,
                                           clippedStart,
                                           clippedEnd,
-                                          50
+                                          50,
                                       )
                                     : buildRangeSampleDates(
                                           clippedStart,
                                           clippedEnd,
-                                          50
+                                          50,
                                       );
                                 for (const dateCandidate of sampledDates) {
-                                    const dateForScenario = useFixedAnnualSamples
-                                        ? dateCandidate
-                                        : clipDateToRange(
-                                              dateCandidate,
-                                              scenarioRange
-                                          );
+                                    const dateForScenario =
+                                        useFixedAnnualSamples
+                                            ? dateCandidate
+                                            : clipDateToRange(
+                                                  dateCandidate,
+                                                  scenarioRange,
+                                              );
                                     if (
                                         useFixedAnnualSamples &&
                                         !isDateWithinRange(
                                             dateForScenario,
-                                            scenarioRange
+                                            scenarioRange,
                                         )
                                     ) {
                                         continue;
@@ -4190,7 +4183,7 @@ async function loadChartData() {
                                     } catch (error) {
                                         console.warn(
                                             "Range fallback request failed, skipping date:",
-                                            error
+                                            error,
                                         );
                                         continue; // Skip failed dates
                                     }
@@ -4206,18 +4199,23 @@ async function loadChartData() {
                                                   arr,
                                                   state.chartVariable,
                                                   data.shape,
-                                                  state.chartPolygon
+                                                  state.chartPolygon,
                                               )
-                                            : (state.chartLocation === "Point" ||
-                                                  state.chartLocation === "Search") &&
-                                              state.chartPoint
-                                            ? valueAtPoint(
-                                                  arr,
-                                                  state.chartVariable,
-                                                  data.shape,
-                                                  state.chartPoint
-                                              )
-                                            : averageArray(arr, state.chartVariable);
+                                            : (state.chartLocation ===
+                                                    "Point" ||
+                                                    state.chartLocation ===
+                                                        "Search") &&
+                                                state.chartPoint
+                                              ? valueAtPoint(
+                                                    arr,
+                                                    state.chartVariable,
+                                                    data.shape,
+                                                    state.chartPoint,
+                                                )
+                                              : averageArray(
+                                                    arr,
+                                                    state.chartVariable,
+                                                );
                                     samples.push({
                                         scenario,
                                         model,
@@ -4236,8 +4234,8 @@ async function loadChartData() {
                             setLoadingProgress(
                                 Math.min(
                                     98,
-                                    Math.round((after / totalRequests) * 100)
-                                )
+                                    Math.round((after / totalRequests) * 100),
+                                ),
                             );
                             updateChartPreview(samples);
                         }
@@ -4247,7 +4245,7 @@ async function loadChartData() {
                     state.chartRangeSeries = buildChartRangeSeries(
                         samples,
                         state.chartVariable,
-                        state.chartUnit
+                        state.chartUnit,
                     );
                     state.chartLoadingProgress = {
                         total: totalRequests,
@@ -4260,7 +4258,7 @@ async function loadChartData() {
                               fixedReferenceDate,
                               rangeStart,
                               rangeEnd,
-                              50
+                              50,
                           )
                         : buildRangeSampleDates(rangeStart, rangeEnd, 50);
                     if (!sampledDates.length) {
@@ -4297,13 +4295,13 @@ async function loadChartData() {
                                     ? dateCandidate
                                     : clipDateToRange(
                                           dateCandidate,
-                                          scenarioRange
+                                          scenarioRange,
                                       );
                                 if (
                                     useFixedAnnualSamples &&
                                     !isDateWithinRange(
                                         dateForScenario,
-                                        scenarioRange
+                                        scenarioRange,
                                     )
                                 ) {
                                     continue;
@@ -4313,9 +4311,10 @@ async function loadChartData() {
                                     Math.min(
                                         95,
                                         Math.round(
-                                            ((done + 0.1) / totalRequests) * 100
-                                        )
-                                    )
+                                            ((done + 0.1) / totalRequests) *
+                                                100,
+                                        ),
+                                    ),
                                 );
                                 const request = createDataRequest({
                                     variable: state.chartVariable,
@@ -4330,11 +4329,12 @@ async function loadChartData() {
                                 } catch (error) {
                                     console.warn(
                                         "Range request failed, skipping date:",
-                                        error
+                                        error,
                                     );
                                     continue;
                                 }
-                                const after = state.chartLoadingProgress.done + 1;
+                                const after =
+                                    state.chartLoadingProgress.done + 1;
                                 state.chartLoadingProgress = {
                                     total: totalRequests,
                                     done: after,
@@ -4342,14 +4342,16 @@ async function loadChartData() {
                                 setLoadingProgress(
                                     Math.min(
                                         98,
-                                        Math.round((after / totalRequests) * 100)
-                                    )
+                                        Math.round(
+                                            (after / totalRequests) * 100,
+                                        ),
+                                    ),
                                 );
                                 updateChartPreview(samples);
                                 const arr = dataToArray(data);
                                 if (!arr) {
                                     throw new Error(
-                                        "No data returned for chart request."
+                                        "No data returned for chart request.",
                                     );
                                 }
                                 const avg =
@@ -4360,18 +4362,22 @@ async function loadChartData() {
                                               arr,
                                               state.chartVariable,
                                               data.shape,
-                                              state.chartPolygon
+                                              state.chartPolygon,
                                           )
                                         : (state.chartLocation === "Point" ||
-                                              state.chartLocation === "Search") &&
-                                          state.chartPoint
-                                        ? valueAtPoint(
-                                              arr,
-                                              state.chartVariable,
-                                              data.shape,
-                                              state.chartPoint
-                                          )
-                                        : averageArray(arr, state.chartVariable);
+                                                state.chartLocation ===
+                                                    "Search") &&
+                                            state.chartPoint
+                                          ? valueAtPoint(
+                                                arr,
+                                                state.chartVariable,
+                                                data.shape,
+                                                state.chartPoint,
+                                            )
+                                          : averageArray(
+                                                arr,
+                                                state.chartVariable,
+                                            );
                                 samples.push({
                                     scenario,
                                     model,
@@ -4386,7 +4392,7 @@ async function loadChartData() {
                     state.chartRangeSeries = buildChartRangeSeries(
                         samples,
                         state.chartVariable,
-                        state.chartUnit
+                        state.chartUnit,
                     );
                     state.chartLoadingProgress = {
                         total: totalRequests,
@@ -4401,8 +4407,8 @@ async function loadChartData() {
             error instanceof DataClientError && error.statusCode
                 ? error.message
                 : error instanceof Error
-                ? error.message
-                : String(error);
+                  ? error.message
+                  : String(error);
         state.chartSamples = [];
         state.chartBoxes = null;
         state.chartRangeSeries = null;
@@ -4442,13 +4448,13 @@ async function loadClimateData() {
             state.mode === "Compare"
                 ? await loadCompareData(
                       activeScenarioForRange,
-                      setLoadingProgress
+                      setLoadingProgress,
                   )
                 : await (async () => {
                       setLoadingProgress(40);
                       const clippedDate = clipDateToScenarioRange(
                           state.date,
-                          activeScenarioForRange
+                          activeScenarioForRange,
                       );
                       if (clippedDate !== state.date) {
                           state.date = clippedDate;
@@ -4468,7 +4474,7 @@ async function loadClimateData() {
                       let arrayData = dataToArray(data);
                       if (!arrayData) {
                           throw new Error(
-                              "No data returned for the selected parameters."
+                              "No data returned for the selected parameters.",
                           );
                       }
 
@@ -4547,12 +4553,12 @@ function renderBranding() {
       <div style="${styleAttr(styles.branding)}">
         <div data-role="brand-eye" style="${styleAttr(styles.brandIcon)}">
           <svg viewBox="0 0 120 80" style="${styleAttr(
-              styles.brandSvg
+              styles.brandSvg,
           )}" aria-hidden="true">
             <defs>
               <clipPath id="brand-eye-clip">
                 <rect x="0" y="0" width="120" height="80" style="${styleAttr(
-                    styles.brandClipRect
+                    styles.brandClipRect,
                 )}" />
               </clipPath>
             </defs>
@@ -4563,19 +4569,19 @@ function renderBranding() {
               />
             </g>
             <g data-role="brand-iris" style="${styleAttr(
-                mergeStyles(styles.brandIrisGroup, styles.brandEyeContent)
+                mergeStyles(styles.brandIrisGroup, styles.brandEyeContent),
             )}">
               <circle cx="60" cy="40" r="20" style="${styleAttr(
-                  styles.brandIris
+                  styles.brandIris,
               )}" />
               <g data-role="brand-pupil" style="${styleAttr(
-                  styles.brandPupilGroup
+                  styles.brandPupilGroup,
               )}">
                 <circle cx="60" cy="40" r="10" style="${styleAttr(
-                    styles.brandPupil
+                    styles.brandPupil,
                 )}" />
                 <circle cx="72" cy="30" r="4" style="${styleAttr(
-                    styles.brandHighlight
+                    styles.brandHighlight,
                 )}" />
               </g>
             </g>
@@ -4591,7 +4597,7 @@ function render() {
     const shouldRestoreChartLocationDropdown = Boolean(
         appRoot
             .querySelector('.custom-select-wrapper[data-key="chartLocation"]')
-            ?.classList.contains("open")
+            ?.classList.contains("open"),
     );
     const resolutionFill = ((state.resolution - 1) / (3 - 1)) * 100;
 
@@ -4620,7 +4626,7 @@ function render() {
                       state.dataMax,
                       state.metaData,
                       state.selectedUnit,
-                      state.mode === "Compare"
+                      state.mode === "Compare",
                   )
                 : ""
         }
@@ -4643,7 +4649,7 @@ function render() {
                       ? `<div style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.8); z-index: 10;">
                       <div style="text-align: center; max-width: 600px; padding: 20px;">
                         <div style="${styleAttr(
-                            styles.mapTitle
+                            styles.mapTitle,
                         )}">Error loading data</div>
                         <div style="${styleAttr(styles.mapSubtitle)}">${
                             state.dataError
@@ -4654,7 +4660,7 @@ function render() {
                                       mergeStyles(styles.mapSubtitle, {
                                           marginTop: 12,
                                           fontSize: 12,
-                                      })
+                                      }),
                                   )}">
                                 Make sure the Python API server is running. Check the terminal for connection details.
                               </div>`
@@ -4669,7 +4675,7 @@ function render() {
                       ? `<div style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.5); z-index: 5;">
                       <div style="text-align: center;">
                         <div style="${styleAttr(
-                            styles.mapTitle
+                            styles.mapTitle,
                         )}">No data loaded</div>
                         <div style="${styleAttr(styles.mapSubtitle)}">
                           Adjust parameters to load climate data
@@ -4684,12 +4690,12 @@ function render() {
       </div>
 
       <aside data-role="sidebar" class="sidebar" style="width: ${SIDEBAR_WIDTH}px; transform: ${
-        state.sidebarOpen
-            ? "translateX(0)"
-            : `translateX(${SIDEBAR_WIDTH + 24}px)`
-    }; pointer-events: ${
-        state.sidebarOpen ? "auto" : "none"
-    }" aria-hidden="${!state.sidebarOpen}">
+          state.sidebarOpen
+              ? "translateX(0)"
+              : `translateX(${SIDEBAR_WIDTH + 24}px)`
+      }; pointer-events: ${
+          state.sidebarOpen ? "auto" : "none"
+      }" aria-hidden="${!state.sidebarOpen}">
         <div class="sidebar-top">
           <div class="sidebar-brand">
             <div class="logo-dot"></div>
@@ -4702,8 +4708,8 @@ function render() {
                         state.panelTab === value
                             ? styles.tabBtnActive
                             : undefined,
-                        "panel-tab"
-                    )
+                        "panel-tab",
+                    ),
                 )
                 .join("")}
           </div>
@@ -4724,7 +4730,7 @@ function render() {
                 }
               </div>
               <div class="tab-pane">
-                ${renderChatSection()}
+                ${renderChatSectionWrapper()}
               </div>
             </div>
           </div>
@@ -4750,8 +4756,8 @@ function render() {
                     styles.canvasBtn,
                     state.canvasView === "map"
                         ? styles.canvasBtnActive
-                        : undefined
-                )
+                        : undefined,
+                ),
             )}"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.6">
@@ -4769,8 +4775,8 @@ function render() {
                     styles.canvasBtn,
                     state.canvasView === "chart"
                         ? styles.canvasBtnActive
-                        : undefined
-                )
+                        : undefined,
+                ),
             )}"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.8">
@@ -4810,7 +4816,7 @@ function render() {
 
     if (shouldRestoreChartLocationDropdown) {
         const wrapper = appRoot.querySelector<HTMLElement>(
-            '.custom-select-wrapper[data-key="chartLocation"]'
+            '.custom-select-wrapper[data-key="chartLocation"]',
         );
         if (wrapper) {
             wrapper.classList.add("open");
@@ -4835,7 +4841,7 @@ function render() {
                 state.dataMin,
                 state.dataMax,
                 state.variable,
-                state.selectedUnit
+                state.selectedUnit,
             );
 
             // Draw the gradient on the legend canvas
@@ -4845,15 +4851,17 @@ function render() {
             drawLegendGradient("legend-gradient-canvas", palette.colors);
 
             // Render overlay if actively drawing or if there's a completed polygon
-            if (state.drawState.active || (state.mapPolygon !== null && state.mapPolygon.length >= 3)) {
+            if (
+                state.drawState.active ||
+                (state.mapPolygon !== null && state.mapPolygon.length >= 3)
+            ) {
                 requestAnimationFrame(renderDrawOverlayPaths);
             }
         }
     }
 
     // Apply responsive padding to charts after DOM is ready
-    const currentPadding =
-        (state.sidebarOpen ? SIDEBAR_WIDTH + 24 : 24) + 8;
+    const currentPadding = (state.sidebarOpen ? SIDEBAR_WIDTH + 24 : 24) + 8;
     const scale = state.sidebarOpen ? 1 : 0.9;
     applyChartLayoutOffset(currentPadding, scale);
     updateMapSearchPosition();
@@ -4863,14 +4871,14 @@ function renderLoadingIndicator() {
     if (!state.isLoading) return "";
     const progress = Math.max(
         0,
-        Math.min(100, Math.round(state.loadingProgress))
+        Math.min(100, Math.round(state.loadingProgress)),
     );
     return `
       <div style="${styleAttr(styles.loadingIndicator)}">
         <div style="${styleAttr(styles.loadingSpinner)}"></div>
         <div style="${styleAttr(styles.loadingTextGroup)}">
           <div style="${styleAttr(
-              styles.loadingText
+              styles.loadingText,
           )}">Loading data · ${progress}%</div>
           <div style="${styleAttr(styles.loadingBar)}">
             <div style="${styleAttr({
@@ -4879,7 +4887,7 @@ function renderLoadingIndicator() {
             })}"></div>
           </div>
           <div style="${styleAttr(
-              styles.loadingSubtext
+              styles.loadingSubtext,
           )}">Fetching climate tiles</div>
         </div>
       </div>
@@ -4905,7 +4913,7 @@ function formatNumberCompact(value: number): string {
 function renderChartSvg(boxes: ChartBox[]): string {
     if (!boxes.length) {
         return `<div style="${styleAttr(
-            styles.chartEmpty
+            styles.chartEmpty,
         )}">No chart data loaded yet.</div>`;
     }
 
@@ -4943,11 +4951,11 @@ function renderChartSvg(boxes: ChartBox[]): string {
             return `
         <g>
           <line x1="${margin.left}" x2="${
-                width - margin.right
-            }" y1="${y}" y2="${y}" stroke="rgba(255,255,255,0.08)" />
+              width - margin.right
+          }" y1="${y}" y2="${y}" stroke="rgba(255,255,255,0.08)" />
           <text x="${margin.left - 10}" y="${
-                y + 4
-            }" fill="var(--text-secondary)" font-size="11" text-anchor="end">
+              y + 4
+          }" fill="var(--text-secondary)" font-size="11" text-anchor="end">
             ${formatNumberCompact(tick)}
           </text>
         </g>
@@ -4966,29 +4974,29 @@ function renderChartSvg(boxes: ChartBox[]): string {
             return `
         <g>
           <line x1="${x}" x2="${x}" y1="${yScale(min) + margin.top}" y2="${
-                yScale(max) + margin.top
-            }" stroke="${color}" stroke-width="2" stroke-linecap="round" />
+              yScale(max) + margin.top
+          }" stroke="${color}" stroke-width="2" stroke-linecap="round" />
           <rect x="${
               x - 24
           }" y="${boxTop}" width="48" height="${rectHeight}" fill="rgba(255,255,255,0.06)" stroke="${color}" stroke-width="2" rx="6" />
           <line x1="${x - 24}" x2="${x + 24}" y1="${
-                yScale(median) + margin.top
-            }" y2="${
-                yScale(median) + margin.top
-            }" stroke="${color}" stroke-width="2.4" />
+              yScale(median) + margin.top
+          }" y2="${
+              yScale(median) + margin.top
+          }" stroke="${color}" stroke-width="2.4" />
           <circle cx="${x}" cy="${
-                yScale(mean) + margin.top
-            }" r="4" fill="${color}" stroke="rgba(0,0,0,0.55)" stroke-width="1" />
+              yScale(mean) + margin.top
+          }" r="4" fill="${color}" stroke="rgba(0,0,0,0.55)" stroke-width="1" />
           <text x="${x}" y="${
-                height - margin.bottom + 32
-            }" fill="var(--text-primary)" font-weight="700" font-size="12" text-anchor="middle">${
-                box.scenario
-            }</text>
+              height - margin.bottom + 32
+          }" fill="var(--text-primary)" font-weight="700" font-size="12" text-anchor="middle">${
+              box.scenario
+          }</text>
           <text x="${x}" y="${
-                height - margin.bottom + 48
-            }" fill="var(--text-secondary)" font-size="11" text-anchor="middle">${
-                box.samples.length
-            } model${box.samples.length === 1 ? "" : "s"}</text>
+              height - margin.bottom + 48
+          }" fill="var(--text-secondary)" font-size="11" text-anchor="middle">${
+              box.samples.length
+          } model${box.samples.length === 1 ? "" : "s"}</text>
         </g>
       `;
         })
@@ -5013,8 +5021,8 @@ function renderChartSvg(boxes: ChartBox[]): string {
         font-size="12"
         text-anchor="middle"
         transform="rotate(-90 ${margin.left - 70} ${
-        margin.top + plotHeight / 2
-    })"
+            margin.top + plotHeight / 2
+        })"
       >
         ${state.chartUnit}
       </text>
@@ -5033,7 +5041,7 @@ function renderChartSvg(boxes: ChartBox[]): string {
 function renderMiniChartSvg(boxes: ChartBox[], unitLabel: string): string {
     if (!boxes.length) {
         return `<div style="${styleAttr(
-            styles.chartEmpty
+            styles.chartEmpty,
         )}">No chart data loaded yet.</div>`;
     }
 
@@ -5071,11 +5079,11 @@ function renderMiniChartSvg(boxes: ChartBox[], unitLabel: string): string {
             return `
         <g>
           <line x1="${margin.left}" x2="${
-                width - margin.right
-            }" y1="${y}" y2="${y}" stroke="rgba(255,255,255,0.06)" />
+              width - margin.right
+          }" y1="${y}" y2="${y}" stroke="rgba(255,255,255,0.06)" />
           <text x="${margin.left - 8}" y="${
-                y + 3
-            }" fill="var(--text-secondary)" font-size="9" text-anchor="end">
+              y + 3
+          }" fill="var(--text-secondary)" font-size="9" text-anchor="end">
             ${formatNumberCompact(tick)}
           </text>
         </g>
@@ -5094,29 +5102,29 @@ function renderMiniChartSvg(boxes: ChartBox[], unitLabel: string): string {
             return `
         <g>
           <line x1="${x}" x2="${x}" y1="${yScale(min) + margin.top}" y2="${
-                yScale(max) + margin.top
-            }" stroke="${color}" stroke-width="1.6" stroke-linecap="round" />
+              yScale(max) + margin.top
+          }" stroke="${color}" stroke-width="1.6" stroke-linecap="round" />
           <rect x="${
               x - 16
           }" y="${boxTop}" width="32" height="${rectHeight}" fill="rgba(255,255,255,0.06)" stroke="${color}" stroke-width="1.6" rx="5" />
           <line x1="${x - 16}" x2="${x + 16}" y1="${
-                yScale(median) + margin.top
-            }" y2="${
-                yScale(median) + margin.top
-            }" stroke="${color}" stroke-width="2" />
+              yScale(median) + margin.top
+          }" y2="${
+              yScale(median) + margin.top
+          }" stroke="${color}" stroke-width="2" />
           <circle cx="${x}" cy="${
-                yScale(mean) + margin.top
-            }" r="3.2" fill="${color}" stroke="rgba(0,0,0,0.55)" stroke-width="0.8" />
+              yScale(mean) + margin.top
+          }" r="3.2" fill="${color}" stroke="rgba(0,0,0,0.55)" stroke-width="0.8" />
           <text x="${x}" y="${
-                height - margin.bottom + 26
-            }" fill="var(--text-primary)" font-weight="700" font-size="10" text-anchor="middle">${
-                box.scenario
-            }</text>
+              height - margin.bottom + 26
+          }" fill="var(--text-primary)" font-weight="700" font-size="10" text-anchor="middle">${
+              box.scenario
+          }</text>
           <text x="${x}" y="${
-                height - margin.bottom + 40
-            }" fill="var(--text-secondary)" font-size="9" text-anchor="middle">${
-                box.samples.length
-            } model${box.samples.length === 1 ? "" : "s"}</text>
+              height - margin.bottom + 40
+          }" fill="var(--text-secondary)" font-size="9" text-anchor="middle">${
+              box.samples.length
+          } model${box.samples.length === 1 ? "" : "s"}</text>
         </g>
       `;
         })
@@ -5139,7 +5147,7 @@ function renderMiniChartSvg(boxes: ChartBox[], unitLabel: string): string {
         ${axisTicks}
         ${boxesMarkup}
         <text x="${margin.left}" y="${margin.top - 6}" fill="var(--text-secondary)" font-size="9">${escapeHtml(
-            unitLabel
+            unitLabel,
         )}</text>
       </svg>
     `;
@@ -5148,7 +5156,7 @@ function renderMiniChartSvg(boxes: ChartBox[], unitLabel: string): string {
 function renderChartRangeSvg(series: ChartSeries[]): string {
     if (!series.length) {
         return `<div style="${styleAttr(
-            styles.chartEmpty
+            styles.chartEmpty,
         )}">No chart data loaded yet.</div>`;
     }
 
@@ -5170,7 +5178,7 @@ function renderChartRangeSvg(series: ChartSeries[]): string {
 
     if (!minDate || !maxDate) {
         return `<div style="${styleAttr(
-            styles.chartEmpty
+            styles.chartEmpty,
         )}">No chart data loaded yet.</div>`;
     }
 
@@ -5202,11 +5210,11 @@ function renderChartRangeSvg(series: ChartSeries[]): string {
             return `
         <g>
           <line x1="${margin.left}" x2="${
-                width - margin.right
-            }" y1="${y}" y2="${y}" stroke="rgba(255,255,255,0.08)" />
+              width - margin.right
+          }" y1="${y}" y2="${y}" stroke="rgba(255,255,255,0.08)" />
           <text x="${margin.left - 10}" y="${
-                y + 4
-            }" fill="var(--text-secondary)" font-size="11" text-anchor="end">
+              y + 4
+          }" fill="var(--text-secondary)" font-size="11" text-anchor="end">
             ${formatNumberCompact(tick)}
           </text>
         </g>
@@ -5220,8 +5228,8 @@ function renderChartRangeSvg(series: ChartSeries[]): string {
             return `
         <g>
           <line x1="${x}" x2="${x}" y1="${margin.top}" y2="${
-                height - margin.bottom
-            }" stroke="rgba(255,255,255,0.06)" />
+              height - margin.bottom
+          }" stroke="rgba(255,255,255,0.06)" />
           <text x="${x}" y="${height - margin.bottom + 26}" fill="var(--text-secondary)" font-size="11" text-anchor="middle">
             ${formatTick(tick)}
           </text>
@@ -5250,8 +5258,7 @@ function renderChartRangeSvg(series: ChartSeries[]): string {
                 const upperPath = pointLevels
                     .map(({ point, levels }) => {
                         const x = xScale(parseDate(point.date)) + margin.left;
-                        const y =
-                            yScale(levels[bandIdx + 1]) + margin.top;
+                        const y = yScale(levels[bandIdx + 1]) + margin.top;
                         return `${x},${y}`;
                     })
                     .join(" L ");
@@ -5273,7 +5280,7 @@ function renderChartRangeSvg(series: ChartSeries[]): string {
                     1 - Math.min(Math.abs(i + 0.5 - mid) / mid, 1);
                 const opacity = 0.55 * centerWeight + 0.08;
                 return `<path d="${path}" fill="${color}" fill-opacity="${opacity.toFixed(
-                    3
+                    3,
                 )}" stroke="none" />`;
             }).join("");
 
@@ -5297,11 +5304,13 @@ function renderChartRangeSvg(series: ChartSeries[]): string {
           ${bandPaths}
           <path d="${medianPath}" fill="none" stroke="${color}" stroke-width="2.2" />
           <path d="${meanPath}" fill="none" stroke="${color}" stroke-width="1.6" stroke-dasharray="6 6" stroke-opacity="0.9" />
-          <circle cx="${xScale(
-              parseDate(entry.points[entry.points.length - 1].date)
-          ) + margin.left}" cy="${yScale(
-                entry.points[entry.points.length - 1].stats.median
-            ) + margin.top}" r="4" fill="${color}" stroke="rgba(0,0,0,0.4)" stroke-width="1" />
+          <circle cx="${
+              xScale(parseDate(entry.points[entry.points.length - 1].date)) +
+              margin.left
+          }" cy="${
+              yScale(entry.points[entry.points.length - 1].stats.median) +
+              margin.top
+          }" r="4" fill="${color}" stroke="rgba(0,0,0,0.4)" stroke-width="1" />
         </g>
       `;
         })
@@ -5376,7 +5385,7 @@ function renderChartArea() {
                     left: 18,
                     bottom: -95,
                     pointerEvents: "auto",
-                })
+                }),
             )}">
               <div style="${styleAttr(styles.loadingSpinner)}"></div>
               <div style="${styleAttr(styles.loadingTextGroup)}">
@@ -5386,15 +5395,18 @@ function renderChartArea() {
                       ...styles.loadingBarFill,
                       width: `${Math.max(
                           0,
-                          Math.min(100, Math.round(state.loadingProgress || 25))
+                          Math.min(
+                              100,
+                              Math.round(state.loadingProgress || 25),
+                          ),
                       )}%`,
                   })}"></div>
                 </div>
                 <div style="${styleAttr(styles.loadingSubtext)}">${
-            state.chartLoadingProgress.total > 0
-                ? `${state.chartLoadingProgress.done}/${state.chartLoadingProgress.total} datasets loaded`
-                : "Preparing datasets"
-        }</div>
+                    state.chartLoadingProgress.total > 0
+                        ? `${state.chartLoadingProgress.done}/${state.chartLoadingProgress.total} datasets loaded`
+                        : "Preparing datasets"
+                }</div>
               </div>
             </div>
             ${renderChartLoadingIndicator()}
@@ -5403,8 +5415,8 @@ function renderChartArea() {
               !isRangeMode && state.chartBoxes
                   ? renderChartSvg(state.chartBoxes)
                   : isRangeMode && state.chartRangeSeries
-                  ? renderChartRangeSvg(state.chartRangeSeries)
-                  : ""
+                    ? renderChartRangeSvg(state.chartRangeSeries)
+                    : ""
           }
         `;
     } else if (state.chartError) {
@@ -5430,17 +5442,17 @@ function renderChartArea() {
         state.chartLocationName ||
         (state.chartLocation === "Point" && state.chartPoint
             ? `Point (${state.chartPoint.lat.toFixed(
-                  2
+                  2,
               )}, ${state.chartPoint.lon.toFixed(2)})`
             : state.chartLocation === "Draw"
-            ? "Custom region"
-            : state.chartLocation === "World"
-            ? "Global"
-            : "");
+              ? "Custom region"
+              : state.chartLocation === "World"
+                ? "Global"
+                : "");
     const chartDateLabel =
         state.chartMode === "range"
             ? `${formatDisplayDate(state.chartRangeStart)} – ${formatDisplayDate(
-                  state.chartRangeEnd
+                  state.chartRangeEnd,
               )}`
             : formatDisplayDate(state.chartDate);
 
@@ -5451,21 +5463,21 @@ function renderChartArea() {
         <div style="${styleAttr(styles.chartPanel)}">
           <div style="${styleAttr(styles.chartHeader)}">
             <div style="${styleAttr(styles.chartTitle)}">${getVariableLabel(
-        state.chartVariable,
-        state.metaData
-    )}</div>
+                state.chartVariable,
+                state.metaData,
+            )}</div>
             <div style="${styleAttr(styles.mapSubtitle)}">${
-        chartLocationLabel
-            ? `${escapeHtml(chartLocationLabel)} · ${chartDateLabel}`
-            : chartDateLabel
-    }</div>
+                chartLocationLabel
+                    ? `${escapeHtml(chartLocationLabel)} · ${chartDateLabel}`
+                    : chartDateLabel
+            }</div>
           </div>
           <div style="${styleAttr(
               mergeStyles(styles.chartPlotWrapper, {
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
-              })
+              }),
           )}">
             ${body}
           </div>
@@ -5490,7 +5502,7 @@ function renderField(label: string, controlHtml: string) {
 function renderInput(
     name: string,
     value: string,
-    opts?: { type?: string; dataKey?: string; min?: string; max?: string }
+    opts?: { type?: string; dataKey?: string; min?: string; max?: string },
 ) {
     const type = opts?.type ?? "date";
     const dataKey = opts?.dataKey ?? name;
@@ -5518,7 +5530,7 @@ function renderSelect(
         infoType?: "scenario" | "variable" | "model";
         selectedLabel?: string;
         extraContent?: string;
-    }
+    },
 ) {
     const dataKey = opts?.dataKey ?? name;
     const disabled = opts?.disabled ? "disabled" : "";
@@ -5533,11 +5545,11 @@ function renderSelect(
     <div class="custom-select-container">
       <div class="custom-select-info-panel" id="${uniqueId}-info" role="tooltip"></div>
       <div class="custom-select-wrapper" data-key="${dataKey}" ${
-        disabled ? 'data-disabled="true"' : ""
-    } ${infoType ? `data-info-type="${infoType}"` : ""}>
+          disabled ? 'data-disabled="true"' : ""
+      } ${infoType ? `data-info-type="${infoType}"` : ""}>
         <div class="custom-select-trigger" data-action="update-select" data-key="${dataKey}" id="${uniqueId}-trigger" ${
-        disabled ? 'aria-disabled="true"' : ""
-    } tabindex="${disabled ? "-1" : "0"}">
+            disabled ? 'aria-disabled="true"' : ""
+        } tabindex="${disabled ? "-1" : "0"}">
           <span class="custom-select-value">${displayValue}</span>
           <svg class="custom-select-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
             <path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -5558,7 +5570,7 @@ function renderSelect(
                      tabindex="0">
                   ${opt}
                 </div>
-              `
+              `,
               )
               .join("")}
           ${extraContent}
@@ -5571,7 +5583,7 @@ function renderSelect(
 function renderTabButton(
     value: PanelTab,
     activeStyle?: Style,
-    dataKey = "panel-tab"
+    dataKey = "panel-tab",
 ) {
     return `
     <button
@@ -5599,34 +5611,34 @@ function renderManualSection(params: {
                       "Scenario",
                       renderSelect("scenario", scenarios, state.scenario, {
                           infoType: "scenario",
-                      })
+                      }),
                   ),
                   renderField("Date", renderInput("date", state.date)),
               ]
             : state.compareMode === "Dates"
-            ? [
-                  renderField(
-                      "Scenario",
-                      renderSelect("scenario", scenarios, state.scenario, {
-                          infoType: "scenario",
-                      })
-                  ),
-                  renderField(
-                      "Model",
-                      renderSelect("model", models, state.model, {
-                          infoType: "model",
-                      })
-                  ),
-              ]
-            : [
-                  renderField(
-                      "Model",
-                      renderSelect("model", models, state.model, {
-                          infoType: "model",
-                      })
-                  ),
-                  renderField("Date", renderInput("date", state.date)),
-              ];
+              ? [
+                    renderField(
+                        "Scenario",
+                        renderSelect("scenario", scenarios, state.scenario, {
+                            infoType: "scenario",
+                        }),
+                    ),
+                    renderField(
+                        "Model",
+                        renderSelect("model", models, state.model, {
+                            infoType: "model",
+                        }),
+                    ),
+                ]
+              : [
+                    renderField(
+                        "Model",
+                        renderSelect("model", models, state.model, {
+                            infoType: "model",
+                        }),
+                    ),
+                    renderField("Date", renderInput("date", state.date)),
+                ];
 
     return `
     <div style="${styleAttr(styles.modeSwitch)}">
@@ -5646,13 +5658,13 @@ function renderManualSection(params: {
               style="${styleAttr(
                   mergeStyles(
                       styles.modeBtn,
-                      state.mode === value ? styles.modeBtnActive : undefined
-                  )
+                      state.mode === value ? styles.modeBtnActive : undefined,
+                  ),
               )}"
             >
               ${value}
             </button>
-          `
+          `,
           )
           .join("")}
     </div>
@@ -5674,13 +5686,13 @@ function renderManualSection(params: {
                   "Scenario",
                   renderSelect("scenario", scenarios, state.scenario, {
                       infoType: "scenario",
-                  })
+                  }),
               )}
               ${renderField(
                   "Model",
                   renderSelect("model", models, state.model, {
                       infoType: "model",
-                  })
+                  }),
               )}
               ${renderField(
                   "Date",
@@ -5690,13 +5702,13 @@ function renderManualSection(params: {
                           min: timeRange.start,
                           max: timeRange.end,
                       });
-                  })()
+                  })(),
               )}
               ${renderField(
                   "Variable",
                   renderSelect("variable", variables, state.variable, {
                       infoType: "variable",
-                  })
+                  }),
               )}
             </div>
           </div>
@@ -5714,8 +5726,8 @@ function renderManualSection(params: {
                       "unit",
                       getUnitOptions(state.variable).map((opt) => opt.label),
                       state.selectedUnit,
-                      { dataKey: "unit" }
-                  )
+                      { dataKey: "unit" },
+                  ),
               )}
             </div>
           </div>
@@ -5733,8 +5745,8 @@ function renderManualSection(params: {
                       "palette",
                       paletteOptions.map((p) => p.name),
                       state.palette,
-                      { dataKey: "palette" }
-                  )
+                      { dataKey: "palette" },
+                  ),
               )}
             </div>
           </div>
@@ -5758,18 +5770,18 @@ function renderManualSection(params: {
                   style="${styleAttr(
                       mergeStyles(styles.range, {
                           "--slider-fill": `${resolutionFill}%`,
-                      })
+                      }),
                   )}"
                 />
                 <div data-role="resolution-value" style="${styleAttr(
-                    styles.resolutionValue
+                    styles.resolutionValue,
                 )}">${
-        state.resolution === 1
-            ? "Low"
-            : state.resolution === 2
-            ? "Medium"
-            : "High"
-    }</div>
+                    state.resolution === 1
+                        ? "Low"
+                        : state.resolution === 2
+                          ? "Medium"
+                          : "High"
+                }</div>
               </div>
             </div>
           </div>
@@ -5796,8 +5808,8 @@ function renderManualSection(params: {
                         state.compareMode,
                         {
                             dataKey: "compareMode",
-                        }
-                    )
+                        },
+                    ),
                 )}
               </div>
 
@@ -5814,8 +5826,8 @@ function renderManualSection(params: {
                                 {
                                     dataKey: "compareScenarioA",
                                     infoType: "scenario",
-                                }
-                            )
+                                },
+                            ),
                         )}
                         ${renderField(
                             "Scenario B",
@@ -5826,8 +5838,8 @@ function renderManualSection(params: {
                                 {
                                     dataKey: "compareScenarioB",
                                     infoType: "scenario",
-                                }
-                            )
+                                },
+                            ),
                         )}
                       </div>
                     `
@@ -5844,7 +5856,7 @@ function renderManualSection(params: {
                                 "compareModelA",
                                 (() => {
                                     const filtered = models.filter(
-                                        (m) => m !== state.compareModelB
+                                        (m) => m !== state.compareModelB,
                                     );
                                     // Ensure current value is always available
                                     if (
@@ -5858,8 +5870,8 @@ function renderManualSection(params: {
                                     return filtered;
                                 })(),
                                 state.compareModelA,
-                                { dataKey: "compareModelA", infoType: "model" }
-                            )
+                                { dataKey: "compareModelA", infoType: "model" },
+                            ),
                         )}
                         ${renderField(
                             "Model B",
@@ -5867,7 +5879,7 @@ function renderManualSection(params: {
                                 "compareModelB",
                                 (() => {
                                     const filtered = models.filter(
-                                        (m) => m !== state.compareModelA
+                                        (m) => m !== state.compareModelA,
                                     );
                                     // Ensure current value is always available
                                     if (
@@ -5881,8 +5893,8 @@ function renderManualSection(params: {
                                     return filtered;
                                 })(),
                                 state.compareModelB,
-                                { dataKey: "compareModelB", infoType: "model" }
-                            )
+                                { dataKey: "compareModelB", infoType: "model" },
+                            ),
                         )}
                       </div>
                     `
@@ -5898,16 +5910,16 @@ function renderManualSection(params: {
                             renderInput(
                                 "compareDateStart",
                                 state.compareDateStart,
-                                { dataKey: "compareDateStart" }
-                            )
+                                { dataKey: "compareDateStart" },
+                            ),
                         )}
                         ${renderField(
                             "End date",
                             renderInput(
                                 "compareDateEnd",
                                 state.compareDateEnd,
-                                { dataKey: "compareDateEnd" }
-                            )
+                                { dataKey: "compareDateEnd" },
+                            ),
                         )}
   </div>
 `
@@ -5920,7 +5932,7 @@ function renderManualSection(params: {
                     "Variable",
                     renderSelect("variable", variables, state.variable, {
                         infoType: "variable",
-                    })
+                    }),
                 )}
               </div>
 
@@ -5936,11 +5948,11 @@ function renderManualSection(params: {
                       renderSelect(
                           "unit",
                           getUnitOptions(state.variable).map(
-                              (opt) => opt.label
+                              (opt) => opt.label,
                           ),
                           state.selectedUnit,
-                          { dataKey: "unit" }
-                      )
+                          { dataKey: "unit" },
+                      ),
                   )}
                 </div>
               </div>
@@ -5952,7 +5964,7 @@ function renderManualSection(params: {
                     gap: 8,
                 })}">
                   <div style="${styleAttr(
-                      styles.sectionTitle
+                      styles.sectionTitle,
                   )}">Color palette</div>
                   ${renderField(
                       "",
@@ -5960,8 +5972,8 @@ function renderManualSection(params: {
                           "palette",
                           paletteOptions.map((p) => p.name),
                           state.palette,
-                          { dataKey: "palette" }
-                      )
+                          { dataKey: "palette" },
+                      ),
                   )}
                 </div>
               </div>
@@ -5973,7 +5985,7 @@ function renderManualSection(params: {
                     gap: 8,
                 })}">
                   <div style="${styleAttr(
-                      styles.sectionTitle
+                      styles.sectionTitle,
                   )}">Resolution</div>
                   <div style="${styleAttr(styles.resolutionRow)}">
                     <input
@@ -5987,18 +5999,18 @@ function renderManualSection(params: {
                       style="${styleAttr(
                           mergeStyles(styles.range, {
                               "--slider-fill": `${resolutionFill}%`,
-                          })
+                          }),
                       )}"
                     />
                     <div data-role="resolution-value" style="${styleAttr(
-                        styles.resolutionValue
+                        styles.resolutionValue,
                     )}">${
-        state.resolution === 1
-            ? "Low"
-            : state.resolution === 2
-            ? "Medium"
-            : "High"
-    }</div>
+                        state.resolution === 1
+                            ? "Low"
+                            : state.resolution === 2
+                              ? "Medium"
+                              : "High"
+                    }</div>
                   </div>
                 </div>
               </div>
@@ -6013,7 +6025,7 @@ function renderManualSection(params: {
 function renderChipGroup(
     options: string[],
     selected: string[],
-    dataKey: string
+    dataKey: string,
 ) {
     const selectedSet = new Set(selected);
     return `
@@ -6030,8 +6042,8 @@ function renderChipGroup(
                     style="${styleAttr(
                         mergeStyles(
                             styles.chip,
-                            active ? styles.chipActive : undefined
-                        )
+                            active ? styles.chipActive : undefined,
+                        ),
                     )}"
                   >
                     ${opt}
@@ -6058,13 +6070,13 @@ function renderChartLocationExtras() {
                   data-lon="${res.lon}"
                 >
                   <div class="location-search-result-name">${escapeHtml(
-                      res.displayName
+                      res.displayName,
                   )}</div>
                   <div class="location-search-result-coord">
                     ${res.lat.toFixed(3)}, ${res.lon.toFixed(3)}
                   </div>
                 </button>
-              `
+              `,
                   )
                   .join("")
             : "";
@@ -6072,13 +6084,13 @@ function renderChartLocationExtras() {
     const hasQuery = state.chartLocationSearchQuery.trim().length > 0;
     const statusMessage = state.chartLocationSearchError
         ? `<div class="location-search-error">${escapeHtml(
-              state.chartLocationSearchError
+              state.chartLocationSearchError,
           )}</div>`
         : state.chartLocationSearchLoading
-        ? `<div class="location-search-status">Searching...</div>`
-        : state.chartLocationSearchResults.length === 0 && hasQuery
-        ? `<div class="location-search-status">No places found. Try refining your query.</div>`
-        : "";
+          ? `<div class="location-search-status">Searching...</div>`
+          : state.chartLocationSearchResults.length === 0 && hasQuery
+            ? `<div class="location-search-status">No places found. Try refining your query.</div>`
+            : "";
 
     return `
       <div class="custom-select-extra" data-role="chart-location-search">
@@ -6115,13 +6127,13 @@ function renderMapSearchBar() {
                   data-lon="${res.lon}"
                 >
                   <div class="location-search-result-name">${escapeHtml(
-                      res.displayName
+                      res.displayName,
                   )}</div>
                   <div class="location-search-result-coord">
                     ${res.lat.toFixed(3)}, ${res.lon.toFixed(3)}
                   </div>
                 </button>
-              `
+              `,
                   )
                   .join("")
             : "";
@@ -6129,18 +6141,18 @@ function renderMapSearchBar() {
     const hasQuery = state.mapLocationSearchQuery.trim().length > 0;
     const statusMessage = state.mapLocationSearchError
         ? `<div class="location-search-error">${escapeHtml(
-              state.mapLocationSearchError
+              state.mapLocationSearchError,
           )}</div>`
         : state.mapLocationSearchLoading
-        ? `<div class="location-search-status">Searching...</div>`
-        : state.mapLocationSearchResults.length === 0 &&
-          hasQuery &&
-          !state.mapLocationSearchSelection
-        ? `<div class="location-search-status">No places found. Try refining your query.</div>`
-        : "";
+          ? `<div class="location-search-status">Searching...</div>`
+          : state.mapLocationSearchResults.length === 0 &&
+              hasQuery &&
+              !state.mapLocationSearchSelection
+            ? `<div class="location-search-status">No places found. Try refining your query.</div>`
+            : "";
 
     const showResultsPanel = Boolean(
-        results || (statusMessage && !state.mapLocationSearchLoading)
+        results || (statusMessage && !state.mapLocationSearchLoading),
     );
     const shift = state.sidebarOpen ? -SIDEBAR_WIDTH / 2 : 0;
     const wrapStyle = mergeStyles(styles.mapSearchWrap, {
@@ -6209,14 +6221,14 @@ function renderChartSection() {
         state.chartMode === "single" ? "translateX(0%)" : "translateX(100%)";
     const availableScenarios = state.metaData?.scenarios?.length
         ? Array.from(
-              new Set(state.metaData.scenarios.map(normalizeScenarioLabel))
+              new Set(state.metaData.scenarios.map(normalizeScenarioLabel)),
           )
         : scenarios;
     const availableModels = state.metaData?.models?.length
         ? state.metaData.models
         : models;
     const commonRange = intersectScenarioRange(
-        state.chartScenarios.length ? state.chartScenarios : availableScenarios
+        state.chartScenarios.length ? state.chartScenarios : availableScenarios,
     );
 
     const renderCollapsible = (
@@ -6224,7 +6236,7 @@ function renderChartSection() {
         open: boolean,
         countLabel: string,
         content: string,
-        dataKey: string
+        dataKey: string,
     ) => {
         return `
           <div style="${styleAttr({
@@ -6280,14 +6292,14 @@ function renderChartSection() {
                 dataKey: "chartDate",
                 min: commonRange.start,
                 max: commonRange.end,
-            })
+            }),
         )}
         ${renderField(
             "Variable",
             renderSelect("chartVariable", variables, state.chartVariable, {
                 dataKey: "chartVariable",
                 infoType: "variable",
-            })
+            }),
         )}
       </div>
 
@@ -6306,8 +6318,8 @@ function renderChartSection() {
                             ? `Search: ${state.chartLocationName}`
                             : state.chartLocation,
                     extraContent: renderChartLocationExtras(),
-                }
-            )
+                },
+            ),
         )}
       </div>
 
@@ -6319,9 +6331,9 @@ function renderChartSection() {
             renderChipGroup(
                 availableScenarios,
                 state.chartScenarios,
-                "chartScenarios"
+                "chartScenarios",
             ),
-            "chartScenarios"
+            "chartScenarios",
         )}
       </div>
 
@@ -6331,7 +6343,7 @@ function renderChartSection() {
             state.chartDropdown.modelsOpen,
             `${state.chartModels.length} selected`,
             renderChipGroup(availableModels, state.chartModels, "chartModels"),
-            "chartModels"
+            "chartModels",
         )}
       </div>
 
@@ -6343,8 +6355,8 @@ function renderChartSection() {
                 "chartUnit",
                 getUnitOptions(state.chartVariable).map((opt) => opt.label),
                 state.chartUnit,
-                { dataKey: "chartUnit" }
-            )
+                { dataKey: "chartUnit" },
+            ),
         )}
       </div>
     `;
@@ -6357,7 +6369,7 @@ function renderChartSection() {
                 dataKey: "chartRangeStart",
                 min: commonRange.start,
                 max: commonRange.end,
-            })
+            }),
         )}
         ${renderField(
             "End date",
@@ -6365,19 +6377,19 @@ function renderChartSection() {
                 dataKey: "chartRangeEnd",
                 min: commonRange.start,
                 max: commonRange.end,
-            })
+            }),
         )}
       </div>
 
       <div style="${styleAttr(
-          mergeStyles(styles.paramGrid, { marginTop: 12 })
+          mergeStyles(styles.paramGrid, { marginTop: 12 }),
       )}">
         ${renderField(
             "Variable",
             renderSelect("chartVariable", variables, state.chartVariable, {
                 dataKey: "chartVariable",
                 infoType: "variable",
-            })
+            }),
         )}
       </div>
 
@@ -6396,8 +6408,8 @@ function renderChartSection() {
                             ? `Search: ${state.chartLocationName}`
                             : state.chartLocation,
                     extraContent: renderChartLocationExtras(),
-                }
-            )
+                },
+            ),
         )}
       </div>
 
@@ -6409,9 +6421,9 @@ function renderChartSection() {
             renderChipGroup(
                 availableScenarios,
                 state.chartScenarios,
-                "chartScenarios"
+                "chartScenarios",
             ),
-            "chartScenarios"
+            "chartScenarios",
         )}
       </div>
 
@@ -6421,7 +6433,7 @@ function renderChartSection() {
             state.chartDropdown.modelsOpen,
             `${state.chartModels.length} selected`,
             renderChipGroup(availableModels, state.chartModels, "chartModels"),
-            "chartModels"
+            "chartModels",
         )}
       </div>
 
@@ -6433,8 +6445,8 @@ function renderChartSection() {
                 "chartUnit",
                 getUnitOptions(state.chartVariable).map((opt) => opt.label),
                 state.chartUnit,
-                { dataKey: "chartUnit" }
-            )
+                { dataKey: "chartUnit" },
+            ),
         )}
       </div>
     `;
@@ -6459,8 +6471,8 @@ function renderChartSection() {
                         styles.modeBtn,
                         state.chartMode === value
                             ? styles.modeBtnActive
-                            : undefined
-                    )
+                            : undefined,
+                    ),
                 )}"
               >
                 ${label}
@@ -6476,61 +6488,7 @@ function renderChartSection() {
     `;
 }
 
-function formatChatMessage(text: string): string {
-    // Escape HTML first
-    let formatted = text
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#039;');
-
-    // Convert code blocks first (before other markdown)
-    formatted = formatted.replace(/```(.+?)```/gs, '<code style="background: rgba(255,255,255,0.1); padding: 2px 6px; border-radius: 4px; font-family: monospace; display: inline-block; margin: 4px 0; line-height: 1.4;">$1</code>');
-
-    // Inline code
-    formatted = formatted.replace(/`(.+?)`/g, '<code style="background: rgba(255,255,255,0.1); padding: 2px 4px; border-radius: 3px; font-family: monospace; font-size: 0.9em; vertical-align: middle; line-height: 1.4;">$1</code>');
-    // Bold: **text** or __text__
-    formatted = formatted.replace(/\*\*(.+?)\*\*/g, '<strong style="font-weight: 700;">$1</strong>');
-    formatted = formatted.replace(/__(.+?)__/g, '<strong style="font-weight: 700;">$1</strong>');
-
-    // Split into lines
-    const lines = formatted.split('\n');
-    const result: string[] = [];
-
-    for (let i = 0; i < lines.length; i++) {
-        const line = lines[i].trim();
-
-        // Check if it's a list item (starts with "- ")
-        if (line.startsWith('- ')) {
-            const listContent = line.substring(2);
-            result.push(`<div style="display: flex; gap: 8px; margin: 6px 0;"><span style="flex-shrink: 0;">•</span><span style="flex: 1; line-height: 1.6; word-break: break-word; overflow-wrap: break-word;">${listContent}</span></div>`);
-        }
-        // Check if it's a numbered list (starts with "1. ", "2. ", etc.)
-        else if (/^\d+\.\s/.test(line)) {
-            const match = line.match(/^(\d+)\.\s(.+)$/);
-            if (match) {
-                const number = match[1];
-                const content = match[2];
-                result.push(`<div style="display: flex; gap: 8px; margin: 6px 0;"><span style="flex-shrink: 0; font-weight: 600; line-height: 1.6;">${number}.</span><span style="flex: 1; line-height: 1.6; word-break: break-word; overflow-wrap: break-word;">${content}</span></div>`);
-            } else {
-                result.push(line);
-            }
-        }
-        // Regular line
-        else if (line.length > 0) {
-            result.push(`<div style="margin: 8px 0; line-height: 1.6;">${line}</div>`);
-        }
-        // Empty line
-        else {
-            result.push('<div style="height: 12px;"></div>');
-        }
-    }
-
-    return result.join('');
-}
-
-function renderChatSection() {
+function renderChatSectionWrapper() {
     return `
     <div style="${styleAttr({
         display: "flex",
@@ -6538,46 +6496,7 @@ function renderChatSection() {
         gap: 8,
     })}">
       <div style="${styleAttr(styles.sectionTitle)}">Chat</div>
-      <div style="${styleAttr(styles.chatStack)}">
-        <div style="${styleAttr(
-            styles.chatLead
-        )}">Discuss the data with an agent, or ask questions.</div>
-
-        <div style="${styleAttr(styles.chatMessages)}">
-          ${state.chatMessages
-              .map((msg) => {
-                  const bubbleStyle =
-                      msg.sender === "user"
-                          ? mergeStyles(
-                                styles.chatBubble,
-                                styles.chatBubbleUser
-                            )
-                          : mergeStyles(
-                                styles.chatBubble,
-                                styles.chatBubbleAgent
-                            );
-                  return `<div style="${styleAttr(bubbleStyle)}">${
-                      formatChatMessage(msg.text)
-                  }</div>`;
-              })
-              .join("")}
-        </div>
-
-        <div style="${styleAttr(styles.chatBox)}">
-          <input
-            type="text"
-            value="${state.chatInput}"
-            data-action="chat-input"
-            style="${styleAttr(styles.chatInput)}"
-            placeholder="Ask a question"
-          />
-          <button type="button" data-action="chat-send" aria-label="Send chat message" style="${styleAttr(
-              styles.chatSend
-          )}">
-            ➤
-          </button>
-        </div>
-      </div>
+      ${renderChatSection(state.chatMessages, state.chatInput)}
     </div>
   `;
 }
@@ -6697,7 +6616,7 @@ function setupBrandEyeTracking(root: HTMLElement) {
             const localRange = upper.t - lower.t || 1;
             const localT = Math.min(
                 1,
-                Math.max(0, (progress - lower.t) / localRange)
+                Math.max(0, (progress - lower.t) / localRange),
             );
             const eased = 1 - Math.pow(1 - localT, 2); // ease-out
             const value = lower.v + (upper.v - lower.v) * eased;
@@ -6784,7 +6703,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
     });
 
     const canvasButtons = root.querySelectorAll<HTMLButtonElement>(
-        '[data-action="set-canvas"]'
+        '[data-action="set-canvas"]',
     );
     canvasButtons.forEach((btn) =>
         btn.addEventListener("click", () => {
@@ -6810,7 +6729,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                 }
 
                 const canvasIndicator = root.querySelector<HTMLElement>(
-                    '[data-role="canvas-indicator"]'
+                    '[data-role="canvas-indicator"]',
                 );
 
                 if (!canvasIndicator) return;
@@ -6826,11 +6745,11 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                     canvasIndicator.style.transform = nextIndicatorTransform;
                 });
             }
-        })
+        }),
     );
 
     const modeButtons = root.querySelectorAll<HTMLButtonElement>(
-        '[data-action="set-mode"]'
+        '[data-action="set-mode"]',
     );
     modeButtons.forEach((btn) =>
         btn.addEventListener("click", () => {
@@ -6856,10 +6775,10 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                 render();
 
                 const modeTrack = root.querySelector<HTMLElement>(
-                    '[data-role="mode-track"]'
+                    '[data-role="mode-track"]',
                 );
                 const modeIndicator = root.querySelector<HTMLElement>(
-                    '[data-role="mode-indicator"]'
+                    '[data-role="mode-indicator"]',
                 );
 
                 if (!modeTrack || !modeIndicator) return;
@@ -6882,11 +6801,11 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             if (state.canvasView === "map") {
                 loadClimateData();
             }
-        })
+        }),
     );
 
     const chartModeButtons = root.querySelectorAll<HTMLButtonElement>(
-        '[data-action="set-chart-mode"]'
+        '[data-action="set-chart-mode"]',
     );
     chartModeButtons.forEach((btn) =>
         btn.addEventListener("click", () => {
@@ -6905,7 +6824,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             render();
 
             const indicator = root.querySelector<HTMLElement>(
-                '[data-role="chart-mode-indicator"]'
+                '[data-role="chart-mode-indicator"]',
             );
             if (indicator) {
                 indicator.style.removeProperty("transition");
@@ -6920,11 +6839,11 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             if (state.canvasView === "chart") {
                 loadChartData();
             }
-        })
+        }),
     );
 
     const tabButtons = root.querySelectorAll<HTMLButtonElement>(
-        '[data-action="set-tab"]'
+        '[data-action="set-tab"]',
     );
     tabButtons.forEach((btn) =>
         btn.addEventListener("click", () => {
@@ -6944,7 +6863,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                 render();
 
                 const tabTrack = root.querySelector<HTMLElement>(
-                    '[data-role="tab-track"]'
+                    '[data-role="tab-track"]',
                 );
 
                 if (!tabTrack) return;
@@ -6960,12 +6879,12 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                     tabTrack.style.transform = nextTabTransform;
                 });
             }
-        })
+        }),
     );
 
     // Custom dropdown handlers
     const customSelectWrappers = root.querySelectorAll<HTMLElement>(
-        ".custom-select-wrapper"
+        ".custom-select-wrapper",
     );
 
     // Create a single shared info panel for all dropdowns
@@ -7009,13 +6928,13 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
 
     customSelectWrappers.forEach((wrapper) => {
         const trigger = wrapper.querySelector<HTMLElement>(
-            ".custom-select-trigger"
+            ".custom-select-trigger",
         );
         const dropdown = wrapper.querySelector<HTMLElement>(
-            ".custom-select-dropdown"
+            ".custom-select-dropdown",
         );
         const options = wrapper.querySelectorAll<HTMLElement>(
-            ".custom-select-option"
+            ".custom-select-option",
         );
         const dataKey = wrapper.dataset.key;
         const infoType = wrapper.dataset.infoType as
@@ -7116,7 +7035,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
 
                 // Update trigger value
                 const valueSpan = trigger.querySelector<HTMLElement>(
-                    ".custom-select-value"
+                    ".custom-select-value",
                 );
                 if (valueSpan) valueSpan.textContent = value;
 
@@ -7238,17 +7157,17 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                             state.dataMin,
                             state.dataMax,
                             state.variable,
-                            state.selectedUnit
+                            state.selectedUnit,
                         );
 
                         // Redraw gradient with new palette
                         const palette =
                             paletteOptions.find(
-                                (p) => p.name === state.palette
+                                (p) => p.name === state.palette,
                             ) || paletteOptions[0];
                         drawLegendGradient(
                             "legend-gradient-canvas",
-                            palette.colors
+                            palette.colors,
                         );
                     }
                 }
@@ -7258,7 +7177,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                             state.mapInfoBoxes = buildChartBoxes(
                                 state.mapInfoSamples,
                                 state.variable,
-                                state.selectedUnit
+                                state.selectedUnit,
                             );
                             render();
                         } else if (!state.mapInfoLoading) {
@@ -7289,17 +7208,17 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                             state.dataMin,
                             state.dataMax,
                             state.variable,
-                            state.selectedUnit
+                            state.selectedUnit,
                         );
 
                         // Redraw gradient with new palette
                         const palette =
                             paletteOptions.find(
-                                (p) => p.name === state.palette
+                                (p) => p.name === state.palette,
                             ) || paletteOptions[0];
                         drawLegendGradient(
                             "legend-gradient-canvas",
-                            palette.colors
+                            palette.colors,
                         );
                     }
                 }
@@ -7356,14 +7275,14 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                         state.chartRangeSeries = buildChartRangeSeries(
                             state.chartSamples,
                             state.chartVariable,
-                            state.chartUnit
+                            state.chartUnit,
                         );
                         state.chartBoxes = null;
                     } else {
                         state.chartBoxes = buildChartBoxes(
                             state.chartSamples,
                             state.chartVariable,
-                            state.chartUnit
+                            state.chartUnit,
                         );
                     }
                 }
@@ -7412,7 +7331,8 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         if (state.canvasView === "map" && triggerMapReload) {
             loadClimateData();
             const hasPoint = state.mapMarker !== null;
-            const hasPolygon = state.mapPolygon !== null && state.mapPolygon.length >= 3;
+            const hasPolygon =
+                state.mapPolygon !== null && state.mapPolygon.length >= 3;
             if ((hasPoint || hasPolygon) && state.mapInfoOpen) {
                 void loadMapInfoData();
             }
@@ -7427,12 +7347,12 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
 
     // Handle special case for chartLocation dropdown
     const chartLocationWrapper = root.querySelector<HTMLElement>(
-        '.custom-select-wrapper[data-key="chartLocation"]'
+        '.custom-select-wrapper[data-key="chartLocation"]',
     );
     if (chartLocationWrapper) {
         const chartLocationOptions =
             chartLocationWrapper.querySelectorAll<HTMLElement>(
-                ".custom-select-option"
+                ".custom-select-option",
             );
         chartLocationOptions.forEach((option) => {
             option.addEventListener("click", () => {
@@ -7450,11 +7370,11 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
 
         const locationSearchInputs =
             chartLocationWrapper.querySelectorAll<HTMLInputElement>(
-                '[data-role="location-search-input"]'
+                '[data-role="location-search-input"]',
             );
         const locationSearchResults =
             chartLocationWrapper.querySelectorAll<HTMLElement>(
-                '[data-role="location-search-result"]'
+                '[data-role="location-search-result"]',
             );
 
         const clearLocationSearchDebounce = () => {
@@ -7521,7 +7441,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
 
         if (state.chartLocation === "Search") {
             const input = chartLocationWrapper.querySelector<HTMLInputElement>(
-                '[data-role="location-search-input"]'
+                '[data-role="location-search-input"]',
             );
             if (input) {
                 setTimeout(() => input.focus(), 0);
@@ -7530,10 +7450,10 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
     }
 
     const mapSearchInputs = root.querySelectorAll<HTMLInputElement>(
-        '[data-role="map-location-search-input"]'
+        '[data-role="map-location-search-input"]',
     );
     const mapSearchResults = root.querySelectorAll<HTMLElement>(
-        '[data-role="map-location-search-result"]'
+        '[data-role="map-location-search-result"]',
     );
 
     const clearMapSearchDebounce = () => {
@@ -7613,7 +7533,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
 
     if (state.mapLocationSearchFocused) {
         const input = root.querySelector<HTMLInputElement>(
-            '[data-role="map-location-search-input"]'
+            '[data-role="map-location-search-input"]',
         );
         if (input) {
             setTimeout(() => input.focus(), 0);
@@ -7626,7 +7546,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
 
     // Keep old select handlers for backwards compatibility (if any native selects remain)
     const selectInputs = root.querySelectorAll<HTMLSelectElement>(
-        'select[data-action="update-select"]'
+        'select[data-action="update-select"]',
     );
     selectInputs.forEach((select) =>
         select.addEventListener("change", async () => {
@@ -7634,11 +7554,11 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             const val = select.value;
             if (!key) return;
             await handleSelectChange(key, val);
-        })
+        }),
     );
 
     const multiToggleButtons = root.querySelectorAll<HTMLButtonElement>(
-        '[data-action="toggle-multi"]'
+        '[data-action="toggle-multi"]',
     );
     multiToggleButtons.forEach((btn) =>
         btn.addEventListener("click", () => {
@@ -7653,9 +7573,9 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                         ? Array.from(
                               new Set(
                                   state.metaData.scenarios.map(
-                                      normalizeScenarioLabel
-                                  )
-                              )
+                                      normalizeScenarioLabel,
+                                  ),
+                              ),
                           )
                         : scenarios;
                 const isHistorical = value === "Historical";
@@ -7682,21 +7602,21 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                 }
 
                 state.chartScenarios = Array.from(set).filter((s) =>
-                    available.includes(s)
+                    available.includes(s),
                 );
 
                 // Clip date to new common range
                 const commonRange = intersectScenarioRange(
-                    state.chartScenarios
+                    state.chartScenarios,
                 );
                 state.chartDate = clipDateToRange(state.chartDate, commonRange);
                 state.chartRangeStart = clipDateToRange(
                     state.chartRangeStart,
-                    commonRange
+                    commonRange,
                 );
                 state.chartRangeEnd = clipDateToRange(
                     state.chartRangeEnd,
-                    commonRange
+                    commonRange,
                 );
             }
 
@@ -7718,11 +7638,11 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             if (state.canvasView === "chart") {
                 loadChartData();
             }
-        })
+        }),
     );
 
     const collapseButtons = root.querySelectorAll<HTMLButtonElement>(
-        '[data-action="toggle-collapse"]'
+        '[data-action="toggle-collapse"]',
     );
     collapseButtons.forEach((btn) =>
         btn.addEventListener("click", () => {
@@ -7737,12 +7657,11 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                     !state.chartDropdown.modelsOpen;
             }
             render();
-        })
+        }),
     );
 
-
     const textInputs = root.querySelectorAll<HTMLInputElement>(
-        '[data-action="update-input"]'
+        '[data-action="update-input"]',
     );
     textInputs.forEach((input) => {
         const updateDate = () => {
@@ -7779,14 +7698,14 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                 key === "date"
                     ? state.date
                     : key === "compareDateStart"
-                    ? state.compareDateStart
-                    : key === "compareDateEnd"
-                    ? state.compareDateEnd
-                    : key === "chartRangeStart"
-                    ? state.chartRangeStart
-                    : key === "chartRangeEnd"
-                    ? state.chartRangeEnd
-                    : state.chartDate;
+                      ? state.compareDateStart
+                      : key === "compareDateEnd"
+                        ? state.compareDateEnd
+                        : key === "chartRangeStart"
+                          ? state.chartRangeStart
+                          : key === "chartRangeEnd"
+                            ? state.chartRangeEnd
+                            : state.chartDate;
 
             if (currentValue === clippedValue) return; // No change, skip update
 
@@ -7824,7 +7743,8 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             ) {
                 loadClimateData();
                 const hasPoint = state.mapMarker !== null;
-                const hasPolygon = state.mapPolygon !== null && state.mapPolygon.length >= 3;
+                const hasPolygon =
+                    state.mapPolygon !== null && state.mapPolygon.length >= 3;
                 if ((hasPoint || hasPolygon) && state.mapInfoOpen) {
                     void loadMapInfoData();
                 }
@@ -7851,10 +7771,10 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
     });
 
     const resolutionInputs = root.querySelectorAll<HTMLInputElement>(
-        '[data-action="set-resolution"]'
+        '[data-action="set-resolution"]',
     );
     const resolutionValues = root.querySelectorAll<HTMLElement>(
-        '[data-role="resolution-value"]'
+        '[data-role="resolution-value"]',
     );
     const updateResolutionUI = (value: number) => {
         const fill = ((value - 1) / (3 - 1)) * 100;
@@ -7877,11 +7797,11 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                     loadClimateData();
                 }
             }
-        })
+        }),
     );
 
     const infoOpenBtn = root.querySelector<HTMLButtonElement>(
-        '[data-action="open-compare-info"]'
+        '[data-action="open-compare-info"]',
     );
     infoOpenBtn?.addEventListener("click", () => {
         state.compareInfoOpen = true;
@@ -7889,17 +7809,17 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
     });
 
     const infoCloseBtns = root.querySelectorAll<HTMLButtonElement>(
-        '[data-action="close-compare-info"]'
+        '[data-action="close-compare-info"]',
     );
     infoCloseBtns.forEach((btn) =>
         btn.addEventListener("click", () => {
             state.compareInfoOpen = false;
             render();
-        })
+        }),
     );
 
     const mapInfoCloseBtn = root.querySelector<HTMLButtonElement>(
-        '[data-action="close-map-info"]'
+        '[data-action="close-map-info"]',
     );
     mapInfoCloseBtn?.addEventListener("click", (e) => {
         e.preventDefault();
@@ -7907,7 +7827,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
     });
 
     const mapInfoExpandBtn = root.querySelector<HTMLButtonElement>(
-        '[data-action="open-map-info-chart"]'
+        '[data-action="open-map-info-chart"]',
     );
     mapInfoExpandBtn?.addEventListener("click", (e) => {
         e.preventDefault();
@@ -7937,7 +7857,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
     });
 
     const mapDrawToggleBtn = root.querySelector<HTMLButtonElement>(
-        '[data-action="toggle-map-draw"]'
+        '[data-action="toggle-map-draw"]',
     );
     mapDrawToggleBtn?.addEventListener("click", (e) => {
         e.preventDefault();
@@ -7951,11 +7871,12 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
     attachTimeSliderHandlers({
         root,
         getTimeRange: () => state.timeRange,
-            onDateChange: (date) => {
+        onDateChange: (date) => {
             state.date = date;
             loadClimateData();
             const hasPoint = state.mapMarker !== null;
-            const hasPolygon = state.mapPolygon !== null && state.mapPolygon.length >= 3;
+            const hasPolygon =
+                state.mapPolygon !== null && state.mapPolygon.length >= 3;
             if ((hasPoint || hasPolygon) && state.mapInfoOpen) {
                 void loadMapInfoData();
             }
@@ -7973,44 +7894,8 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         },
     });
 
-    const chatInput = root.querySelector<HTMLInputElement>(
-        '[data-action="chat-input"]'
-    );
-    const chatSend = root.querySelector<HTMLButtonElement>(
-        '[data-action="chat-send"]'
-    );
-    chatInput?.addEventListener("input", () => {
-        state.chatInput = chatInput.value;
-    });
-    chatInput?.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") {
-            e.preventDefault();
-            sendChat();
-        }
-    });
-    chatSend?.addEventListener("click", sendChat);
-}
-
-async function sendChat() {
-    const text = state.chatInput.trim();
-    if (!text) return;
-
-    // Add user message
-    const userMessage: ChatMessage = { id: Date.now(), sender: "user", text };
-    state.chatMessages = [...state.chatMessages, userMessage];
-    state.chatInput = "";
-    render();
-
-    // Build chat history for context (limit to last 10 messages to avoid payload issues)
-    const history: ChatClientMessage[] = state.chatMessages
-        .slice(Math.max(0, state.chatMessages.length - 11), -1) // Last 10 messages, excluding current
-        .map((msg) => ({
-            role: msg.sender === "user" ? "user" : "assistant",
-            content: msg.text,
-        }));
-
-    // Build current application context
-    const context = buildChatContext({
+    // Attach chat handlers
+    const chatContextData: ChatContextData = {
         mode: state.mode,
         canvasView: state.canvasView,
         selectedVariable: state.variable,
@@ -8025,41 +7910,17 @@ async function sendChat() {
         selectedModel2: state.compareModelB,
         selectedDate1: state.compareDateStart,
         selectedDate2: state.compareDateEnd,
-        currentDataStats: state.dataMin !== null && state.dataMax !== null ? {
-            min: state.dataMin,
-            max: state.dataMax,
-            mean: state.dataMean ?? undefined,
-        } : undefined,
-    });
+        currentDataStats:
+            state.dataMin !== null && state.dataMax !== null
+                ? {
+                      min: state.dataMin,
+                      max: state.dataMax,
+                      mean: state.dataMean ?? undefined,
+                  }
+                : undefined,
+    };
 
-    try {
-        // Send request to chat API
-        const response = await sendChatMessage({
-            message: text,
-            context: context,
-            history: history,
-        });
-
-        // Add assistant response
-        const reply: ChatMessage = {
-            id: Date.now() + 1,
-            sender: "agent",
-            text: response.message,
-        };
-        state.chatMessages = [...state.chatMessages, reply];
-        render();
-    } catch (error) {
-        // Add error message
-        const errorReply: ChatMessage = {
-            id: Date.now() + 1,
-            sender: "agent",
-            text: `Entschuldigung, es gab einen Fehler: ${
-                error instanceof Error ? error.message : "Unbekannter Fehler"
-            }`,
-        };
-        state.chatMessages = [...state.chatMessages, errorReply];
-        render();
-    }
+    attachChatHandlers(root, state, chatContextData);
 }
 
 async function init() {

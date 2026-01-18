@@ -29,8 +29,10 @@ try:  # pragma: no cover - import path juggling for script/package usage
     from .data_loader import DataLoadingError  # type: ignore  # noqa: E402
     from .utils import ParameterValidationError  # type: ignore  # noqa: E402
 except ImportError:  # pragma: no cover
+    import aggregated_data  # type: ignore  # noqa: E402
     import config  # type: ignore  # noqa: E402
     import data_loader  # type: ignore  # noqa: E402
+    import llm_chat  # type: ignore  # noqa: E402
     import utils  # type: ignore  # noqa: E402
     from aggregated_data import (  # type: ignore  # noqa: E402
         AggregatedDataError, AggregatedDataManager)
@@ -250,6 +252,30 @@ def fetch_time_series(request: TimeSeriesRequest):
         _translate_error(exc)
 
     return [_format_result(entry, request.data_format) for entry in series]
+
+
+@app.post("/chat")
+def chat(request: llm_chat.ChatRequest):
+    """
+    Process a chat message with LLM and return a response.
+
+    The request can include:
+    - message: The user's question or message
+    - context: Current application state (selected variable, model, scenario, etc.)
+    - history: Previous chat messages for context
+    """
+    try:
+        response = llm_chat.process_chat_message(
+            message=request.message,
+            context=request.context,
+            history=request.history
+        )
+        return response
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=500,
+            detail=f"Chat processing failed: {str(exc)}"
+        ) from exc
 
 
 @app.post("/pixel-data")
@@ -586,30 +612,6 @@ def get_aggregated_status():
             "available": False,
             "error": str(e)
         }
-
-
-@app.post("/chat")
-def chat(request: llm_chat.ChatRequest):
-    """
-    Process a chat message with LLM and return a response.
-
-    The request can include:
-    - message: The user's question or message
-    - context: Current application state (selected variable, model, scenario, etc.)
-    - history: Previous chat messages for context
-    """
-    try:
-        response = llm_chat.process_chat_message(
-            message=request.message,
-            context=request.context,
-            history=request.history
-        )
-        return response
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(
-            status_code=500,
-            detail=f"Chat processing failed: {str(exc)}"
-        ) from exc
 
 
 def main():

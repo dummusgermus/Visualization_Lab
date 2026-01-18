@@ -5,6 +5,7 @@ import numpy as np
 import os
 import sys
 from typing import Iterable, List, Optional
+from typing import Tuple
 
 # Ensure current directory is in path
 _current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -15,7 +16,6 @@ import config
 import utils
 
 import OpenVisus as ov
-
 
 class DataLoadingError(Exception):
     """Data loading error"""
@@ -219,6 +219,112 @@ def load_time_series(
         return payload
 
     max_workers = max_workers or min(config.MAX_WORKERS, len(dates))
+    if max_workers <= 1:
+        return [_load(date_obj) for date_obj in dates]
+
+    ordered = [None] * len(dates)
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_map = {
+            executor.submit(_load, date_obj): idx
+            for idx, date_obj in enumerate(dates)
+        }
+        for future in as_completed(future_map):
+            idx = future_map[future]
+            ordered[idx] = future.result()
+    return ordered
+
+
+def load_pixel_window(
+    variable: str,
+    time,
+    model: str,
+    scenario: Optional[str],
+    resolution: str,
+    window_box: Tuple[int, int, int, int],
+) -> dict:
+    """
+    Load a small window (logic_box) directly from OpenVisus to avoid full-grid reads.
+    window_box: (x0, x1, y0, y1) inclusive pixel bounds.
+    """
+    date = utils.parse_date(time)
+    scenario = utils.infer_scenario_from_date(date, scenario)
+    utils.validate_all_parameters(variable, model, scenario, date, resolution)
+
+    timestep_idx = utils.date_to_timestep_index(date)
+    quality = utils.resolution_to_quality(resolution)
+    field = utils.generate_field_name(variable, model, scenario)
+
+    db = get_database_connection()
+    x0, x1, y0, y1 = window_box
+    # OpenVisus expects ([x0,y0],[x1,y1]) in dataset logic coords
+    try:
+        data = db.read(
+            time=timestep_idx,
+            field=field,
+            quality=quality,
+            logic_box=([x0, y0], [x1 + 1, y1 + 1]),  # upper bound exclusive
+        )
+        data.setflags(write=False)
+    except Exception as e:
+        raise DataLoadingError(f"Failed to read window: {e}")
+
+    return {
+        "data": data,
+        "variable": variable,
+        "model": model,
+        "scenario": scenario,
+        "time": date.strftime("%Y-%m-%d"),
+        "timestamp": date.isoformat(),
+        "resolution": resolution,
+        "shape": tuple(data.shape),
+        "dtype": str(data.dtype),
+        "quality": quality,
+        "field": field,
+        "metadata": {
+            "variable": config.VARIABLE_METADATA.get(variable, {}),
+            "scenario": config.SCENARIO_METADATA.get(scenario, {}),
+            "window_box": window_box,
+        },
+    }
+
+
+def load_pixel_time_series(
+    variable: str,
+    model: str,
+    start_time,
+    end_time,
+    scenario: Optional[str],
+    resolution: str,
+    step_days: int,
+    window_box: Tuple[int, int, int, int],
+) -> List[dict]:
+    start_date = utils.parse_date(start_time)
+    end_date = utils.parse_date(end_time)
+    if end_date < start_date:
+        raise utils.ParameterValidationError("end_time must be on/after start_time")
+    if step_days <= 0:
+        raise utils.ParameterValidationError("step_days must be a positive integer")
+
+    dates = []
+    current = start_date
+    while current <= end_date:
+        dates.append(current)
+        current += timedelta(days=step_days)
+
+    if not dates:
+        return []
+
+    def _load(date_obj):
+        return load_pixel_window(
+            variable=variable,
+            time=date_obj,
+            model=model,
+            scenario=scenario,
+            resolution=resolution,
+            window_box=window_box,
+        )
+
+    max_workers = min(config.MAX_WORKERS, len(dates))
     if max_workers <= 1:
         return [_load(date_obj) for date_obj in dates]
 

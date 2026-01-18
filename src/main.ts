@@ -6,9 +6,11 @@ import {
 } from "./Components/sidebar";
 import { drawLegendGradient, renderMapLegend } from "./MapView/legend";
 import {
+    getCurrentZoomLevel,
     projectLonLatToCanvas,
     renderMapData,
     setupMapInteractions,
+    zoomToLocation,
 } from "./MapView/map";
 import {
     attachTimeSliderHandlers,
@@ -25,6 +27,9 @@ import {
     fetchClimateData,
     fetchMetadata,
     type Metadata,
+    fetchPixelData,
+    fetchAggregateOnDemand,
+    normalizeScenario,
 } from "./Utils/dataClient";
 import {
     convertValue,
@@ -63,6 +68,12 @@ type LocationSearchResult = {
 };
 
 type LatLon = { lat: number; lon: number };
+type MapMarker = {
+    lat: number;
+    lon: number;
+    name: string | null;
+    pixel: { x: number; y: number };
+};
 type DrawState = {
     active: boolean;
     points: LatLon[];
@@ -380,6 +391,110 @@ const styles: Record<string, Style> = {
         textAlign: "center",
         pointerEvents: "none",
         zIndex: 1,
+    },
+    mapSearchWrap: {
+        position: "absolute",
+        top: 18,
+        left: "50%",
+        transform: "translateX(-50%)",
+        width: "min(360px, 70vw)",
+        pointerEvents: "auto",
+        zIndex: 12,
+        transition: "transform 220ms ease, width 220ms ease",
+    },
+    mapSearchResults: {
+        maxHeight: 220,
+        overflowY: "auto",
+    },
+    mapMarker: {
+        position: "absolute",
+        left: 0,
+        top: 0,
+        width: 28,
+        height: 36,
+        pointerEvents: "none",
+        zIndex: 11,
+        transform: "translate(-9999px, -9999px)",
+        opacity: 0,
+        transition: "opacity 160ms ease",
+        filter: "drop-shadow(0 10px 18px rgba(0,0,0,0.45))",
+    },
+    mapInfoPanel: {
+        position: "absolute",
+        left: 0,
+        top: 0,
+        width: 360,
+        maxWidth: "min(360px, 80vw)",
+        opacity: 0,
+        userSelect: "none",
+        transform: "translate(-9999px, -9999px)",
+        transition: "opacity 160ms ease",
+        zIndex: 12,
+    },
+    mapInfoHeader: {
+        display: "flex",
+        alignItems: "flex-start",
+        justifyContent: "space-between",
+        gap: 8,
+    },
+    mapInfoTitleGroup: {
+        display: "flex",
+        flexDirection: "column",
+        gap: 2,
+        flex: 1,
+        minWidth: 0,
+    },
+    mapInfoActions: {
+        display: "flex",
+        gap: 6,
+        alignItems: "center",
+    },
+    mapInfoActionBtn: {
+        width: 30,
+        height: 30,
+        borderRadius: 8,
+        border: "none",
+        background: "transparent",
+        color: "var(--text-secondary)",
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        cursor: "pointer",
+        pointerEvents: "auto",
+        transition: "all 120ms ease",
+    },
+    mapInfoExpandBtn: {
+        position: "absolute",
+        right: 12,
+        bottom: 12,
+    },
+    mapInfoSubtitle: {
+        fontSize: 11.5,
+        color: "var(--text-secondary)",
+        marginTop: 2,
+    },
+    mapInfoBody: {
+        marginTop: 10,
+        display: "flex",
+        flexDirection: "column",
+        gap: 10,
+        paddingBottom: 36,
+    },
+    mapInfoLoadingRow: {
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        fontSize: 11,
+        color: "var(--text-secondary)",
+    },
+    mapInfoLoadingSpinner: {
+        width: 14,
+        height: 14,
+        borderRadius: "50%",
+        border: "2px solid rgba(255,255,255,0.18)",
+        borderTop: "2px solid #34d399",
+        animation: "sv-spin 1s linear infinite",
+        flexShrink: 0,
     },
     drawOverlay: {
         position: "absolute",
@@ -1006,6 +1121,21 @@ export type AppState = {
     chartLocationSearchResults: LocationSearchResult[];
     chartLocationSearchLoading: boolean;
     chartLocationSearchError: string | null;
+    mapLocationSearchQuery: string;
+    mapLocationSearchResults: LocationSearchResult[];
+    mapLocationSearchLoading: boolean;
+    mapLocationSearchError: string | null;
+    mapLocationSearchSelection: string | null;
+    mapLocationSearchFocused: boolean;
+    mapLocationSearchCursor: { start: number; end: number };
+    mapMarker: MapMarker | null;
+    mapInfoSamples: ChartSample[];
+    mapInfoBoxes: ChartBox[] | null;
+    mapInfoLoading: boolean;
+    mapInfoError: string | null;
+    mapInfoLoadingProgress: ChartLoadingProgress;
+    mapInfoOpen: boolean;
+    mapPolygon: LatLon[] | null;
     chartPolygon: LatLon[] | null;
     chartPoint: LatLon | null;
     drawState: DrawState;
@@ -1051,8 +1181,8 @@ const state: AppState = {
     selectedUnit: getDefaultUnitOption(variables[0]).label,
     chartMode: "single",
     chartDate: "2026-01-16",
-    chartRangeStart: "2020-01-01",
-    chartRangeEnd: "2077-06-28",
+    chartRangeStart: "2015-01-01",
+    chartRangeEnd: "2099-01-01",
     chartVariable: variables[0],
     chartUnit: getDefaultUnitOption(variables[0]).label,
     chartScenarios: ["SSP245", "SSP370", "SSP585"],
@@ -1070,6 +1200,21 @@ const state: AppState = {
     chartLocationSearchResults: [],
     chartLocationSearchLoading: false,
     chartLocationSearchError: null,
+    mapLocationSearchQuery: "",
+    mapLocationSearchResults: [],
+    mapLocationSearchLoading: false,
+    mapLocationSearchError: null,
+    mapLocationSearchSelection: null,
+    mapLocationSearchFocused: false,
+    mapLocationSearchCursor: { start: 0, end: 0 },
+    mapMarker: null,
+    mapInfoSamples: [],
+    mapInfoBoxes: null,
+    mapInfoLoading: false,
+    mapInfoError: null,
+    mapInfoLoadingProgress: { total: 0, done: 0 },
+    mapInfoOpen: false,
+    mapPolygon: null,
     chartPolygon: null,
     chartPoint: null,
     drawState: { active: false, points: [], previewPoint: null },
@@ -1108,6 +1253,10 @@ let brandBlinkTimeout: number | null = null;
 let brandEyeIdleTimeout: number | null = null;
 let locationSearchDebounce: number | null = null;
 let locationSearchRequestId = 0;
+let mapLocationSearchDebounce: number | null = null;
+let mapLocationSearchRequestId = 0;
+let mapInfoRequestId = 0;
+let mapInfoDelayTimer: number | null = null;
 const LOCATION_SEARCH_DEBOUNCE_MS = 500;
 
 function toKebab(input: string) {
@@ -1359,7 +1508,7 @@ function getTimeRangeForScenario(scenario: string): {
     // For future scenarios (SSP245, SSP585)
     return {
         start: "2015-01-01",
-        end: "2100-12-31",
+        end: "2099-12-31",
     };
 }
 
@@ -1594,13 +1743,16 @@ function applyMapInteractions(canvas: HTMLCanvasElement) {
                 ? handlePointClick
                 : handleDrawClick,
             onDrawMove: state.drawState.active ? handleDrawMove : undefined,
+            onMapClick: handleMapClick,
             onTransform: () => {
                 renderDrawOverlayPaths();
                 renderPointOverlayMarker();
+                renderMapMarkerPosition();
             },
         }
     );
     renderPointOverlayMarker();
+    renderMapMarkerPosition();
 }
 
 function renderDrawOverlayPaths() {
@@ -1626,13 +1778,25 @@ function renderDrawOverlayPaths() {
     ctx.scale(scale, scale);
     ctx.clearRect(0, 0, rect.width, rect.height);
 
-    const basePoints = [...state.drawState.points];
-    const points = state.drawState.previewPoint
-        ? [...basePoints, state.drawState.previewPoint]
-        : basePoints;
+    // Get points to render - either from active drawing or completed polygon
+    let pointsToRender: LatLon[] = [];
+    if (state.drawState.active) {
+        // Active drawing mode - show current points with preview
+        const basePoints = [...state.drawState.points];
+        pointsToRender = state.drawState.previewPoint
+            ? [...basePoints, state.drawState.previewPoint]
+            : basePoints;
+    } else if (state.mapPolygon && state.mapPolygon.length >= 3) {
+        // Completed polygon - show the stored polygon
+        pointsToRender = state.mapPolygon;
+    } else {
+        // Nothing to render
+        ctx.restore();
+        return;
+    }
 
     const projected: { x: number; y: number }[] = [];
-    points.forEach((p) => {
+    pointsToRender.forEach((p) => {
         const proj = projectLonLatToCanvas(canvas, p.lon, p.lat);
         if (proj) {
             projected.push(proj);
@@ -1658,33 +1822,32 @@ function renderDrawOverlayPaths() {
     }
     ctx.stroke();
 
-    projected.forEach(({ x, y }, idx) => {
-        ctx.beginPath();
-        ctx.fillStyle = idx === 0 ? "#10b981" : "#34d399";
-        ctx.arc(x, y, 4, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.strokeStyle = "#0f172a";
-        ctx.lineWidth = 1;
-        ctx.stroke();
-    });
+    // Only show point markers when actively drawing
+    if (state.drawState.active) {
+        projected.forEach(({ x, y }, idx) => {
+            ctx.beginPath();
+            ctx.fillStyle = idx === 0 ? "#10b981" : "#34d399";
+            ctx.arc(x, y, 4, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = "#0f172a";
+            ctx.lineWidth = 1;
+            ctx.stroke();
+        });
+    }
 
     ctx.restore();
 }
 
 function renderDrawOverlay() {
-    if (!state.drawState.active) return "";
+    // Always render the overlay canvas if we're drawing or have a completed polygon
+    const shouldShowOverlay = state.drawState.active || (state.mapPolygon !== null && state.mapPolygon.length >= 3);
+    if (!shouldShowOverlay) return "";
+    
     return `
-      <div style="${styleAttr(styles.drawOverlay)}"></div>
       <canvas
         id="draw-overlay-canvas"
         style="${styleAttr(styles.drawOverlayCanvas)}"
       ></canvas>
-      <div style="${styleAttr(styles.drawPrompt)}">
-        <div>Draw the region you want to explore</div>
-        <div style="${styleAttr(styles.drawPromptSub)}">
-          Click to add points · Enter or click first point to finish
-        </div>
-      </div>
     `;
 }
 
@@ -1703,6 +1866,135 @@ function renderPointOverlayMarker() {
     marker.style.bottom = "0px";
     marker.style.width = "100%";
     marker.style.height = "100%";
+}
+
+function renderMapMarkerPosition() {
+    if (!appRoot) return;
+    const marker = appRoot.querySelector<HTMLDivElement>("#map-location-marker");
+    const infoPanel =
+        appRoot.querySelector<HTMLDivElement>("#map-info-panel");
+    const canvas =
+        mapCanvas || appRoot.querySelector<HTMLCanvasElement>("#map-canvas");
+    if (!canvas) return;
+
+    const hasPolygon = state.mapPolygon !== null && state.mapPolygon.length >= 3;
+
+    // Handle marker visibility
+    if (marker) {
+        if (!state.mapMarker) {
+            marker.style.opacity = "0";
+            marker.style.transform = "translate(-9999px, -9999px)";
+            marker.title = "Selected location";
+        } else {
+            const projected = projectLonLatToCanvas(
+                canvas,
+                state.mapMarker.lon,
+                state.mapMarker.lat
+            );
+            marker.title = state.mapMarker.name
+                ? state.mapMarker.name
+                : `Pixel ${state.mapMarker.pixel.x}, ${state.mapMarker.pixel.y}`;
+            if (!projected) {
+                marker.style.opacity = "0";
+                marker.style.transform = "translate(-9999px, -9999px)";
+            } else {
+                marker.style.opacity = "1";
+                marker.style.transform = `translate(${projected.x}px, ${projected.y}px) translate(-50%, -100%)`;
+            }
+        }
+    }
+
+    // Handle info panel positioning - show for both marker and polygon
+    if (infoPanel && state.mapInfoOpen) {
+        const rect = canvas.getBoundingClientRect();
+        const panelWidth = infoPanel.offsetWidth || 360;
+        const panelHeight = infoPanel.offsetHeight || 240;
+        const padding = 12;
+
+        let left: number;
+        let top: number;
+
+        if (state.mapMarker) {
+            // Position relative to marker
+            const projected = projectLonLatToCanvas(
+                canvas,
+                state.mapMarker.lon,
+                state.mapMarker.lat
+            );
+            if (!projected) {
+                infoPanel.style.opacity = "0";
+                infoPanel.style.transform = "translate(-9999px, -9999px)";
+                infoPanel.style.pointerEvents = "none";
+                infoPanel.style.visibility = "hidden";
+                return;
+            }
+            left = projected.x - panelWidth - 24;
+            if (left < padding) {
+                left = projected.x + 24;
+            }
+            top = projected.y - panelHeight / 2;
+        } else if (hasPolygon && state.mapPolygon) {
+            // Find leftmost point and position window to the left of it
+            let leftmostPoint = state.mapPolygon[0];
+            for (const point of state.mapPolygon) {
+                if (point.lon < leftmostPoint.lon) {
+                    leftmostPoint = point;
+                }
+            }
+            
+            const leftmostProjected = projectLonLatToCanvas(canvas, leftmostPoint.lon, leftmostPoint.lat);
+            if (leftmostProjected) {
+                left = leftmostProjected.x - panelWidth - 24;
+                if (left < padding) {
+                    left = leftmostProjected.x + 24;
+                }
+                top = leftmostProjected.y - panelHeight / 2;
+            } else {
+                // Fallback to center-right if projection fails
+                left = rect.width - panelWidth - padding - 24;
+                top = rect.height / 2 - panelHeight / 2;
+            }
+        } else {
+            // Hide if neither marker nor polygon
+            infoPanel.style.opacity = "0";
+            infoPanel.style.transform = "translate(-9999px, -9999px)";
+            infoPanel.style.pointerEvents = "none";
+            infoPanel.style.visibility = "hidden";
+            return;
+        }
+
+        left = Math.max(padding, Math.min(left, rect.width - panelWidth - padding));
+        top = Math.max(padding, Math.min(top, rect.height - panelHeight - padding));
+
+        // Only update position if it hasn't been set yet (to prevent glitching during data updates)
+        const currentLeft = infoPanel.style.left;
+        const currentTop = infoPanel.style.top;
+        if (!currentLeft || currentLeft === "0px" || !currentTop || currentTop === "0px") {
+            infoPanel.style.left = `${left}px`;
+            infoPanel.style.top = `${top}px`;
+        }
+        
+        infoPanel.style.opacity = "1";
+        infoPanel.style.transform = "translate(0, 0)";
+        infoPanel.style.pointerEvents = "none";
+        infoPanel.style.visibility = "visible";
+    } else if (infoPanel && !state.mapInfoOpen) {
+        // Hide if not open
+        infoPanel.style.opacity = "0";
+        infoPanel.style.transform = "translate(-9999px, -9999px)";
+        infoPanel.style.pointerEvents = "none";
+        infoPanel.style.visibility = "hidden";
+    }
+}
+
+function updateMapSearchPosition() {
+    if (!appRoot) return;
+    const wrapper = appRoot.querySelector<HTMLDivElement>(
+        '[data-role="map-location-search"]'
+    );
+    if (!wrapper) return;
+    const shift = state.sidebarOpen ? -SIDEBAR_WIDTH / 2 : 0;
+    wrapper.style.transform = `translateX(calc(-50% + ${shift}px))`;
 }
 
 function renderPointOverlay() {
@@ -1727,6 +2019,156 @@ function renderPointOverlay() {
     `;
 }
 
+function renderMapMarkerOverlay() {
+    const marker = state.mapMarker;
+    const title = marker?.name
+        ? escapeHtml(marker.name)
+        : marker
+        ? `Pixel ${marker.pixel.x}, ${marker.pixel.y}`
+        : "Selected location";
+    return `
+      <div
+        id="map-location-marker"
+        style="${styleAttr(styles.mapMarker)}"
+        aria-hidden="true"
+        title="${title}"
+      >
+        <svg
+          viewBox="0 0 28 36"
+          width="28"
+          height="36"
+          aria-hidden="true"
+          focusable="false"
+        >
+          <defs>
+            <linearGradient id="map-marker-gradient" x1="0" x2="1">
+              <stop offset="0%" stop-color="var(--accent-blue)" />
+              <stop offset="100%" stop-color="var(--accent-purple)" />
+            </linearGradient>
+          </defs>
+          <path
+            d="M14 2C8.48 2 4 6.48 4 12c0 7.72 8.4 19.3 9.1 20.25.5.68 1.3.68 1.8 0C15.6 31.3 24 19.72 24 12 24 6.48 19.52 2 14 2Z"
+            fill="url(#map-marker-gradient)"
+          />
+          <circle cx="14" cy="12" r="4.5" fill="rgba(9, 14, 28, 0.9)" />
+          <circle cx="14" cy="12" r="3" fill="white" opacity="0.9" />
+        </svg>
+      </div>
+    `;
+}
+
+function renderMapInfoBody(): string {
+    const hasPoint = state.mapMarker !== null;
+    const hasPolygon = state.mapPolygon !== null && state.mapPolygon.length >= 3;
+    
+    if (!hasPoint && !hasPolygon) {
+        return `<div style="${styleAttr(
+            styles.chartEmpty
+        )}">Click a location or draw a region to load boxplots.</div>`;
+    }
+
+    if (state.mapInfoLoading) {
+        const progressText =
+            state.mapInfoLoadingProgress.total > 0
+                ? `${state.mapInfoLoadingProgress.done}/${state.mapInfoLoadingProgress.total} datasets loaded`
+                : "Preparing datasets";
+        const preview =
+            state.mapInfoBoxes && state.mapInfoBoxes.length
+                ? renderMiniChartSvg(state.mapInfoBoxes, state.selectedUnit)
+                : `<div style="${styleAttr(
+                      styles.chartEmpty
+                  )}">Loading boxplots...</div>`;
+        return `
+          <div style="${styleAttr(styles.mapInfoLoadingRow)}">
+            <div style="${styleAttr(styles.mapInfoLoadingSpinner)}"></div>
+            <div>${progressText}</div>
+          </div>
+          ${preview}
+        `;
+    }
+
+    if (state.mapInfoError) {
+        return `<div style="${styleAttr(styles.chartError)}">${escapeHtml(
+            state.mapInfoError
+        )}</div>`;
+    }
+
+    if (!state.mapInfoBoxes || !state.mapInfoBoxes.length) {
+        return `<div style="${styleAttr(
+            styles.chartEmpty
+        )}">Click a location to load boxplots.</div>`;
+    }
+
+    return renderMiniChartSvg(state.mapInfoBoxes, state.selectedUnit);
+}
+
+function renderMapInfoWindow() {
+    if (!state.mapInfoOpen) return "";
+    const marker = state.mapMarker;
+    const hasPolygon = state.mapPolygon !== null && state.mapPolygon.length >= 3;
+    const locationLabel = hasPolygon
+        ? "Drawn Region"
+        : marker?.name
+        ? marker.name
+        : marker
+        ? `Pixel ${marker.pixel.x}, ${marker.pixel.y}`
+        : "Selected location";
+    const variableLabel = getVariableLabel(state.variable, state.metaData);
+    const title = `${locationLabel} · ${variableLabel}`;
+    const subtitle = `${formatDisplayDate(state.date)} · ${state.selectedUnit}`;
+    return `
+      <div id="map-info-panel" class="custom-select-info-panel map-info-panel" style="${styleAttr(
+          styles.mapInfoPanel
+      )}">
+        <div style="${styleAttr(styles.mapInfoHeader)}">
+          <div style="${styleAttr(styles.mapInfoTitleGroup)}">
+            <div class="custom-select-info-panel-title">${escapeHtml(
+                title
+            )}</div>
+            <div style="${styleAttr(styles.mapInfoSubtitle)}">${escapeHtml(
+                subtitle
+            )}</div>
+          </div>
+          <div style="${styleAttr(styles.mapInfoActions)}">
+            <button
+              type="button"
+              data-action="close-map-info"
+              aria-label="Close info"
+              style="${styleAttr(styles.mapInfoActionBtn)}"
+              onmouseover="this.style.color='var(--text-primary)';this.style.background='rgba(15, 23, 42, 0.85)';"
+              onmouseout="this.style.color='var(--text-secondary)';this.style.background='transparent';"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M6 6l12 12M18 6l-12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div class="map-info-body" style="${styleAttr(styles.mapInfoBody)}">
+          ${renderMapInfoBody()}
+        </div>
+        <button
+          type="button"
+          data-action="open-map-info-chart"
+          aria-label="Open chart view"
+          style="${styleAttr({
+              ...styles.mapInfoActionBtn,
+              ...styles.mapInfoExpandBtn,
+          })}"
+          onmouseover="this.style.color='var(--text-primary)';this.style.background='rgba(15, 23, 42, 0.85)';"
+          onmouseout="this.style.color='var(--text-secondary)';this.style.background='transparent';"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M9 5H5v4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M15 5h4v4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M9 19H5v-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M15 19h4v-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+      </div>
+    `;
+}
+
 function startRegionDrawing() {
     state.chartLocation = "Draw";
     state.chartPolygon = null;
@@ -1747,6 +2189,41 @@ function startRegionDrawing() {
 function stopRegionDrawing() {
     state.drawState = resetDrawState();
     removeDrawKeyListener();
+}
+
+function startMapDrawing() {
+    if (state.canvasView !== "map") return;
+    state.mapPolygon = null;
+    state.mapMarker = null;
+    state.mapInfoOpen = false;
+    state.drawState = { active: true, points: [], previewPoint: null };
+    state.pointSelectActive = false;
+    ensureDrawKeyListener(completeMapDrawing);
+    render();
+}
+
+function stopMapDrawing() {
+    state.drawState = resetDrawState();
+    removeDrawKeyListener();
+}
+
+function completeMapDrawing() {
+    if (!state.drawState.active) return;
+    if (state.drawState.points.length < 3) {
+        state.mapInfoError = "Draw at least three points to define a region.";
+        state.mapInfoOpen = true;
+        render();
+        return;
+    }
+    state.mapPolygon = state.drawState.points;
+    state.mapMarker = null;
+    state.drawState = resetDrawState();
+    removeDrawKeyListener();
+    state.mapInfoError = null;
+    // Open info window immediately for polygon
+    state.mapInfoOpen = true;
+    render(); // Render immediately to show the completed polygon and info window
+    void loadMapInfoData();
 }
 
 function startPointSelection() {
@@ -1807,6 +2284,29 @@ async function fetchLocationSuggestions(
         .filter(
             (item) => Number.isFinite(item.lat) && Number.isFinite(item.lon)
         );
+}
+
+async function fetchReverseGeocode(
+    lat: number,
+    lon: number
+): Promise<string | null> {
+    const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&addressdetails=1`;
+    const response = await fetch(url, {
+        headers: {
+            Accept: "application/json",
+            "User-Agent": "climate-visualization-app/1.0",
+        },
+    });
+
+    if (!response.ok) {
+        return null;
+    }
+
+    const payload = (await response.json()) as {
+        display_name?: string;
+    };
+
+    return payload.display_name || null;
 }
 
 function applySearchedLocation(result: LocationSearchResult) {
@@ -1878,6 +2378,474 @@ async function handleLocationSearch(query: string) {
     }
 }
 
+function setMapMarker(lat: number, lon: number, name: string | null) {
+    const [x, y] = latLonToGridIndices(lat, lon);
+    state.mapMarker = { lat, lon, name, pixel: { x, y } };
+}
+
+function applyMapSearchedLocation(result: LocationSearchResult) {
+    if (mapLocationSearchDebounce !== null) {
+        window.clearTimeout(mapLocationSearchDebounce);
+        mapLocationSearchDebounce = null;
+    }
+    state.mapLocationSearchError = null;
+    state.mapLocationSearchResults = [];
+    state.mapLocationSearchLoading = false;
+    state.mapLocationSearchQuery = result.displayName;
+    state.mapLocationSearchSelection = result.displayName;
+    state.mapLocationSearchFocused = true;
+    setMapMarker(result.lat, result.lon, result.displayName);
+    render();
+    if (mapCanvas) {
+        const targetZoom = Math.max(getCurrentZoomLevel(), 3.2);
+        zoomToLocation(mapCanvas, result.lon, result.lat, targetZoom);
+        renderMapMarkerPosition();
+    }
+    scheduleMapInfoOpen();
+}
+
+async function handleMapLocationSearch(query: string) {
+    const trimmed = query.trim();
+    const requestId = ++mapLocationSearchRequestId;
+    state.mapLocationSearchQuery = query;
+    state.mapLocationSearchError = null;
+    state.mapLocationSearchResults = [];
+    state.mapLocationSearchSelection = null;
+
+    if (!trimmed) {
+        state.mapLocationSearchLoading = false;
+        state.mapLocationSearchResults = [];
+        state.mapLocationSearchError = null;
+        render();
+        return;
+    }
+
+    state.mapLocationSearchLoading = true;
+    render();
+
+    try {
+        const results = await fetchLocationSuggestions(trimmed);
+        if (requestId !== mapLocationSearchRequestId) return;
+        state.mapLocationSearchResults = results;
+        if (!results.length) {
+            state.mapLocationSearchError = "No places found for that query.";
+        }
+    } catch (error) {
+        if (requestId !== mapLocationSearchRequestId) return;
+        state.mapLocationSearchError =
+            error instanceof Error ? error.message : "Search failed.";
+    } finally {
+        if (requestId !== mapLocationSearchRequestId) return;
+        state.mapLocationSearchLoading = false;
+        render();
+    }
+}
+
+function updateMapMarkerNameOnly(placeName: string) {
+    // Update state without triggering full re-render
+    if (state.mapMarker) {
+        state.mapMarker.name = placeName;
+    }
+    
+    // Update only the DOM elements that display the name, without repositioning
+    if (!appRoot) return;
+    
+    // Update marker title attribute
+    const marker = appRoot.querySelector<HTMLDivElement>("#map-location-marker");
+    if (marker && state.mapMarker) {
+        marker.title = placeName;
+    }
+    
+    // Update info panel title if it's open
+    if (state.mapInfoOpen && state.mapMarker) {
+        const titleElement = appRoot.querySelector<HTMLDivElement>(".custom-select-info-panel-title");
+        if (titleElement) {
+            const variableLabel = getVariableLabel(state.variable, state.metaData);
+            const locationLabel = placeName;
+            const title = `${locationLabel} · ${variableLabel}`;
+            titleElement.textContent = title;
+        }
+    }
+}
+
+async function handleMapClick(coords: LatLon) {
+    if (state.canvasView !== "map") return;
+    if (state.drawState.active || state.pointSelectActive) return;
+    
+    // Clear polygon when clicking a new point
+    state.mapPolygon = null;
+    
+    // Initially set marker with null name (will show pixel coordinates temporarily)
+    setMapMarker(coords.lat, coords.lon, null);
+    if (mapCanvas) {
+        const targetZoom = Math.max(getCurrentZoomLevel(), 3.2);
+        zoomToLocation(mapCanvas, coords.lon, coords.lat, targetZoom);
+        renderMapMarkerPosition();
+    }
+    scheduleMapInfoOpen();
+    
+    // Fetch place name from OpenStreetMap reverse geocoding
+    try {
+        const placeName = await fetchReverseGeocode(coords.lat, coords.lon);
+        if (placeName) {
+            // Update only the name, without repositioning the marker
+            updateMapMarkerNameOnly(placeName);
+        }
+    } catch (error) {
+        // Silently fail - keep showing pixel coordinates if reverse geocoding fails
+        console.error("Failed to fetch reverse geocode:", error);
+    }
+}
+
+function scheduleMapInfoOpen(delayMs = 700) {
+    if (mapInfoDelayTimer !== null) {
+        window.clearTimeout(mapInfoDelayTimer);
+        mapInfoDelayTimer = null;
+    }
+    const wasOpen = state.mapInfoOpen;
+    state.mapInfoOpen = false;
+    if (wasOpen && appRoot) {
+        const infoPanel = appRoot.querySelector<HTMLDivElement>("#map-info-panel");
+        if (infoPanel) {
+            infoPanel.style.opacity = "0";
+            infoPanel.style.transform = "translate(-9999px, -9999px)";
+            infoPanel.style.pointerEvents = "none";
+            infoPanel.style.visibility = "hidden";
+        }
+    }
+    mapInfoDelayTimer = window.setTimeout(() => {
+        mapInfoDelayTimer = null;
+        const hasPoint = state.mapMarker !== null;
+        const hasPolygon = state.mapPolygon !== null && state.mapPolygon.length >= 3;
+        if (!hasPoint && !hasPolygon) return;
+        state.mapInfoOpen = true;
+        render();
+        void loadMapInfoData();
+    }, delayMs);
+}
+
+function closeMapInfoWindow() {
+    if (mapInfoDelayTimer !== null) {
+        window.clearTimeout(mapInfoDelayTimer);
+        mapInfoDelayTimer = null;
+    }
+    mapInfoRequestId += 1;
+    state.mapInfoOpen = false;
+    state.mapInfoLoading = false;
+    render();
+}
+
+function updateMapInfoPreview(samples: ChartSample[]) {
+    state.mapInfoSamples = samples;
+    try {
+        state.mapInfoBoxes = buildChartBoxes(
+            samples,
+            state.variable,
+            state.selectedUnit
+        );
+    } catch {
+        return;
+    }
+    
+    // Update only the body content without repositioning the window
+    if (!appRoot) {
+        render();
+        return;
+    }
+    
+    const infoPanel = appRoot.querySelector<HTMLDivElement>("#map-info-panel");
+    if (infoPanel) {
+        const bodyElement = infoPanel.querySelector<HTMLDivElement>(".map-info-body");
+        if (bodyElement) {
+            // Update only the body content without triggering a full render
+            bodyElement.innerHTML = renderMapInfoBody();
+            return;
+        }
+    }
+    
+    // Fallback to full render if elements not found
+    render();
+}
+
+async function loadMapInfoData() {
+    if (state.canvasView !== "map") return;
+    // Check if we have either a marker (point) or a polygon
+    const hasPoint = state.mapMarker !== null;
+    const hasPolygon = state.mapPolygon !== null && state.mapPolygon.length >= 3;
+    
+    if (!hasPoint && !hasPolygon) {
+        state.mapInfoLoading = false;
+        state.mapInfoError = null;
+        state.mapInfoSamples = [];
+        state.mapInfoBoxes = null;
+        state.mapInfoLoadingProgress = { total: 0, done: 0 };
+        state.mapInfoOpen = false;
+        render();
+        return;
+    }
+
+    const requestId = ++mapInfoRequestId;
+    state.mapInfoLoading = true;
+    state.mapInfoError = null;
+    state.mapInfoSamples = [];
+    state.mapInfoBoxes = null;
+    state.mapInfoLoadingProgress = { total: 0, done: 0 };
+    render();
+
+    try {
+        const metaData = state.metaData ?? (await fetchMetadata());
+        if (!state.metaData) {
+            state.metaData = metaData;
+        }
+
+        const scenarioOptions = metaData?.scenarios?.length
+            ? Array.from(
+                  new Set(metaData.scenarios.map(normalizeScenarioLabel))
+              )
+            : scenarios;
+        const matchingScenarios = scenarioOptions.filter((scenario) =>
+            isDateWithinRange(state.date, getTimeRangeForScenario(scenario))
+        );
+        const activeScenarios = matchingScenarios.length
+            ? matchingScenarios.includes("Historical")
+                ? ["Historical"]
+                : matchingScenarios
+            : scenarioOptions;
+        const modelOptions = metaData?.models?.length ? metaData.models : models;
+
+        if (!scenarioOptions.length || !modelOptions.length) {
+            state.mapInfoError = "Select at least one scenario and one model.";
+            state.mapInfoLoading = false;
+            state.mapInfoLoadingProgress = { total: 0, done: 0 };
+            render();
+            return;
+        }
+
+        const totalRequests = activeScenarios.length * modelOptions.length;
+        state.mapInfoLoadingProgress = { total: totalRequests, done: 0 };
+        render();
+
+        const samples: ChartSample[] = [];
+
+        for (const scenario of activeScenarios) {
+            if (requestId !== mapInfoRequestId) return;
+            const dateForScenario = clipDateToRange(
+                state.date,
+                getTimeRangeForScenario(scenario)
+            );
+
+            if (hasPoint && state.mapMarker) {
+                // Point selection - use pixel API
+                const [x, y] = latLonToGridIndices(
+                    state.mapMarker.lat,
+                    state.mapMarker.lon
+                );
+
+                const pixelPromises = modelOptions.map((model) =>
+                    fetchPixelData({
+                        variable: state.variable,
+                        model,
+                        x0: x,
+                        x1: x,
+                        y0: y,
+                        y1: y,
+                        start_date: dateForScenario,
+                        end_date: dateForScenario,
+                        scenario: normalizeScenario(scenario),
+                        resolution: "low",
+                        step_days: 1,
+                    }).catch((error) => {
+                        console.warn(
+                            `Pixel API failed for model ${model}, falling back:`,
+                            error
+                        );
+                        const request = createDataRequest({
+                            variable: state.variable,
+                            date: dateForScenario,
+                            model,
+                            scenario,
+                            resolution: 1,
+                        });
+                        return fetchClimateData(request).then((data) => {
+                            const arr = dataToArray(data);
+                            if (!arr) {
+                                throw new Error(
+                                    "No data returned for map info request."
+                                );
+                            }
+                            const avg = valueAtPoint(
+                                arr,
+                                state.variable,
+                                data.shape,
+                                { lat: state.mapMarker!.lat, lon: state.mapMarker!.lon }
+                            );
+                            return {
+                                model,
+                                value: avg,
+                                fallback: true,
+                            } as {
+                                model: string;
+                                value: number;
+                                fallback: boolean;
+                            };
+                        });
+                    })
+                );
+
+                const pixelResults = await Promise.allSettled(pixelPromises);
+                if (requestId !== mapInfoRequestId) return;
+
+                for (const result of pixelResults) {
+                    if (result.status === "fulfilled") {
+                        const data = result.value;
+                        if (
+                            typeof data === "object" &&
+                            "fallback" in data &&
+                            data.fallback
+                        ) {
+                            samples.push({
+                                scenario,
+                                model: data.model,
+                                rawValue: data.value,
+                                dateUsed: dateForScenario,
+                            });
+                        } else {
+                            const pixelData = data as any;
+                            const value = pixelData.values[0];
+                            if (value !== null && isFinite(value)) {
+                                const rawValue =
+                                    state.variable === "hurs"
+                                        ? Math.min(value, 100)
+                                        : value;
+                                samples.push({
+                                    scenario,
+                                    model: pixelData.model,
+                                    rawValue,
+                                    dateUsed: dateForScenario,
+                                });
+                            }
+                        }
+                    } else {
+                        console.warn(
+                            "Failed to fetch pixel data for map info:",
+                            result.reason
+                        );
+                    }
+                }
+
+                state.mapInfoLoadingProgress = {
+                    total: totalRequests,
+                    done: state.mapInfoLoadingProgress.done + modelOptions.length,
+                };
+                updateMapInfoPreview(samples);
+            } else if (hasPolygon && state.mapPolygon) {
+                // Polygon selection - use aggregate API
+                const [x0, x1, y0, y1] = polygonToGridBounds(state.mapPolygon);
+                const mask = createPolygonMask(state.mapPolygon, x0, x1, y0, y1);
+
+                try {
+                    const aggregateData = await fetchAggregateOnDemand({
+                        variable: state.variable,
+                        models: modelOptions,
+                        x0,
+                        x1,
+                        y0,
+                        y1,
+                        start_date: dateForScenario,
+                        end_date: dateForScenario,
+                        scenario: normalizeScenario(scenario),
+                        resolution: "low",
+                        step_days: 1,
+                        mask,
+                    });
+
+                    for (const model of modelOptions) {
+                        const modelData = aggregateData.models[model];
+                        if (modelData) {
+                            const value = modelData.values[0];
+                            if (value !== null && isFinite(value)) {
+                                const rawValue =
+                                    state.variable === "hurs"
+                                        ? Math.min(value, 100)
+                                        : value;
+                                samples.push({
+                                    scenario,
+                                    model,
+                                    rawValue,
+                                    dateUsed: dateForScenario,
+                                });
+                            }
+                        }
+                    }
+
+                    state.mapInfoLoadingProgress = {
+                        total: totalRequests,
+                        done: state.mapInfoLoadingProgress.done + modelOptions.length,
+                    };
+                    updateMapInfoPreview(samples);
+                } catch (error) {
+                    // If batch fails, fall back to old method for all models
+                    console.warn(
+                        `Aggregate API failed for scenario ${scenario}, falling back to full map load:`,
+                        error
+                    );
+                    for (const model of modelOptions) {
+                        if (requestId !== mapInfoRequestId) return;
+                        const request = createDataRequest({
+                            variable: state.variable,
+                            date: dateForScenario,
+                            model,
+                            scenario,
+                            resolution: 1,
+                        });
+                        try {
+                            const data = await fetchClimateData(request);
+                            const arr = dataToArray(data);
+                            if (arr) {
+                                const avg = averageArrayInPolygon(
+                                    arr,
+                                    state.variable,
+                                    data.shape,
+                                    state.mapPolygon
+                                );
+                                samples.push({
+                                    scenario,
+                                    model,
+                                    rawValue: avg,
+                                    dateUsed: dateForScenario,
+                                });
+                            }
+                        } catch (modelError) {
+                            console.warn(
+                                `Failed to load data for model ${model}:`,
+                                modelError
+                            );
+                        }
+                        state.mapInfoLoadingProgress = {
+                            total: totalRequests,
+                            done: state.mapInfoLoadingProgress.done + 1,
+                        };
+                        updateMapInfoPreview(samples);
+                    }
+                }
+            }
+        }
+
+        if (requestId !== mapInfoRequestId) return;
+        state.mapInfoLoading = false;
+        render();
+    } catch (error) {
+        if (requestId !== mapInfoRequestId) return;
+        state.mapInfoError =
+            error instanceof Error
+                ? error.message
+                : "Failed to load map chart data.";
+        state.mapInfoLoading = false;
+        state.mapInfoLoadingProgress = { total: 0, done: 0 };
+        render();
+    }
+}
+
 function handleDrawMove(coords: LatLon) {
     if (!state.drawState.active) return;
     state.drawState = { ...state.drawState, previewPoint: coords };
@@ -1888,7 +2856,12 @@ function handleDrawClick(coords: LatLon) {
     if (!state.drawState.active) return;
     const points = state.drawState.points;
     if (points.length >= 3 && isPointNear(coords, points[0])) {
-        completeRegionDrawing();
+        // Complete drawing - check if we're in chart mode or map mode
+        if (state.canvasView === "chart" || state.chartLocation === "Draw") {
+            completeRegionDrawing();
+        } else if (state.canvasView === "map") {
+            completeMapDrawing();
+        }
         return;
     }
     state.drawState = {
@@ -2042,10 +3015,15 @@ function buildRangeSampleDates(
 
     const dayMs = 24 * 60 * 60 * 1000;
     const spanDays = Math.floor((to.getTime() - from.getTime()) / dayMs);
+    const spanYears = to.getFullYear() - from.getFullYear();
 
     // For short ranges (<= ~4 months), keep the dense even sampling
     if (spanDays <= 120) {
-        return buildSampleDates(from.toISOString().slice(0, 10), to.toISOString().slice(0, 10), maxPoints);
+        return buildSampleDates(
+            from.toISOString().slice(0, 10),
+            to.toISOString().slice(0, 10),
+            maxPoints
+        );
     }
 
     // For longer ranges, align by day/month to compare same seasonal day across years
@@ -2074,10 +3052,108 @@ function buildRangeSampleDates(
         const lastDayOfMonth = new Date(year, startMonth + 1, 0).getDate();
         const day = Math.min(startDay, lastDayOfMonth);
         const candidate = new Date(year, startMonth, day);
+
+        // For ranges >= 20 years, keep the same day/month as the start date only.
+        // Don't clip to the end date so the last sample stays on the same day/month.
+        if (spanYears >= 20) {
+            if (candidate < from || candidate > to) return;
+            dates.push(candidate.toISOString().slice(0, 10));
+            return;
+        }
+
         let clipped = candidate;
         if (candidate < from) clipped = from;
         if (candidate > to) clipped = to;
         dates.push(clipped.toISOString().slice(0, 10));
+    });
+
+    return Array.from(new Set(dates)).sort(
+        (a, b) => parseDate(a).getTime() - parseDate(b).getTime()
+    );
+}
+
+function shouldUseFixedAnnualSamples(start: string, end: string): boolean {
+    const from = parseDate(start);
+    const to = parseDate(end);
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return false;
+    const dayMs = 24 * 60 * 60 * 1000;
+    const spanDays = Math.abs(to.getTime() - from.getTime()) / dayMs;
+    return spanDays / 365.25 >= 20;
+}
+
+function isSameMonthDay(date: string, reference: string): boolean {
+    const ref = parseDate(reference);
+    const candidate = parseDate(date);
+    if (Number.isNaN(ref.getTime()) || Number.isNaN(candidate.getTime())) {
+        return false;
+    }
+    return (
+        candidate.getMonth() === ref.getMonth() &&
+        candidate.getDate() === ref.getDate()
+    );
+}
+
+function isDateWithinRange(
+    date: string,
+    range: { start: string; end: string }
+): boolean {
+    const candidate = parseDate(date);
+    const start = parseDate(range.start);
+    const end = parseDate(range.end);
+    if (
+        Number.isNaN(candidate.getTime()) ||
+        Number.isNaN(start.getTime()) ||
+        Number.isNaN(end.getTime())
+    ) {
+        return false;
+    }
+    return candidate >= start && candidate <= end;
+}
+
+function buildFixedAnnualSampleDates(
+    referenceStart: string,
+    start: string,
+    end: string,
+    maxPoints = 50
+): string[] {
+    const ref = parseDate(referenceStart);
+    const from = parseDate(start);
+    const to = parseDate(end);
+    if (
+        Number.isNaN(ref.getTime()) ||
+        Number.isNaN(from.getTime()) ||
+        Number.isNaN(to.getTime()) ||
+        maxPoints <= 0
+    ) {
+        return [];
+    }
+    const refMonth = ref.getMonth();
+    const refDay = ref.getDate();
+
+    const startYear = from.getFullYear();
+    const endYear = to.getFullYear();
+    const totalYears = endYear - startYear + 1;
+    const steps = Math.min(maxPoints, totalYears);
+
+    const years = new Set<number>();
+    if (steps === 1) {
+        years.add(startYear);
+    } else {
+        const step = (totalYears - 1) / (steps - 1);
+        for (let i = 0; i < steps; i++) {
+            const yr = Math.round(startYear + step * i);
+            years.add(Math.min(endYear, Math.max(startYear, yr)));
+        }
+    }
+
+    const dates: string[] = [];
+    const sortedYears = Array.from(years).sort((a, b) => a - b);
+    sortedYears.forEach((year) => {
+        const lastDayOfMonth = new Date(year, refMonth + 1, 0).getDate();
+        const day = Math.min(refDay, lastDayOfMonth);
+        const candidate = new Date(year, refMonth, day);
+        if (candidate < from || candidate > to) return;
+        dates.push(candidate.toISOString().slice(0, 10));
     });
 
     return Array.from(new Set(dates)).sort(
@@ -2317,8 +3393,127 @@ async function loadCompareData(
     return createDifferenceData(dataA, dataB, labelA, labelB);
 }
 
+// Grid shape constants - matching data_processing/config.py GRID_SHAPE = (600, 1440)
+const GRID_HEIGHT = 600;
+const GRID_WIDTH = 1440;
+
+/**
+ * Convert lat/lon to grid indices (x, y)
+ * Grid coordinates: x=0..1439 (longitude 0-360°), y=0..599 (latitude 90° to -60°)
+ */
+function latLonToGridIndices(lat: number, lon: number): [number, number] {
+    // Convert longitude from [-180, 180) to [0, 360) for data grid lookup
+    // Climate data uses 0-360° longitude range: x=0 → 0°, x=1440 → 360°
+    const lonNormalized = (((lon + 360) % 360) + 360) % 360;
+    const xFloat = (lonNormalized / 360) * GRID_WIDTH - 0.5;
+    // Latitude: y=0 → 90° (North), y=599 → -60° (South, excluding Antarctica)
+    const yFloat = ((90 - lat) / 150) * GRID_HEIGHT - 0.5;
+
+    const clamp = (value: number, min: number, max: number) =>
+        Math.min(max, Math.max(min, value));
+
+    const x = clamp(Math.round(xFloat), 0, GRID_WIDTH - 1);
+    const y = clamp(Math.round(yFloat), 0, GRID_HEIGHT - 1);
+
+    return [x, y];
+}
+
+/**
+ * Compute bounding box of a polygon in grid coordinates
+ * Returns [x0, x1, y0, y1] where x0 <= x1 and y0 <= y1
+ */
+function polygonToGridBounds(polygon: LatLon[]): [number, number, number, number] {
+    if (!polygon || polygon.length < 3) {
+        throw new Error("Polygon must have at least 3 points");
+    }
+
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+
+    for (const point of polygon) {
+        const [x, y] = latLonToGridIndices(point.lat, point.lon);
+        minX = Math.min(minX, x);
+        maxX = Math.max(maxX, x);
+        minY = Math.min(minY, y);
+        maxY = Math.max(maxY, y);
+    }
+
+    // Clamp to valid grid bounds
+    minX = Math.max(0, Math.min(minX, GRID_WIDTH - 1));
+    maxX = Math.max(0, Math.min(maxX, GRID_WIDTH - 1));
+    minY = Math.max(0, Math.min(minY, GRID_HEIGHT - 1));
+    maxY = Math.max(0, Math.min(maxY, GRID_HEIGHT - 1));
+
+    return [minX, maxX, minY, maxY];
+}
+
+/**
+ * Create a mask array for a polygon region within a bounding box
+ * Returns 2D array where mask[y][x] = 1 if point is inside polygon, 0 otherwise
+ */
+function createPolygonMask(
+    polygon: LatLon[],
+    x0: number,
+    x1: number,
+    y0: number,
+    y1: number
+): number[][] {
+    const mask: number[][] = [];
+
+    const lonStep = 360 / GRID_WIDTH;
+    const latStep = 150 / GRID_HEIGHT;
+
+    for (let y = y0; y <= y1; y++) {
+        const row: number[] = [];
+        const lat = 90 - (y + 0.5) * latStep;
+
+        for (let x = x0; x <= x1; x++) {
+            // Convert grid x to longitude in [-180, 180] range
+            const lonRaw = (x + 0.5) * lonStep;
+            const lon = lonRaw > 180 ? lonRaw - 360 : lonRaw;
+
+            // Check if point is inside polygon
+            const isInside = isPointInPolygon({ lat, lon }, polygon);
+            row.push(isInside ? 1 : 0);
+        }
+        mask.push(row);
+    }
+
+    return mask;
+}
+
 async function loadChartData() {
     if (state.canvasView !== "chart") return;
+
+    const updateChartPreview = (samples: ChartSample[]) => {
+        state.chartSamples = samples;
+        if (state.chartMode === "single") {
+            try {
+                state.chartBoxes = buildChartBoxes(
+                    samples,
+                    state.chartVariable,
+                    state.chartUnit
+                );
+                state.chartRangeSeries = null;
+            } catch {
+                return;
+            }
+        } else {
+            try {
+                state.chartRangeSeries = buildChartRangeSeries(
+                    samples,
+                    state.chartVariable,
+                    state.chartUnit
+                );
+                state.chartBoxes = null;
+            } catch {
+                return;
+            }
+        }
+        render();
+    };
 
     if (
         state.chartLocation === "Draw" &&
@@ -2360,6 +3555,9 @@ async function loadChartData() {
     state.chartError = null;
     setLoadingProgress(5, true);
     state.chartLoadingProgress = { total: 0, done: 0 };
+    state.chartSamples = [];
+    state.chartBoxes = null;
+    state.chartRangeSeries = null;
     render();
 
     try {
@@ -2411,66 +3609,322 @@ async function loadChartData() {
 
             const samples: ChartSample[] = [];
 
-            for (const scenario of activeScenarios) {
-                const dateForScenario = clipDateToRange(
-                    state.chartDate,
-                    getTimeRangeForScenario(scenario)
-                );
-                for (const model of activeModels) {
-                    const done = state.chartLoadingProgress.done;
-                    setLoadingProgress(
-                        Math.min(
-                            95,
-                            Math.round(((done + 0.1) / totalRequests) * 100)
-                        )
+            // Check if we should use pixel-data API (Point, Search, or Draw locations)
+            const usePixelApi =
+                (state.chartLocation === "Point" || state.chartLocation === "Search") &&
+                    state.chartPoint
+                    ? true
+                    : state.chartLocation === "Draw" &&
+                      state.chartPolygon &&
+                      state.chartPolygon.length >= 3;
+
+            if (usePixelApi) {
+                console.log("Using pixel-data API for efficient loading");
+                // Use pixel-data API for efficient loading
+                for (const scenario of activeScenarios) {
+                    const dateForScenario = clipDateToRange(
+                        state.chartDate,
+                        getTimeRangeForScenario(scenario)
                     );
-                    const request = createDataRequest({
-                        variable: state.chartVariable,
-                        date: dateForScenario,
-                        model,
-                        scenario,
-                        resolution: 1,
-                    });
-                    const data = await fetchClimateData(request);
-                    const after = state.chartLoadingProgress.done + 1;
-                    state.chartLoadingProgress = {
-                        total: totalRequests,
-                        done: after,
-                    };
-                    setLoadingProgress(
-                        Math.min(98, Math.round((after / totalRequests) * 100))
-                    );
-                    render();
-                    const arr = dataToArray(data);
-                    if (!arr) {
-                        throw new Error("No data returned for chart request.");
+
+                    try {
+                        if (
+                            (state.chartLocation === "Point" ||
+                                state.chartLocation === "Search") &&
+                            state.chartPoint
+                        ) {
+                            // Single point: parallelize pixel-data API requests for all models
+                            const [x, y] = latLonToGridIndices(
+                                state.chartPoint.lat,
+                                state.chartPoint.lon
+                            );
+                            console.log(
+                                `Fetching pixel data for point (${x}, ${y}) for ${activeModels.length} models`
+                            );
+
+                            // Parallelize requests for all models
+                            const pixelPromises = activeModels.map((model) =>
+                                fetchPixelData({
+                                    variable: state.chartVariable,
+                                    model,
+                                    x0: x,
+                                    x1: x,
+                                    y0: y,
+                                    y1: y,
+                                    start_date: dateForScenario,
+                                    end_date: dateForScenario,
+                                    scenario: normalizeScenario(scenario),
+                                    resolution: "low",
+                                    step_days: 1,
+                                }).catch((error) => {
+                                    console.warn(
+                                        `Pixel API failed for model ${model}, falling back:`,
+                                        error
+                                    );
+                                    // Fallback to old method for this model
+                                    if (!state.chartPoint) {
+                                        throw error;
+                                    }
+                                    const request = createDataRequest({
+                                        variable: state.chartVariable,
+                                        date: dateForScenario,
+                                        model,
+                                        scenario,
+                                        resolution: 1,
+                                    });
+                                    return fetchClimateData(request).then(
+                                        (data) => {
+                                            const arr = dataToArray(data);
+                                            if (!arr) {
+                                                throw new Error(
+                                                    "No data returned for chart request."
+                                                );
+                                            }
+                                            if (!state.chartPoint) {
+                                                throw new Error("No chart point selected");
+                                            }
+                                            const avg = valueAtPoint(
+                                                arr,
+                                                state.chartVariable,
+                                                data.shape,
+                                                state.chartPoint
+                                            );
+                                            return {
+                                                model,
+                                                value: avg,
+                                                fallback: true,
+                                            } as {
+                                                model: string;
+                                                value: number;
+                                                fallback: boolean;
+                                            };
+                                        }
+                                    );
+                                })
+                            );
+
+                            const pixelResults = await Promise.allSettled(
+                                pixelPromises
+                            );
+
+                            // Process results
+                            for (const result of pixelResults) {
+                                if (result.status === "fulfilled") {
+                                    const data = result.value;
+                                    if (
+                                        typeof data === "object" &&
+                                        "fallback" in data &&
+                                        data.fallback
+                                    ) {
+                                        // Already processed in fallback
+                                        samples.push({
+                                            scenario,
+                                            model: data.model,
+                                            rawValue: data.value,
+                                            dateUsed: dateForScenario,
+                                        });
+                                    } else {
+                                        // Pixel data response
+                                        const pixelData = data as any;
+                                        const value = pixelData.values[0];
+                                        if (value !== null && isFinite(value)) {
+                                            const rawValue =
+                                                state.chartVariable === "hurs"
+                                                    ? Math.min(value, 100)
+                                                    : value;
+                                            samples.push({
+                                                scenario,
+                                                model: pixelData.model,
+                                                rawValue,
+                                                dateUsed: dateForScenario,
+                                            });
+                                        }
+                                    }
+                                } else {
+                                    console.warn(
+                                        `Failed to fetch pixel data:`,
+                                        result.reason
+                                    );
+                                }
+                            }
+
+                            // Update progress for all models at once
+                            state.chartLoadingProgress = {
+                                total: totalRequests,
+                                done: state.chartLoadingProgress.done + activeModels.length,
+                            };
+                            setLoadingProgress(
+                                Math.min(
+                                    98,
+                                    Math.round(
+                                        (state.chartLoadingProgress.done /
+                                            totalRequests) *
+                                            100
+                                    )
+                                )
+                            );
+                            updateChartPreview(samples);
+                        } else if (
+                            state.chartLocation === "Draw" &&
+                            state.chartPolygon &&
+                            state.chartPolygon.length >= 3
+                        ) {
+                            // Polygon: batch all models in a single aggregate-on-demand request
+                            const [x0, x1, y0, y1] = polygonToGridBounds(
+                                state.chartPolygon
+                            );
+                            const mask = createPolygonMask(
+                                state.chartPolygon,
+                                x0,
+                                x1,
+                                y0,
+                                y1
+                            );
+
+                            console.log(
+                                `Fetching aggregate data for polygon window [${x0},${x1},${y0},${y1}] for ${activeModels.length} models`
+                            );
+
+                            try {
+                                // Batch all models in one request
+                                const aggregateData =
+                                    await fetchAggregateOnDemand({
+                                        variable: state.chartVariable,
+                                        models: activeModels,
+                                        x0,
+                                        x1,
+                                        y0,
+                                        y1,
+                                        start_date: dateForScenario,
+                                        end_date: dateForScenario,
+                                        scenario: normalizeScenario(scenario),
+                                        resolution: "low",
+                                        step_days: 1,
+                                        mask,
+                                    });
+
+                                // Process all models from the batch response
+                                for (const model of activeModels) {
+                                    const modelData = aggregateData.models[model];
+                                    if (modelData) {
+                                        const value = modelData.values[0];
+                                        if (value !== null && isFinite(value)) {
+                                            const rawValue =
+                                                state.chartVariable === "hurs"
+                                                    ? Math.min(value, 100)
+                                                    : value;
+                                            samples.push({
+                                                scenario,
+                                                model,
+                                                rawValue,
+                                                dateUsed: dateForScenario,
+                                            });
+                                        }
+                                    }
+                                }
+
+                                // Update progress for all models at once
+                                state.chartLoadingProgress = {
+                                    total: totalRequests,
+                                    done:
+                                        state.chartLoadingProgress.done +
+                                        activeModels.length,
+                                };
+                                setLoadingProgress(
+                                    Math.min(
+                                        98,
+                                        Math.round(
+                                            (state.chartLoadingProgress.done /
+                                                totalRequests) *
+                                                100
+                                        )
+                                    )
+                                );
+                                updateChartPreview(samples);
+                            } catch (error) {
+                                // If batch fails, fall back to old method for all models
+                                console.warn(
+                                    "Batch aggregate API failed, falling back to full map load:",
+                                    error
+                                );
+                                for (const model of activeModels) {
+                                    const request = createDataRequest({
+                                        variable: state.chartVariable,
+                                        date: dateForScenario,
+                                        model,
+                                        scenario,
+                                        resolution: 1,
+                                    });
+                                    const data = await fetchClimateData(request);
+                                    const arr = dataToArray(data);
+                                    if (!arr) {
+                                        continue;
+                                    }
+                                    const avg = averageArrayInPolygon(
+                                        arr,
+                                        state.chartVariable,
+                                        data.shape,
+                                        state.chartPolygon
+                                    );
+                                    samples.push({
+                                        scenario,
+                                        model,
+                                        rawValue: avg,
+                                        dateUsed: dateForScenario,
+                                    });
+                                }
+                                updateChartPreview(samples);
+                            }
+                        }
+                    } catch (error) {
+                        console.error("Error in pixel API path:", error);
+                        throw error;
                     }
-                    const avg =
-                        state.chartLocation === "Draw" &&
-                        state.chartPolygon &&
-                        state.chartPolygon.length >= 3
-                            ? averageArrayInPolygon(
-                                  arr,
-                                  state.chartVariable,
-                                  data.shape,
-                                  state.chartPolygon
-                              )
-                            : (state.chartLocation === "Point" ||
-                                  state.chartLocation === "Search") &&
-                              state.chartPoint
-                            ? valueAtPoint(
-                                  arr,
-                                  state.chartVariable,
-                                  data.shape,
-                                  state.chartPoint
-                              )
-                            : averageArray(arr, state.chartVariable);
-                    samples.push({
-                        scenario,
-                        model,
-                        rawValue: avg,
-                        dateUsed: dateForScenario,
-                    });
+                }
+            } else {
+                // World location: use old method (load full map)
+                for (const scenario of activeScenarios) {
+                    const dateForScenario = clipDateToRange(
+                        state.chartDate,
+                        getTimeRangeForScenario(scenario)
+                    );
+                    for (const model of activeModels) {
+                        const done = state.chartLoadingProgress.done;
+                        setLoadingProgress(
+                            Math.min(
+                                95,
+                                Math.round(((done + 0.1) / totalRequests) * 100)
+                            )
+                        );
+                        const request = createDataRequest({
+                            variable: state.chartVariable,
+                            date: dateForScenario,
+                            model,
+                            scenario,
+                            resolution: 1,
+                        });
+                        const data = await fetchClimateData(request);
+                        const after = state.chartLoadingProgress.done + 1;
+                        state.chartLoadingProgress = {
+                            total: totalRequests,
+                            done: after,
+                        };
+                        setLoadingProgress(
+                            Math.min(98, Math.round((after / totalRequests) * 100))
+                        );
+                        updateChartPreview(samples);
+                        const arr = dataToArray(data);
+                        if (!arr) {
+                            throw new Error("No data returned for chart request.");
+                        }
+                        const avg = averageArray(arr, state.chartVariable);
+                        samples.push({
+                            scenario,
+                            model,
+                            rawValue: avg,
+                            dateUsed: dateForScenario,
+                        });
+                    }
                 }
             }
 
@@ -2493,6 +3947,11 @@ async function loadChartData() {
             }
             state.chartRangeStart = rangeStart;
             state.chartRangeEnd = rangeEnd;
+            const useFixedAnnualSamples = shouldUseFixedAnnualSamples(
+                rangeStart,
+                rangeEnd
+            );
+            const fixedReferenceDate = rangeStart;
 
             if (USE_TOY_RANGE_DATA) {
                 const toySeries = generateToyRangeSeries({
@@ -2507,41 +3966,48 @@ async function loadChartData() {
                 state.chartLoadingProgress = { total: 0, done: 0 };
                 setLoadingProgress(100);
             } else {
-                const sampledDates = buildRangeSampleDates(
-                    rangeStart,
-                    rangeEnd,
-                    50
-                );
-                if (!sampledDates.length) {
-                    state.chartError =
-                        "Enter a valid date range within the selected scenarios.";
-                    state.chartSamples = [];
+                // Check if we should use pixel-data API (Point, Search, or Draw locations)
+                const usePixelApi =
+                    (state.chartLocation === "Point" ||
+                        state.chartLocation === "Search") &&
+                        state.chartPoint
+                        ? true
+                        : state.chartLocation === "Draw" &&
+                          state.chartPolygon &&
+                          state.chartPolygon.length >= 3;
+
+                if (usePixelApi) {
+                    console.log("Using pixel-data API for range mode");
+                    // Use pixel-data API: single request per scenario/model for full time series
+                    const totalRequests =
+                        activeScenarios.length * activeModels.length;
+                    state.chartLoadingProgress = {
+                        total: totalRequests,
+                        done: 0,
+                    };
                     state.chartBoxes = null;
-                    state.chartRangeSeries = null;
-                    state.chartLoading = false;
-                    state.chartLoadingProgress = { total: 0, done: 0 };
                     render();
-                    return;
-                }
 
-                const totalRequests =
-                    activeScenarios.length *
-                    activeModels.length *
-                    sampledDates.length;
-                state.chartLoadingProgress = { total: totalRequests, done: 0 };
-                state.chartBoxes = null;
-                render();
+                    const samples: ChartSample[] = [];
 
-                const samples: ChartSample[] = [];
+                    for (const model of activeModels) {
+                        for (const scenario of activeScenarios) {
+                            const scenarioRange =
+                                getTimeRangeForScenario(scenario);
+                            // Clip date range to scenario's valid range
+                            const clippedStart = clipDateToRange(
+                                rangeStart,
+                                scenarioRange
+                            );
+                            const clippedEnd = clipDateToRange(
+                                rangeEnd,
+                                scenarioRange
+                            );
 
-                for (const scenario of activeScenarios) {
-                    const scenarioRange = getTimeRangeForScenario(scenario);
-                    for (const dateCandidate of sampledDates) {
-                        const dateForScenario = clipDateToRange(
-                            dateCandidate,
-                            scenarioRange
-                        );
-                        for (const model of activeModels) {
+                            if (parseDate(clippedStart) > parseDate(clippedEnd)) {
+                                continue; // Skip if no valid date range for this scenario
+                            }
+
                             const done = state.chartLoadingProgress.done;
                             setLoadingProgress(
                                 Math.min(
@@ -2549,14 +4015,219 @@ async function loadChartData() {
                                     Math.round(((done + 0.1) / totalRequests) * 100)
                                 )
                             );
-                            const request = createDataRequest({
-                                variable: state.chartVariable,
-                                date: dateForScenario,
-                                model,
-                                scenario,
-                                resolution: 1,
-                            });
-                            const data = await fetchClimateData(request);
+
+                            try {
+                                if (
+                                    (state.chartLocation === "Point" ||
+                                        state.chartLocation === "Search") &&
+                                    state.chartPoint
+                                ) {
+                                    // Single point: use pixel-data API with date range
+                                    const [x, y] = latLonToGridIndices(
+                                        state.chartPoint.lat,
+                                        state.chartPoint.lon
+                                    );
+                                    const pixelData = await fetchPixelData({
+                                        variable: state.chartVariable,
+                                        model,
+                                        x0: x,
+                                        x1: x,
+                                        y0: y,
+                                        y1: y,
+                                        start_date: clippedStart,
+                                        end_date: clippedEnd,
+                                        scenario: normalizeScenario(scenario),
+                                        resolution: "low",
+                                        step_days: 1,
+                                    });
+
+                                    // Convert time series response to samples
+                                    for (
+                                        let i = 0;
+                                        i < pixelData.timestamps.length;
+                                        i++
+                                    ) {
+                                        const timestamp = pixelData.timestamps[i];
+                                        if (
+                                            useFixedAnnualSamples &&
+                                            !isSameMonthDay(
+                                                timestamp,
+                                                fixedReferenceDate
+                                            )
+                                        ) {
+                                            continue;
+                                        }
+                                        const value = pixelData.values[i];
+                                        if (value !== null && isFinite(value)) {
+                                            const rawValue =
+                                                state.chartVariable === "hurs"
+                                                    ? Math.min(value, 100)
+                                                    : value;
+                                            samples.push({
+                                                scenario,
+                                                model,
+                                                rawValue,
+                                                dateUsed: timestamp,
+                                            });
+                                        }
+                                    }
+                                    updateChartPreview(samples);
+                                } else if (
+                                    state.chartLocation === "Draw" &&
+                                    state.chartPolygon &&
+                                    state.chartPolygon.length >= 3
+                                ) {
+                                    // Polygon: use aggregate-on-demand API with date range
+                                    const [x0, x1, y0, y1] = polygonToGridBounds(
+                                        state.chartPolygon
+                                    );
+                                    const mask = createPolygonMask(
+                                        state.chartPolygon,
+                                        x0,
+                                        x1,
+                                        y0,
+                                        y1
+                                    );
+
+                                    const aggregateData =
+                                        await fetchAggregateOnDemand({
+                                            variable: state.chartVariable,
+                                            models: [model],
+                                            x0,
+                                            x1,
+                                            y0,
+                                            y1,
+                                            start_date: clippedStart,
+                                            end_date: clippedEnd,
+                                            scenario: normalizeScenario(scenario),
+                                            resolution: "low",
+                                            step_days: 1,
+                                            mask,
+                                        });
+
+                                    const modelData = aggregateData.models[model];
+                                    if (modelData) {
+                                        // Convert time series response to samples
+                                        for (
+                                            let i = 0;
+                                            i < modelData.timestamps.length;
+                                            i++
+                                        ) {
+                                            const timestamp = modelData.timestamps[i];
+                                            if (
+                                                useFixedAnnualSamples &&
+                                                !isSameMonthDay(
+                                                    timestamp,
+                                                    fixedReferenceDate
+                                                )
+                                            ) {
+                                                continue;
+                                            }
+                                            const value = modelData.values[i];
+                                            if (
+                                                value !== null &&
+                                                isFinite(value)
+                                            ) {
+                                                const rawValue =
+                                                    state.chartVariable === "hurs"
+                                                        ? Math.min(value, 100)
+                                                        : value;
+                                                samples.push({
+                                                    scenario,
+                                                    model,
+                                                    rawValue,
+                                                    dateUsed: timestamp,
+                                                });
+                                            }
+                                        }
+                                    }
+                                    updateChartPreview(samples);
+                                }
+                            } catch (error) {
+                                // If pixel API fails, fall back to old method with sampled dates
+                                console.warn(
+                                    "Pixel API failed, falling back to full map load:",
+                                    error
+                                );
+                                const sampledDates = useFixedAnnualSamples
+                                    ? buildFixedAnnualSampleDates(
+                                          fixedReferenceDate,
+                                          clippedStart,
+                                          clippedEnd,
+                                          50
+                                      )
+                                    : buildRangeSampleDates(
+                                          clippedStart,
+                                          clippedEnd,
+                                          50
+                                      );
+                                for (const dateCandidate of sampledDates) {
+                                    const dateForScenario = useFixedAnnualSamples
+                                        ? dateCandidate
+                                        : clipDateToRange(
+                                              dateCandidate,
+                                              scenarioRange
+                                          );
+                                    if (
+                                        useFixedAnnualSamples &&
+                                        !isDateWithinRange(
+                                            dateForScenario,
+                                            scenarioRange
+                                        )
+                                    ) {
+                                        continue;
+                                    }
+                                    const request = createDataRequest({
+                                        variable: state.chartVariable,
+                                        date: dateForScenario,
+                                        model,
+                                        scenario,
+                                        resolution: 1,
+                                    });
+                                    let data: ClimateData | null = null;
+                                    try {
+                                        data = await fetchClimateData(request);
+                                    } catch (error) {
+                                        console.warn(
+                                            "Range fallback request failed, skipping date:",
+                                            error
+                                        );
+                                        continue; // Skip failed dates
+                                    }
+                                    const arr = dataToArray(data);
+                                    if (!arr) {
+                                        continue; // Skip failed dates
+                                    }
+                                    const avg =
+                                        state.chartLocation === "Draw" &&
+                                        state.chartPolygon &&
+                                        state.chartPolygon.length >= 3
+                                            ? averageArrayInPolygon(
+                                                  arr,
+                                                  state.chartVariable,
+                                                  data.shape,
+                                                  state.chartPolygon
+                                              )
+                                            : (state.chartLocation === "Point" ||
+                                                  state.chartLocation === "Search") &&
+                                              state.chartPoint
+                                            ? valueAtPoint(
+                                                  arr,
+                                                  state.chartVariable,
+                                                  data.shape,
+                                                  state.chartPoint
+                                              )
+                                            : averageArray(arr, state.chartVariable);
+                                    samples.push({
+                                        scenario,
+                                        model,
+                                        rawValue: avg,
+                                        dateUsed: dateForScenario,
+                                    });
+                                }
+                                updateChartPreview(samples);
+                            }
+
                             const after = state.chartLoadingProgress.done + 1;
                             state.chartLoadingProgress = {
                                 total: totalRequests,
@@ -2568,54 +4239,161 @@ async function loadChartData() {
                                     Math.round((after / totalRequests) * 100)
                                 )
                             );
-                            render();
-                            const arr = dataToArray(data);
-                            if (!arr) {
-                                throw new Error(
-                                    "No data returned for chart request."
-                                );
-                            }
-                            const avg =
-                                state.chartLocation === "Draw" &&
-                                state.chartPolygon &&
-                                state.chartPolygon.length >= 3
-                                    ? averageArrayInPolygon(
-                                          arr,
-                                          state.chartVariable,
-                                          data.shape,
-                                          state.chartPolygon
-                                      )
-                                    : (state.chartLocation === "Point" ||
-                                          state.chartLocation === "Search") &&
-                                      state.chartPoint
-                                    ? valueAtPoint(
-                                          arr,
-                                          state.chartVariable,
-                                          data.shape,
-                                          state.chartPoint
-                                      )
-                                    : averageArray(arr, state.chartVariable);
-                            samples.push({
-                                scenario,
-                                model,
-                                rawValue: avg,
-                                dateUsed: dateForScenario,
-                            });
+                            updateChartPreview(samples);
                         }
                     }
-                }
 
-                state.chartSamples = samples;
-                state.chartRangeSeries = buildChartRangeSeries(
-                    samples,
-                    state.chartVariable,
-                    state.chartUnit
-                );
-                state.chartLoadingProgress = {
-                    total: totalRequests,
-                    done: totalRequests,
-                };
-                setLoadingProgress(100);
+                    state.chartSamples = samples;
+                    state.chartRangeSeries = buildChartRangeSeries(
+                        samples,
+                        state.chartVariable,
+                        state.chartUnit
+                    );
+                    state.chartLoadingProgress = {
+                        total: totalRequests,
+                        done: totalRequests,
+                    };
+                    setLoadingProgress(100);
+                } else {
+                    const sampledDates = useFixedAnnualSamples
+                        ? buildFixedAnnualSampleDates(
+                              fixedReferenceDate,
+                              rangeStart,
+                              rangeEnd,
+                              50
+                          )
+                        : buildRangeSampleDates(rangeStart, rangeEnd, 50);
+                    if (!sampledDates.length) {
+                        state.chartError =
+                            "Enter a valid date range within the selected scenarios.";
+                        state.chartSamples = [];
+                        state.chartBoxes = null;
+                        state.chartRangeSeries = null;
+                        state.chartLoading = false;
+                        state.chartLoadingProgress = { total: 0, done: 0 };
+                        render();
+                        return;
+                    }
+
+                    const totalRequests =
+                        activeScenarios.length *
+                        activeModels.length *
+                        sampledDates.length;
+                    state.chartLoadingProgress = {
+                        total: totalRequests,
+                        done: 0,
+                    };
+                    state.chartBoxes = null;
+                    render();
+
+                    const samples: ChartSample[] = [];
+
+                    for (const model of activeModels) {
+                        for (const scenario of activeScenarios) {
+                            const scenarioRange =
+                                getTimeRangeForScenario(scenario);
+                            for (const dateCandidate of sampledDates) {
+                                const dateForScenario = useFixedAnnualSamples
+                                    ? dateCandidate
+                                    : clipDateToRange(
+                                          dateCandidate,
+                                          scenarioRange
+                                      );
+                                if (
+                                    useFixedAnnualSamples &&
+                                    !isDateWithinRange(
+                                        dateForScenario,
+                                        scenarioRange
+                                    )
+                                ) {
+                                    continue;
+                                }
+                                const done = state.chartLoadingProgress.done;
+                                setLoadingProgress(
+                                    Math.min(
+                                        95,
+                                        Math.round(
+                                            ((done + 0.1) / totalRequests) * 100
+                                        )
+                                    )
+                                );
+                                const request = createDataRequest({
+                                    variable: state.chartVariable,
+                                    date: dateForScenario,
+                                    model,
+                                    scenario,
+                                    resolution: 1,
+                                });
+                                let data: ClimateData | null = null;
+                                try {
+                                    data = await fetchClimateData(request);
+                                } catch (error) {
+                                    console.warn(
+                                        "Range request failed, skipping date:",
+                                        error
+                                    );
+                                    continue;
+                                }
+                                const after = state.chartLoadingProgress.done + 1;
+                                state.chartLoadingProgress = {
+                                    total: totalRequests,
+                                    done: after,
+                                };
+                                setLoadingProgress(
+                                    Math.min(
+                                        98,
+                                        Math.round((after / totalRequests) * 100)
+                                    )
+                                );
+                                updateChartPreview(samples);
+                                const arr = dataToArray(data);
+                                if (!arr) {
+                                    throw new Error(
+                                        "No data returned for chart request."
+                                    );
+                                }
+                                const avg =
+                                    state.chartLocation === "Draw" &&
+                                    state.chartPolygon &&
+                                    state.chartPolygon.length >= 3
+                                        ? averageArrayInPolygon(
+                                              arr,
+                                              state.chartVariable,
+                                              data.shape,
+                                              state.chartPolygon
+                                          )
+                                        : (state.chartLocation === "Point" ||
+                                              state.chartLocation === "Search") &&
+                                          state.chartPoint
+                                        ? valueAtPoint(
+                                              arr,
+                                              state.chartVariable,
+                                              data.shape,
+                                              state.chartPoint
+                                          )
+                                        : averageArray(arr, state.chartVariable);
+                                samples.push({
+                                    scenario,
+                                    model,
+                                    rawValue: avg,
+                                    dateUsed: dateForScenario,
+                                });
+                            }
+                        }
+                    }
+
+                    state.chartSamples = samples;
+                    state.chartRangeSeries = buildChartRangeSeries(
+                        samples,
+                        state.chartVariable,
+                        state.chartUnit
+                    );
+                    state.chartLoadingProgress = {
+                        total: totalRequests,
+                        done: totalRequests,
+                    };
+                    setLoadingProgress(100);
+                }
             }
         }
     } catch (error) {
@@ -2854,8 +4632,11 @@ function render() {
                 id="map-canvas"
                 style="position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; pointer-events: auto;"
               ></canvas>
+              ${renderMapSearchBar()}
               ${renderDrawOverlay()}
               ${renderPointOverlay()}
+              ${renderMapMarkerOverlay()}
+              ${renderMapInfoWindow()}
               ${renderLoadingIndicator()}
               ${
                   state.dataError
@@ -3063,7 +4844,8 @@ function render() {
                 paletteOptions[0];
             drawLegendGradient("legend-gradient-canvas", palette.colors);
 
-            if (state.drawState.active) {
+            // Render overlay if actively drawing or if there's a completed polygon
+            if (state.drawState.active || (state.mapPolygon !== null && state.mapPolygon.length >= 3)) {
                 requestAnimationFrame(renderDrawOverlayPaths);
             }
         }
@@ -3074,6 +4856,7 @@ function render() {
         (state.sidebarOpen ? SIDEBAR_WIDTH + 24 : 24) + 8;
     const scale = state.sidebarOpen ? 1 : 0.9;
     applyChartLayoutOffset(currentPadding, scale);
+    updateMapSearchPosition();
 }
 
 function renderLoadingIndicator() {
@@ -3243,6 +5026,121 @@ function renderChartSvg(boxes: ChartBox[]): string {
         ${axisTicks}
         ${boxesMarkup}
         ${yLabel}
+      </svg>
+    `;
+}
+
+function renderMiniChartSvg(boxes: ChartBox[], unitLabel: string): string {
+    if (!boxes.length) {
+        return `<div style="${styleAttr(
+            styles.chartEmpty
+        )}">No chart data loaded yet.</div>`;
+    }
+
+    const sortedBoxes = [...boxes].sort((a, b) => {
+        return scenarios.indexOf(a.scenario) - scenarios.indexOf(b.scenario);
+    });
+
+    const palette =
+        paletteOptions.find((p) => p.name === state.palette) ||
+        paletteOptions[0];
+    const colors = palette.colors;
+
+    const width = 560;
+    const height = 300;
+    const margin = { top: 18, right: 16, bottom: 52, left: 48 };
+    const plotWidth = width - margin.left - margin.right;
+    const plotHeight = height - margin.top - margin.bottom;
+
+    const allExtrema = sortedBoxes.flatMap((b) => [b.stats.min, b.stats.max]);
+    const minVal = Math.min(...allExtrema);
+    const maxVal = Math.max(...allExtrema);
+    const pad = Math.max(Math.abs(maxVal - minVal) * 0.12, 1e-6);
+
+    const yScale = d3
+        .scaleLinear()
+        .domain([minVal - pad, maxVal + pad])
+        .range([plotHeight, 0]);
+    const yTicks = yScale.ticks(4);
+
+    const xStep = plotWidth / (sortedBoxes.length + 1);
+
+    const axisTicks = yTicks
+        .map((tick) => {
+            const y = yScale(tick) + margin.top;
+            return `
+        <g>
+          <line x1="${margin.left}" x2="${
+                width - margin.right
+            }" y1="${y}" y2="${y}" stroke="rgba(255,255,255,0.06)" />
+          <text x="${margin.left - 8}" y="${
+                y + 3
+            }" fill="var(--text-secondary)" font-size="9" text-anchor="end">
+            ${formatNumberCompact(tick)}
+          </text>
+        </g>
+      `;
+        })
+        .join("");
+
+    const boxesMarkup = sortedBoxes
+        .map((box, idx) => {
+            const x = margin.left + xStep * (idx + 1);
+            const color = colors[idx % colors.length];
+            const { min, q1, median, q3, max, mean } = box.stats;
+            const boxTop = yScale(q3) + margin.top;
+            const boxBottom = yScale(q1) + margin.top;
+            const rectHeight = Math.max(2, boxBottom - boxTop);
+            return `
+        <g>
+          <line x1="${x}" x2="${x}" y1="${yScale(min) + margin.top}" y2="${
+                yScale(max) + margin.top
+            }" stroke="${color}" stroke-width="1.6" stroke-linecap="round" />
+          <rect x="${
+              x - 16
+          }" y="${boxTop}" width="32" height="${rectHeight}" fill="rgba(255,255,255,0.06)" stroke="${color}" stroke-width="1.6" rx="5" />
+          <line x1="${x - 16}" x2="${x + 16}" y1="${
+                yScale(median) + margin.top
+            }" y2="${
+                yScale(median) + margin.top
+            }" stroke="${color}" stroke-width="2" />
+          <circle cx="${x}" cy="${
+                yScale(mean) + margin.top
+            }" r="3.2" fill="${color}" stroke="rgba(0,0,0,0.55)" stroke-width="0.8" />
+          <text x="${x}" y="${
+                height - margin.bottom + 26
+            }" fill="var(--text-primary)" font-weight="700" font-size="10" text-anchor="middle">${
+                box.scenario
+            }</text>
+          <text x="${x}" y="${
+                height - margin.bottom + 40
+            }" fill="var(--text-secondary)" font-size="9" text-anchor="middle">${
+                box.samples.length
+            } model${box.samples.length === 1 ? "" : "s"}</text>
+        </g>
+      `;
+        })
+        .join("");
+
+    const axisLine = `
+      <line
+        x1="${margin.left}"
+        x2="${margin.left}"
+        y1="${margin.top}"
+        y2="${height - margin.bottom}"
+        stroke="rgba(255,255,255,0.55)"
+        stroke-width="1"
+      />
+    `;
+
+    return `
+      <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Mini box plots" preserveAspectRatio="xMidYMid meet" style="width:100%; height:auto;">
+        ${axisLine}
+        ${axisTicks}
+        ${boxesMarkup}
+        <text x="${margin.left}" y="${margin.top - 6}" fill="var(--text-secondary)" font-size="9">${escapeHtml(
+            unitLabel
+        )}</text>
       </svg>
     `;
 }
@@ -4201,6 +6099,111 @@ function renderChartLocationExtras() {
     `;
 }
 
+function renderMapSearchBar() {
+    if (state.canvasView !== "map") return "";
+    const results =
+        state.mapLocationSearchResults.length > 0
+            ? state.mapLocationSearchResults
+                  .map(
+                      (res) => `
+                <button
+                  type="button"
+                  class="location-search-result"
+                  data-role="map-location-search-result"
+                  data-name="${escapeHtml(res.displayName)}"
+                  data-lat="${res.lat}"
+                  data-lon="${res.lon}"
+                >
+                  <div class="location-search-result-name">${escapeHtml(
+                      res.displayName
+                  )}</div>
+                  <div class="location-search-result-coord">
+                    ${res.lat.toFixed(3)}, ${res.lon.toFixed(3)}
+                  </div>
+                </button>
+              `
+                  )
+                  .join("")
+            : "";
+
+    const hasQuery = state.mapLocationSearchQuery.trim().length > 0;
+    const statusMessage = state.mapLocationSearchError
+        ? `<div class="location-search-error">${escapeHtml(
+              state.mapLocationSearchError
+          )}</div>`
+        : state.mapLocationSearchLoading
+        ? `<div class="location-search-status">Searching...</div>`
+        : state.mapLocationSearchResults.length === 0 &&
+          hasQuery &&
+          !state.mapLocationSearchSelection
+        ? `<div class="location-search-status">No places found. Try refining your query.</div>`
+        : "";
+
+    const showResultsPanel = Boolean(
+        results || (statusMessage && !state.mapLocationSearchLoading)
+    );
+    const shift = state.sidebarOpen ? -SIDEBAR_WIDTH / 2 : 0;
+    const wrapStyle = mergeStyles(styles.mapSearchWrap, {
+        top: 18,
+        transform: `translateX(calc(-50% + ${shift}px))`,
+    });
+
+    return `
+      <div data-role="map-location-search" style="${styleAttr(wrapStyle)}">
+        <div class="location-search-row" style="display: flex; align-items: center; gap: 8px;">
+          <input
+            type="text"
+            class="location-search-input"
+            value="${escapeHtml(state.mapLocationSearchQuery)}"
+            placeholder="Search a place (e.g. Aachen)"
+            data-role="map-location-search-input"
+            style="flex: 1;"
+          />
+          <button
+            type="button"
+            data-action="toggle-map-draw"
+            aria-label="${state.drawState.active ? "Stop drawing" : "Start drawing"}"
+            style="
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              width: 36px;
+              height: 36px;
+              padding: 0;
+              border: 1px solid rgba(148, 163, 184, 0.3);
+              border-radius: 6px;
+              background: ${state.drawState.active ? "rgba(52, 211, 153, 0.1)" : "rgba(15, 23, 42, 0.85)"};
+              color: ${state.drawState.active ? "#34d399" : "var(--text-secondary)"};
+              cursor: pointer;
+              transition: all 0.2s ease;
+            "
+            onmouseover="this.style.background='rgba(52, 211, 153, 0.2)';this.style.color='#34d399';"
+            onmouseout="this.style.background='${state.drawState.active ? "rgba(52, 211, 153, 0.1)" : "rgba(15, 23, 42, 0.85)"}';this.style.color='${state.drawState.active ? "#34d399" : "var(--text-secondary)"}';"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+            </svg>
+          </button>
+        </div>
+        ${state.mapLocationSearchLoading ? statusMessage : ""}
+        ${
+            showResultsPanel
+                ? `
+        ${!state.mapLocationSearchLoading ? statusMessage : ""}
+        <div
+          class="location-search-results"
+          data-role="map-location-search-results"
+          style="${styleAttr(styles.mapSearchResults)}"
+        >
+          ${results || ""}
+        </div>`
+                : ""
+        }
+      </div>
+    `;
+}
+
 function renderChartSection() {
     const chartModeIndicatorTransform =
         state.chartMode === "single" ? "translateX(0%)" : "translateX(100%)";
@@ -4776,6 +6779,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             // keep charts aligned with toggle; +8 matches previous offset
             const scale = state.sidebarOpen ? 1 : 0.9;
             applyChartLayoutOffset(right + 8, scale);
+            updateMapSearchPosition();
         },
     });
 
@@ -5248,6 +7252,20 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                         );
                     }
                 }
+                if (state.mapMarker) {
+                    if (state.mapInfoOpen) {
+                        if (state.mapInfoSamples.length) {
+                            state.mapInfoBoxes = buildChartBoxes(
+                                state.mapInfoSamples,
+                                state.variable,
+                                state.selectedUnit
+                            );
+                            render();
+                        } else if (!state.mapInfoLoading) {
+                            void loadMapInfoData();
+                        }
+                    }
+                }
                 return;
             case "palette":
                 state.palette = val;
@@ -5393,6 +7411,11 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         render();
         if (state.canvasView === "map" && triggerMapReload) {
             loadClimateData();
+            const hasPoint = state.mapMarker !== null;
+            const hasPolygon = state.mapPolygon !== null && state.mapPolygon.length >= 3;
+            if ((hasPoint || hasPolygon) && state.mapInfoOpen) {
+                void loadMapInfoData();
+            }
         }
         if (
             state.canvasView === "chart" &&
@@ -5503,6 +7526,101 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             if (input) {
                 setTimeout(() => input.focus(), 0);
             }
+        }
+    }
+
+    const mapSearchInputs = root.querySelectorAll<HTMLInputElement>(
+        '[data-role="map-location-search-input"]'
+    );
+    const mapSearchResults = root.querySelectorAll<HTMLElement>(
+        '[data-role="map-location-search-result"]'
+    );
+
+    const clearMapSearchDebounce = () => {
+        if (mapLocationSearchDebounce !== null) {
+            window.clearTimeout(mapLocationSearchDebounce);
+            mapLocationSearchDebounce = null;
+        }
+    };
+
+    const triggerMapSearch = (query: string) => {
+        clearMapSearchDebounce();
+        void handleMapLocationSearch(query);
+    };
+
+    mapSearchInputs.forEach((input) => {
+        input.addEventListener("focus", () => {
+            state.mapLocationSearchFocused = true;
+        });
+        const syncCursor = () => {
+            const start = input.selectionStart ?? input.value.length;
+            const end = input.selectionEnd ?? input.value.length;
+            state.mapLocationSearchCursor = { start, end };
+        };
+        input.addEventListener("input", () => {
+            const hadResults = state.mapLocationSearchResults.length > 0;
+            const wasLoading = state.mapLocationSearchLoading;
+            const hadError = Boolean(state.mapLocationSearchError);
+
+            state.mapLocationSearchQuery = input.value;
+            state.mapLocationSearchError = null;
+            state.mapLocationSearchSelection = null;
+            state.mapLocationSearchFocused = true;
+            syncCursor();
+
+            clearMapSearchDebounce();
+
+            const trimmed = input.value.trim();
+
+            if (!trimmed) {
+                state.mapLocationSearchResults = [];
+                state.mapLocationSearchLoading = false;
+                render();
+                return;
+            }
+
+            if (hadResults || wasLoading || hadError) {
+                state.mapLocationSearchResults = [];
+                state.mapLocationSearchLoading = false;
+                render();
+            }
+
+            mapLocationSearchDebounce = window.setTimeout(() => {
+                triggerMapSearch(input.value);
+            }, LOCATION_SEARCH_DEBOUNCE_MS);
+        });
+        input.addEventListener("keyup", syncCursor);
+        input.addEventListener("click", syncCursor);
+        input.addEventListener("select", syncCursor);
+        input.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") {
+                e.preventDefault();
+                clearMapSearchDebounce();
+                triggerMapSearch(input.value);
+            }
+        });
+    });
+
+    mapSearchResults.forEach((resultEl) => {
+        resultEl.addEventListener("click", () => {
+            const lat = Number(resultEl.dataset.lat);
+            const lon = Number(resultEl.dataset.lon);
+            const name = resultEl.dataset.name ?? "Selected place";
+            if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+            applyMapSearchedLocation({ displayName: name, lat, lon });
+        });
+    });
+
+    if (state.mapLocationSearchFocused) {
+        const input = root.querySelector<HTMLInputElement>(
+            '[data-role="map-location-search-input"]'
+        );
+        if (input) {
+            setTimeout(() => input.focus(), 0);
+            const { start, end } = state.mapLocationSearchCursor;
+            const safeStart = Math.min(start, input.value.length);
+            const safeEnd = Math.min(end, input.value.length);
+            setTimeout(() => input.setSelectionRange(safeStart, safeEnd), 0);
         }
     }
 
@@ -5705,6 +7823,11 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                     (key === "compareDateStart" || key === "compareDateEnd"))
             ) {
                 loadClimateData();
+                const hasPoint = state.mapMarker !== null;
+                const hasPolygon = state.mapPolygon !== null && state.mapPolygon.length >= 3;
+                if ((hasPoint || hasPolygon) && state.mapInfoOpen) {
+                    void loadMapInfoData();
+                }
             }
             if (
                 state.canvasView === "chart" &&
@@ -5775,12 +7898,67 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         })
     );
 
+    const mapInfoCloseBtn = root.querySelector<HTMLButtonElement>(
+        '[data-action="close-map-info"]'
+    );
+    mapInfoCloseBtn?.addEventListener("click", (e) => {
+        e.preventDefault();
+        closeMapInfoWindow();
+    });
+
+    const mapInfoExpandBtn = root.querySelector<HTMLButtonElement>(
+        '[data-action="open-map-info-chart"]'
+    );
+    mapInfoExpandBtn?.addEventListener("click", (e) => {
+        e.preventDefault();
+        if (!state.mapMarker && !state.mapPolygon) return;
+        state.canvasView = "chart";
+        state.chartMode = "single";
+        if (state.mapPolygon && state.mapPolygon.length >= 3) {
+            state.chartLocation = "Draw";
+            state.chartPolygon = state.mapPolygon;
+            state.chartPoint = null;
+            state.chartLocationName = null;
+        } else if (state.mapMarker) {
+            state.chartLocation = "Point";
+            state.chartPoint = {
+                lat: state.mapMarker.lat,
+                lon: state.mapMarker.lon,
+            };
+            state.chartLocationName = state.mapMarker.name ?? null;
+            state.chartPolygon = null;
+        }
+        state.chartVariable = state.variable;
+        state.chartUnit = state.selectedUnit;
+        state.chartDate = state.date;
+        state.chartError = null;
+        render();
+        loadChartData();
+    });
+
+    const mapDrawToggleBtn = root.querySelector<HTMLButtonElement>(
+        '[data-action="toggle-map-draw"]'
+    );
+    mapDrawToggleBtn?.addEventListener("click", (e) => {
+        e.preventDefault();
+        if (state.drawState.active) {
+            stopMapDrawing();
+        } else {
+            startMapDrawing();
+        }
+    });
+
     attachTimeSliderHandlers({
         root,
         getTimeRange: () => state.timeRange,
-        onDateChange: (date) => {
+            onDateChange: (date) => {
             state.date = date;
             loadClimateData();
+            const hasPoint = state.mapMarker !== null;
+            const hasPolygon = state.mapPolygon !== null && state.mapPolygon.length >= 3;
+            if ((hasPoint || hasPolygon) && state.mapInfoOpen) {
+                void loadMapInfoData();
+            }
         },
         getMode: () => state.mode,
         getCompareMode: () => state.compareMode,

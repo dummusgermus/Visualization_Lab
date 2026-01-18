@@ -7,3 +7,4 @@ pandas
 scipy
 OpenVisus
 requests
+h5py

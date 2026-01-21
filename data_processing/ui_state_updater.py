@@ -210,6 +210,12 @@ def switch_to_chart_view(**kwargs) -> dict:
         raise ValueError(f"Invalid chart_mode: {chart_mode}")
     if location not in config.VALID_CHART_LOCATIONS:
         raise ValueError(f"Invalid location: {location}")
+    
+    if parseDateToYear(chart_date) < 2015:
+        scenarios = ['historical']
+    else:
+        scenarios = [s for s in scenarios if s.lower() != 'historical']
+
 
     result = {
         "view": "Chart",
@@ -226,3 +232,11 @@ def switch_to_chart_view(**kwargs) -> dict:
         result["endDate"] = end_date
     
     return result
+
+def parseDateToYear(date_str: str) -> int:
+    """Parse date string to extract the year as an integer."""
+    try:
+        year = int(date_str.split("-")[0])
+        return year
+    except Exception as e:
+        raise ValueError(f"Invalid date format: {date_str}") from e

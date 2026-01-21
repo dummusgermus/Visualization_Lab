@@ -47,6 +47,7 @@ import {
     flattenSeriesToSamples,
     generateToyRangeSeries,
 } from "./Utils/mockChartData";
+import { registerStateUpdateCallback } from "./Utils/stateUpdate";
 import {
     convertValue,
     getDefaultUnitOption,
@@ -106,7 +107,7 @@ function applyChartLayoutOffset(offset: number, scale?: number) {
     });
 }
 
-function normalizeScenarioLabel(input: string): string {
+export function normalizeScenarioLabel(input: string): string {
     const lower = input.toLowerCase();
     if (lower === "historical") return "Historical";
     if (lower === "ssp245") return "SSP245";
@@ -7929,6 +7930,31 @@ async function init() {
         throw new Error("Root element #app not found");
     }
 
+    // Register callback for state updates from chat/backend
+    registerStateUpdateCallback((updates: Record<string, any>) => {
+        Object.assign(state, updates);
+        render();
+
+        // Reload data if necessary
+        if (
+            state.canvasView === "map" &&
+            (updates.date ||
+                updates.model ||
+                updates.scenario ||
+                updates.variable)
+        ) {
+            loadClimateData();
+        }
+        if (
+            state.canvasView === "chart" &&
+            (updates.chartDate ||
+                updates.chartRangeStart ||
+                updates.chartRangeEnd)
+        ) {
+            loadChartData();
+        }
+    });
+
     render();
 
     checkApiAvailability().then(() => {
@@ -7943,6 +7969,5 @@ async function init() {
 if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", init);
 } else {
-    // DOM is already ready
     init();
 }

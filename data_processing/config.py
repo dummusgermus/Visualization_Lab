@@ -13,6 +13,13 @@ VALID_VARIABLES = [
     "tasmin",    # Daily Minimum Near-Surface Air Temperature (K)
 ]
 
+VALID_CHART_MODES = [
+    "single",
+    "range",
+]
+
+VALID_CHART_LOCATIONS = ["World", "Point", "Region", "Search"]
+
 # Climate models
 VALID_MODELS = [
     "ACCESS-CM2",

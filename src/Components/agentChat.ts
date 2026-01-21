@@ -3,12 +3,14 @@ import {
     sendChatMessage,
     type ChatMessage as ChatClientMessage,
 } from "../Utils/chatClient";
+import { updateState } from "../Utils/stateUpdate";
 import "./agentChat.css";
 
 export type ChatMessage = {
     id: number;
     sender: "user" | "agent";
     text: string;
+    new_state?: { [key: string]: any };
 };
 
 export type ChatState = {
@@ -212,6 +214,22 @@ export function attachChatHandlers(
     });
 
     chatInput?.addEventListener("keydown", (e: KeyboardEvent) => {
+        if (e.key === "ArrowUp" && state.chatMessages.length > 0) {
+            const lastUserMessage = [...state.chatMessages]
+                .reverse()
+                .find((msg) => msg.sender === "user");
+            if (lastUserMessage) {
+                state.chatInput = lastUserMessage.text;
+                if (chatInput) chatInput.value = lastUserMessage.text;
+                // Move cursor to end
+                setTimeout(() => {
+                    chatInput?.setSelectionRange(
+                        chatInput.value.length,
+                        chatInput.value.length,
+                    );
+                }, 0);
+            }
+        }
         if (e.key === "Enter") {
             sendChat(root, state, contextData);
         }
@@ -288,9 +306,14 @@ async function sendChat(
             id: Date.now() + 1,
             sender: "agent",
             text: response.message,
+            new_state: response.new_state,
         };
+        console.log("New state from agent:", reply.new_state);
         state.chatMessages = [...state.chatMessages, reply];
-
+        if (reply.new_state) {
+            // Update application state with backend changes
+            updateState(reply.new_state);
+        }
         // Hide loading and append reply
         toggleLoadingIndicator(root, false);
         appendChatMessage(root, reply);

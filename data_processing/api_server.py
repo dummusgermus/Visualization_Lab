@@ -7,6 +7,7 @@ import sys
 from typing import List, Literal, Optional
 
 import h5py
+import llm_function_call
 import numpy as np
 import uvicorn
 from fastapi import FastAPI, HTTPException
@@ -23,17 +24,14 @@ try:  # pragma: no cover - import path juggling for script/package usage
     from . import config  # type: ignore  # noqa: E402
     from . import data_loader  # type: ignore  # noqa: E402
     from . import llm_chat  # type: ignore  # noqa: E402
-    from . import utils  # type: ignore  # noqa: E402
     from .aggregated_data import (  # type: ignore  # noqa: E402
         AggregatedDataError, AggregatedDataManager)
     from .data_loader import DataLoadingError  # type: ignore  # noqa: E402
     from .utils import ParameterValidationError  # type: ignore  # noqa: E402
 except ImportError:  # pragma: no cover
-    import aggregated_data  # type: ignore  # noqa: E402
     import config  # type: ignore  # noqa: E402
     import data_loader  # type: ignore  # noqa: E402
     import llm_chat  # type: ignore  # noqa: E402
-    import utils  # type: ignore  # noqa: E402
     from aggregated_data import (  # type: ignore  # noqa: E402
         AggregatedDataError, AggregatedDataManager)
     from data_loader import DataLoadingError  # type: ignore  # noqa: E402
@@ -265,11 +263,19 @@ def chat(request: llm_chat.ChatRequest):
     - history: Previous chat messages for context
     """
     try:
-        response = llm_chat.process_chat_message(
+        # response = llm_chat.process_chat_message(
+        #     message=request.message,
+        #     context=request.context,
+        #     history=request.history
+        # )
+        response = llm_function_call.process_chat_message(
             message=request.message,
             context=request.context,
             history=request.history
         )
+        print(response)
+        if response.new_state:
+            print(f"New state: {response.new_state}")
         return response
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(

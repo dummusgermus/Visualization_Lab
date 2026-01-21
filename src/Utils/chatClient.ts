@@ -38,6 +38,7 @@ export interface ChatRequest {
 export interface ChatResponse {
     message: string;
     success: boolean;
+    new_state?: { [key: string]: any };
     error?: string;
 }
 
@@ -45,9 +46,10 @@ export interface ChatResponse {
  * Send a chat message to the LLM API
  */
 export async function sendChatMessage(
-    request: ChatRequest
+    request: ChatRequest,
 ): Promise<ChatResponse> {
-    const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
+    const apiBaseUrl =
+        import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
 
     try {
         const response = await fetch(`${apiBaseUrl}/chat`, {
@@ -61,7 +63,7 @@ export async function sendChatMessage(
         if (!response.ok) {
             const errorText = await response.text();
             throw new Error(
-                `Chat API error (${response.status}): ${errorText}`
+                `Chat API error (${response.status}): ${errorText}`,
             );
         }
 

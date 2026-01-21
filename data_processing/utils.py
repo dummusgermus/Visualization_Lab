@@ -1,10 +1,11 @@
-from datetime import datetime
 import hashlib
-import numpy as np
 import os
-from pathlib import Path
 import sys
 import threading
+from datetime import datetime
+from pathlib import Path
+
+import numpy as np
 
 # Ensure current directory is in path
 _current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -83,6 +84,29 @@ def validate_date_range(date: datetime, scenario: str) -> None:
         raise ParameterValidationError(
             f"Date year {date.year} out of range for '{scenario}'. Valid: {start_year}-{end_year}"
         )
+
+
+def validate_date_for_scenario(date_str: str, scenario: str) -> datetime:
+    """
+    Parse and validate a date string (YYYY-MM-DD) against scenario constraints.
+    
+    Args:
+        date_str: Date string in YYYY-MM-DD format
+        scenario: Scenario name (historical, ssp245, ssp370, ssp585)
+    
+    Returns:
+        Parsed datetime object
+    
+    Raises:
+        ParameterValidationError: If date format is invalid or out of range
+    """
+    # Parse the date
+    date = parse_date(date_str)
+    
+    # Validate it's within the scenario's range
+    validate_date_range(date, scenario)
+    
+    return date
 
 
 def validate_all_parameters(variable: str, model: str, scenario: str, 

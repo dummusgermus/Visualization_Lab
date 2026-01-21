@@ -6,13 +6,9 @@ import json
 import os
 from typing import List, Optional
 
+import config
 import requests
 from pydantic import BaseModel, Field
-
-try:
-    from . import config
-except ImportError:
-    import config
 
 
 class ChatMessage(BaseModel):
@@ -31,6 +27,7 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     """Response from LLM chat."""
     message: str = Field(..., description="Assistant's response")
+    new_state: Optional[dict] = Field(None, description="Updated application state if any")
     success: bool = Field(True, description="Whether the request succeeded")
     error: Optional[str] = Field(None, description="Error message if failed")
 

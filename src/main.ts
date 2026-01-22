@@ -10,6 +10,14 @@ import {
     renderSidebarToggle,
     SIDEBAR_WIDTH,
 } from "./Components/sidebar";
+import {
+    completeCurrentStep,
+    endTutorial,
+    getTutorialState,
+    renderTutorialButton,
+    renderTutorialOverlay,
+    startTutorial,
+} from "./Components/tutorial";
 import { drawLegendGradient, renderMapLegend } from "./MapView/legend";
 import {
     getCurrentZoomLevel,
@@ -4595,11 +4603,12 @@ function renderBranding() {
 
 function render() {
     if (!appRoot) return; // Defensive check (should never happen due to initialization check)
-    const shouldRestoreChartLocationDropdown = Boolean(
-        appRoot
-            .querySelector('.custom-select-wrapper[data-key="chartLocation"]')
-            ?.classList.contains("open"),
-    );
+    const root = appRoot;
+    const openSelectKeys = Array.from(
+        root.querySelectorAll<HTMLElement>(".custom-select-wrapper.open"),
+    )
+        .map((el) => el.getAttribute("data-key"))
+        .filter((key): key is string => Boolean(key));
     const resolutionFill = ((state.resolution - 1) / (3 - 1)) * 100;
 
     const modeTransform =
@@ -4611,7 +4620,7 @@ function render() {
     const tabTransform =
         state.panelTab === "Manual" ? "translateX(0%)" : "translateX(-50%)";
 
-    appRoot.innerHTML = `
+    root.innerHTML = `
     <div style="${styleAttr(styles.page)}">
       <div style="${styleAttr(styles.bgLayer1)}"></div>
       <div style="${styleAttr(styles.bgLayer2)}"></div>
@@ -4810,19 +4819,47 @@ function render() {
                 })
               : ""
       }
+
+      ${renderTutorialButton()}
+      ${renderTutorialOverlay(getTutorialState())}
     </div>
   `;
 
     attachEventHandlers({ resolutionFill });
 
-    if (shouldRestoreChartLocationDropdown) {
-        const wrapper = appRoot.querySelector<HTMLElement>(
-            '.custom-select-wrapper[data-key="chartLocation"]',
+    const tutorialBox = root.querySelector<HTMLElement>(".tutorial-box");
+    if (tutorialBox) {
+        const rect = tutorialBox.getBoundingClientRect();
+        const padding = 16;
+        let deltaX = 0;
+        let deltaY = 0;
+
+        if (rect.right > window.innerWidth - padding) {
+            deltaX = (window.innerWidth - padding) - rect.right;
+        } else if (rect.left < padding) {
+            deltaX = padding - rect.left;
+        }
+
+        if (rect.bottom > window.innerHeight - padding) {
+            deltaY = (window.innerHeight - padding) - rect.bottom;
+        } else if (rect.top < padding) {
+            deltaY = padding - rect.top;
+        }
+
+        if (deltaX !== 0 || deltaY !== 0) {
+            const existingTransform = tutorialBox.style.transform || "";
+            tutorialBox.style.transform = `${existingTransform} translate(${deltaX}px, ${deltaY}px)`;
+        }
+    }
+
+    openSelectKeys.forEach((key) => {
+        const wrapper = root.querySelector<HTMLElement>(
+            `.custom-select-wrapper[data-key="${key}"]`,
         );
         if (wrapper) {
             wrapper.classList.add("open");
         }
-    }
+    });
 
     mapCanvas = appRoot.querySelector<HTMLCanvasElement>("#map-canvas");
 
@@ -5503,12 +5540,13 @@ function renderField(label: string, controlHtml: string) {
 function renderInput(
     name: string,
     value: string,
-    opts?: { type?: string; dataKey?: string; min?: string; max?: string },
+    opts?: { type?: string; dataKey?: string; min?: string; max?: string; dataRole?: string },
 ) {
     const type = opts?.type ?? "date";
     const dataKey = opts?.dataKey ?? name;
     const minAttr = opts?.min ? `min="${opts.min}"` : "";
     const maxAttr = opts?.max ? `max="${opts.max}"` : "";
+    const dataRole = opts?.dataRole ? `data-role="${opts.dataRole}"` : "";
     return `
     <input
       type="${type}"
@@ -5517,6 +5555,7 @@ function renderInput(
       data-key="${dataKey}"
       ${minAttr}
       ${maxAttr}
+      ${dataRole}
     />
   `;
 }
@@ -5531,6 +5570,7 @@ function renderSelect(
         infoType?: "scenario" | "variable" | "model";
         selectedLabel?: string;
         extraContent?: string;
+        dataRole?: string;
     },
 ) {
     const dataKey = opts?.dataKey ?? name;
@@ -5541,11 +5581,12 @@ function renderSelect(
     const infoType = opts?.infoType;
     const displayValue = escapeHtml(opts?.selectedLabel ?? current);
     const extraContent = opts?.extraContent ?? "";
+    const dataRole = opts?.dataRole ? `data-role="${opts.dataRole}"` : "";
 
     return `
     <div class="custom-select-container">
       <div class="custom-select-info-panel" id="${uniqueId}-info" role="tooltip"></div>
-      <div class="custom-select-wrapper" data-key="${dataKey}" ${
+      <div class="custom-select-wrapper" ${dataRole} data-key="${dataKey}" ${
           disabled ? 'data-disabled="true"' : ""
       } ${infoType ? `data-info-type="${infoType}"` : ""}>
         <div class="custom-select-trigger" data-action="update-select" data-key="${dataKey}" id="${uniqueId}-trigger" ${
@@ -5687,12 +5728,14 @@ function renderManualSection(params: {
                   "Scenario",
                   renderSelect("scenario", scenarios, state.scenario, {
                       infoType: "scenario",
+                      dataRole: "scenario-selector",
                   }),
               )}
               ${renderField(
                   "Model",
                   renderSelect("model", models, state.model, {
                       infoType: "model",
+                      dataRole: "model-selector",
                   }),
               )}
               ${renderField(
@@ -5702,6 +5745,7 @@ function renderManualSection(params: {
                       return renderInput("date", state.date, {
                           min: timeRange.start,
                           max: timeRange.end,
+                          dataRole: "date-picker",
                       });
                   })(),
               )}
@@ -5709,6 +5753,7 @@ function renderManualSection(params: {
                   "Variable",
                   renderSelect("variable", variables, state.variable, {
                       infoType: "variable",
+                      dataRole: "variable-selector",
                   }),
               )}
             </div>
@@ -5727,7 +5772,7 @@ function renderManualSection(params: {
                       "unit",
                       getUnitOptions(state.variable).map((opt) => opt.label),
                       state.selectedUnit,
-                      { dataKey: "unit" },
+                      { dataKey: "unit", dataRole: "unit-selector" },
                   ),
               )}
             </div>
@@ -5746,7 +5791,7 @@ function renderManualSection(params: {
                       "palette",
                       paletteOptions.map((p) => p.name),
                       state.palette,
-                      { dataKey: "palette" },
+                      { dataKey: "palette", dataRole: "palette-selector" },
                   ),
               )}
             </div>
@@ -6721,6 +6766,16 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                     value === "map" ? "translateX(0%)" : "translateX(100%)";
 
                 state.canvasView = value;
+
+                const tutorialState = getTutorialState();
+                if (
+                    tutorialState.active &&
+                    tutorialState.currentStep === 8 &&
+                    value === "chart"
+                ) {
+                    completeCurrentStep();
+                }
+
                 render();
 
                 if (value === "map") {
@@ -7004,6 +7059,14 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             });
             // Toggle this dropdown
             wrapper.classList.toggle("open", !isOpen);
+
+            // If tutorial is active, re-render after dropdown opens to expand backdrop cutout
+            const tutorialState = getTutorialState();
+            if (tutorialState.active) {
+                setTimeout(() => {
+                    render();
+                }, 50);
+            }
         });
 
         // Keyboard navigation for trigger
@@ -7046,6 +7109,29 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
 
                 // Trigger the change handler
                 handleSelectChange(dataKey, value);
+
+                // Handle tutorial progression - detect when a selection is made during tutorial
+                const tutorialState = getTutorialState();
+                if (tutorialState.active) {
+                    // Map tutorial steps to their data keys
+                    // Step 1: scenario, Step 2: model, Step 4: unit, Step 5: palette
+                    const stepToKey: { [key: number]: string } = {
+                        1: "scenario",
+                        2: "model",
+                        4: "variable",
+                        5: "unit",
+                        6: "palette",
+                    };
+                    
+                    // If this selection matches the current tutorial step's expected data key
+                    if (stepToKey[tutorialState.currentStep] === dataKey) {
+                        // Small delay to ensure the selection is processed first
+                        setTimeout(() => {
+                            completeCurrentStep();
+                            render();
+                        }, 100);
+                    }
+                }
             });
 
             // Show info on hover
@@ -7734,6 +7820,19 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                     break;
             }
 
+            // Advance tutorial only after a valid date change
+            const tutorialState = getTutorialState();
+            if (
+                key === "date" &&
+                tutorialState.active &&
+                tutorialState.currentStep === 3
+            ) {
+                setTimeout(() => {
+                    completeCurrentStep();
+                    render();
+                }, 100);
+            }
+
             // Only re-render and reload if the date actually changed
 
             render();
@@ -7760,15 +7859,9 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             }
         };
 
-        // Update only on blur or Enter key to avoid excessive loading (also crashes if date is incomplete)
+        // Update on change (date picker selection) and blur (manual typing)
+        input.addEventListener("change", updateDate);
         input.addEventListener("blur", updateDate);
-        input.addEventListener("keydown", (e) => {
-            if (e.key === "Enter") {
-                e.preventDefault();
-                updateDate();
-                input.blur();
-            }
-        });
     });
 
     const resolutionInputs = root.querySelectorAll<HTMLInputElement>(
@@ -7964,6 +8057,81 @@ async function init() {
     if (state.canvasView === "map" && state.mode === "Explore") {
         loadClimateData();
     }
+
+    // Tutorial event handlers - attach once during init, not on every render
+    appRoot.addEventListener("click", (e) => {
+        const target = e.target as HTMLElement;
+        
+        // Use closest to find the element with data-action, even if a child is clicked
+        const actionElement = target.closest('[data-action]') as HTMLElement | null;
+        const action = actionElement?.getAttribute("data-action");
+
+        if (action === "tutorial-continue") {
+            e.preventDefault();
+            e.stopPropagation();
+            completeCurrentStep();
+            render();
+            return;
+        }
+
+        if (action === "close-tutorial") {
+            e.preventDefault();
+            e.stopPropagation();
+            endTutorial();
+            render();
+            return;
+        }
+
+        if (action === "start-tutorial") {
+            e.preventDefault();
+            e.stopPropagation();
+            startTutorial();
+            render();
+            return;
+        }
+
+        // Handle tutorial progression for select options - detect when a selection is made during tutorial
+        if (action === "update-select") {
+            const tutorialState = getTutorialState();
+            if (tutorialState.active) {
+                const dataKey = actionElement?.getAttribute("data-key");
+                
+                // If clicking on the trigger (not an option), re-render to expand spotlight
+                if (target.classList.contains('custom-select-trigger') || target.closest('.custom-select-trigger')) {
+                    // Longer delay to let dropdown fully open and DOM update, then re-render to expand spotlight
+                    setTimeout(() => {
+                        render();
+                    }, 50);
+                }
+                
+                // Map tutorial steps to their data keys
+                // Step 1: scenario, Step 2: model, Step 4: unit, Step 5: palette
+                const stepToKey: { [key: number]: string } = {
+                    1: "scenario",
+                    2: "model",
+                    4: "variable",
+                    5: "unit",
+                    6: "palette",
+                };
+                
+                // If this selection matches the current tutorial step's expected data key
+                // and it's an option being clicked (not the trigger)
+                if (stepToKey[tutorialState.currentStep] === dataKey && 
+                    (target.classList.contains('custom-select-option') || target.closest('.custom-select-option'))) {
+                    // Small delay to ensure the selection is processed first
+                    setTimeout(() => {
+                        completeCurrentStep();
+                        render();
+                    }, 100);
+                }
+            }
+        }
+
+        // Handle date input changes during tutorial
+        if (action === "update-input") {
+            // No-op: tutorial progression for date happens on valid change (blur/enter)
+        }
+    });
 }
 
 if (document.readyState === "loading") {

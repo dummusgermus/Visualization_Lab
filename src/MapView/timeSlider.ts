@@ -130,7 +130,7 @@ export function renderTimeSlider(params: RenderTimeSliderParams): string {
     }
 
     return `
-      <div class="time-slider-container" style="right: ${rightPosition}px">
+      <div class="time-slider-container" data-role="time-slider" style="right: ${rightPosition}px">
         <div data-role="time-label" class="time-label">${formatDateDisplay(
             date
         )}</div>

@@ -33,7 +33,7 @@ export function resetMapTransform(): void {
     if (zoomBehavior && cachedMapCanvas) {
         d3.select(cachedMapCanvas).call(
             zoomBehavior.transform,
-            d3.zoomIdentity
+            d3.zoomIdentity,
         );
     }
 }
@@ -72,7 +72,7 @@ function gridToLatLon(
     x: number,
     y: number,
     lonStep: number,
-    latStep: number
+    latStep: number,
 ): [number, number] {
     const lonRaw = x * lonStep + lonStep / 2;
     const lon = lonRaw > 180 ? lonRaw - 360 : lonRaw;
@@ -87,7 +87,7 @@ function getDataValue(
     y: number,
     width: number,
     height: number,
-    arrayData: Float32Array | Float64Array
+    arrayData: Float32Array | Float64Array,
 ): number | null {
     if (x < 0 || x >= width || y < 0 || y >= height) return null;
     const flippedY = height - 1 - y;
@@ -107,7 +107,7 @@ function updateCursor(canvas: HTMLCanvasElement) {
 function pointerToLonLat(
     canvas: HTMLCanvasElement,
     clientX: number,
-    clientY: number
+    clientY: number,
 ): { lat: number; lon: number } | null {
     if (!cachedMapCanvas) return null;
 
@@ -162,13 +162,13 @@ function pointerToLonLat(
 
 function setDrawMode(enabled: boolean, callbacks?: DrawCallbacks | null) {
     drawMode = enabled;
-    drawCallbacks = enabled ? callbacks ?? null : null;
+    drawCallbacks = enabled ? (callbacks ?? null) : null;
 }
 
 export function projectLonLatToCanvas(
     canvas: HTMLCanvasElement,
     lon: number,
-    lat: number
+    lat: number,
 ): { x: number; y: number } | null {
     if (!cachedMapCanvas) return null;
     const mapWidth = cachedMapCanvas.width;
@@ -228,7 +228,7 @@ export function setupMapInteractions(
         onDrawMove?: (coords: { lat: number; lon: number }) => void;
         onMapClick?: (coords: { lat: number; lon: number }) => void;
         onTransform?: () => void;
-    }
+    },
 ): void {
     setDrawMode(options?.drawMode ?? false, {
         onClick: options?.onDrawClick,
@@ -302,7 +302,7 @@ export function setupMapInteractions(
                 unit,
                 cachedVariable,
                 cachedSelectedUnit,
-                cachedIsDifference
+                cachedIsDifference,
             );
         }
     });
@@ -354,7 +354,7 @@ export function renderMapData(
     min: number,
     max: number,
     variable?: string,
-    selectedUnit?: string
+    selectedUnit?: string,
 ): void {
     if (!mapCanvas) return;
 
@@ -363,8 +363,6 @@ export function renderMapData(
         console.warn("No data to render");
         return;
     }
-
-    console.log("Rendering map data (full render)");
 
     const setup = setupCanvas(mapCanvas);
     if (!setup) return;
@@ -431,8 +429,6 @@ export function renderMapData(
     const imageData = offscreenCtx.createImageData(viewWidth, viewHeight);
     const pixels = imageData.data;
 
-    console.log("Rendering map data");
-
     // Pre-calculate cell size
     const cellSize = Math.max(viewWidth / width, viewHeight / height);
     const halfCell = Math.ceil(cellSize / 2);
@@ -468,7 +464,7 @@ export function renderMapData(
                     ? 0.5
                     : Math.min(
                           1,
-                          Math.max(0, (displayValue - convertedMin) / range)
+                          Math.max(0, (displayValue - convertedMin) / range),
                       );
 
             const colorIdx = Math.floor(normalized * (paletteRgb.length - 1));
@@ -533,7 +529,7 @@ export function zoomToLocation(
     lon: number,
     lat: number,
     zoomLevel = 3.2,
-    durationMs = 550
+    durationMs = 550,
 ): void {
     if (!cachedMapCanvas || !zoomBehavior) return;
     const rect = canvas.getBoundingClientRect();
@@ -587,7 +583,7 @@ function updateTooltip(
     unit: string,
     _variable?: string,
     _selectedUnit?: string,
-    isDifference?: boolean
+    isDifference?: boolean,
 ): void {
     if (!cachedValueLookup || !cachedMapCanvas) return;
 
@@ -620,7 +616,7 @@ function updateTooltip(
                 lon,
                 rawValue,
                 unit,
-                isDifference
+                isDifference,
             );
         } else {
             hideTooltip();

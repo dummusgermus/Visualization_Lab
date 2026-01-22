@@ -7,7 +7,9 @@ import sys
 from typing import List, Literal, Optional
 
 import h5py
+import llm_function_call
 import numpy as np
+import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -18,21 +20,22 @@ if _CURRENT_DIR not in sys.path:
     sys.path.insert(0, _CURRENT_DIR)
 
 try:  # pragma: no cover - import path juggling for script/package usage
-    from . import data_loader  # type: ignore  # noqa: E402
-    from . import config  # type: ignore  # noqa: E402
-    from . import utils  # type: ignore  # noqa: E402
     from . import aggregated_data  # type: ignore  # noqa: E402
+    from . import config  # type: ignore  # noqa: E402
+    from . import data_loader  # type: ignore  # noqa: E402
+    from . import llm_chat  # type: ignore  # noqa: E402
+    from .aggregated_data import (  # type: ignore  # noqa: E402
+        AggregatedDataError, AggregatedDataManager)
     from .data_loader import DataLoadingError  # type: ignore  # noqa: E402
     from .utils import ParameterValidationError  # type: ignore  # noqa: E402
-    from .aggregated_data import AggregatedDataManager, AggregatedDataError  # type: ignore  # noqa: E402
 except ImportError:  # pragma: no cover
-    import data_loader  # type: ignore  # noqa: E402
     import config  # type: ignore  # noqa: E402
-    import utils  # type: ignore  # noqa: E402
-    import aggregated_data  # type: ignore  # noqa: E402
+    import data_loader  # type: ignore  # noqa: E402
+    import llm_chat  # type: ignore  # noqa: E402
+    from aggregated_data import (  # type: ignore  # noqa: E402
+        AggregatedDataError, AggregatedDataManager)
     from data_loader import DataLoadingError  # type: ignore  # noqa: E402
     from utils import ParameterValidationError  # type: ignore  # noqa: E402
-    from aggregated_data import AggregatedDataManager, AggregatedDataError  # type: ignore  # noqa: E402
 
 
 AllowedFormat = Literal["base64", "list", "none"]
@@ -247,6 +250,38 @@ def fetch_time_series(request: TimeSeriesRequest):
         _translate_error(exc)
 
     return [_format_result(entry, request.data_format) for entry in series]
+
+
+@app.post("/chat")
+def chat(request: llm_chat.ChatRequest):
+    """
+    Process a chat message with LLM and return a response.
+
+    The request can include:
+    - message: The user's question or message
+    - context: Current application state (selected variable, model, scenario, etc.)
+    - history: Previous chat messages for context
+    """
+    try:
+        # response = llm_chat.process_chat_message(
+        #     message=request.message,
+        #     context=request.context,
+        #     history=request.history
+        # )
+        response = llm_function_call.process_chat_message(
+            message=request.message,
+            context=request.context,
+            history=request.history
+        )
+        print(response)
+        if response.new_state:
+            print(f"New state: {response.new_state}")
+        return response
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=500,
+            detail=f"Chat processing failed: {str(exc)}"
+        ) from exc
 
 
 @app.post("/pixel-data")
@@ -567,7 +602,6 @@ def get_aggregated_status():
         }
     
     try:
-        import h5py
         with h5py.File(str(manager.filepath), "r") as f:
             meta = f["metadata"]
             regions = json.loads(meta.attrs.get("regions", "[]"))
@@ -588,7 +622,6 @@ def get_aggregated_status():
 
 def main():
     """Convenience entry point for `python api_server.py`."""
-    import uvicorn
 
     host = os.environ.get("NEX_GDDP_API_HOST", "0.0.0.0")
     port = int(os.environ.get("NEX_GDDP_API_PORT", "8000"))

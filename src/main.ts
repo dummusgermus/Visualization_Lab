@@ -4844,13 +4844,13 @@ function render() {
         let deltaY = 0;
 
         if (rect.right > window.innerWidth - padding) {
-            deltaX = (window.innerWidth - padding) - rect.right;
+            deltaX = window.innerWidth - padding - rect.right;
         } else if (rect.left < padding) {
             deltaX = padding - rect.left;
         }
 
         if (rect.bottom > window.innerHeight - padding) {
-            deltaY = (window.innerHeight - padding) - rect.bottom;
+            deltaY = window.innerHeight - padding - rect.bottom;
         } else if (rect.top < padding) {
             deltaY = padding - rect.top;
         }
@@ -5549,7 +5549,13 @@ function renderField(label: string, controlHtml: string) {
 function renderInput(
     name: string,
     value: string,
-    opts?: { type?: string; dataKey?: string; min?: string; max?: string; dataRole?: string },
+    opts?: {
+        type?: string;
+        dataKey?: string;
+        min?: string;
+        max?: string;
+        dataRole?: string;
+    },
 ) {
     const type = opts?.type ?? "date";
     const dataKey = opts?.dataKey ?? name;
@@ -7131,7 +7137,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                         5: "unit",
                         6: "palette",
                     };
-                    
+
                     // If this selection matches the current tutorial step's expected data key
                     if (stepToKey[tutorialState.currentStep] === dataKey) {
                         // Small delay to ensure the selection is processed first
@@ -8046,6 +8052,13 @@ async function init() {
                 updates.variable)
         ) {
             loadClimateData();
+        } else if (
+            state.canvasView === "map" &&
+            updates.palette &&
+            state.currentData
+        ) {
+            // If only palette changed and we already have data, just redraw the map with new palette
+            render();
         }
         if (
             state.canvasView === "chart" &&
@@ -8070,9 +8083,11 @@ async function init() {
     // Tutorial event handlers - attach once during init, not on every render
     appRoot.addEventListener("click", (e) => {
         const target = e.target as HTMLElement;
-        
+
         // Use closest to find the element with data-action, even if a child is clicked
-        const actionElement = target.closest('[data-action]') as HTMLElement | null;
+        const actionElement = target.closest(
+            "[data-action]",
+        ) as HTMLElement | null;
         const action = actionElement?.getAttribute("data-action");
 
         if (action === "tutorial-continue") {
@@ -8104,15 +8119,18 @@ async function init() {
             const tutorialState = getTutorialState();
             if (tutorialState.active) {
                 const dataKey = actionElement?.getAttribute("data-key");
-                
+
                 // If clicking on the trigger (not an option), re-render to expand spotlight
-                if (target.classList.contains('custom-select-trigger') || target.closest('.custom-select-trigger')) {
+                if (
+                    target.classList.contains("custom-select-trigger") ||
+                    target.closest(".custom-select-trigger")
+                ) {
                     // Longer delay to let dropdown fully open and DOM update, then re-render to expand spotlight
                     setTimeout(() => {
                         render();
                     }, 50);
                 }
-                
+
                 // Map tutorial steps to their data keys
                 // Step 1: scenario, Step 2: model, Step 4: unit, Step 5: palette
                 const stepToKey: { [key: number]: string } = {
@@ -8122,11 +8140,14 @@ async function init() {
                     5: "unit",
                     6: "palette",
                 };
-                
+
                 // If this selection matches the current tutorial step's expected data key
                 // and it's an option being clicked (not the trigger)
-                if (stepToKey[tutorialState.currentStep] === dataKey && 
-                    (target.classList.contains('custom-select-option') || target.closest('.custom-select-option'))) {
+                if (
+                    stepToKey[tutorialState.currentStep] === dataKey &&
+                    (target.classList.contains("custom-select-option") ||
+                        target.closest(".custom-select-option"))
+                ) {
                     // Small delay to ensure the selection is processed first
                     setTimeout(() => {
                         completeCurrentStep();

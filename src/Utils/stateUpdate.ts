@@ -98,7 +98,7 @@ export function updateState(
         );
     }
     if (newState.colorPalette) {
-        updates.colorPalette = normalizeColorPalette(newState.colorPalette);
+        updates.palette = normalizeColorPalette(newState.colorPalette);
     }
 
     if (newState.canvasView) {

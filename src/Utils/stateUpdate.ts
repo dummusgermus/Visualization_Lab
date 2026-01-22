@@ -2,7 +2,7 @@
  * Maps backend state updates to frontend AppState and triggers re-render
  */
 
-import { normalizeScenarioLabel } from "../main";
+import { normalizeColorPalette, normalizeScenarioLabel } from "../main";
 
 export type StateUpdateCallback = (updates: Record<string, any>) => void;
 
@@ -31,72 +31,78 @@ export function updateState(
     const updates: Record<string, any> = {};
 
     // Map backend fields to frontend fields
-    if (newState.mode !== undefined) {
+    if (newState.mode) {
         updates.mode = newState.mode;
     }
-    if (newState.model !== undefined) {
+    if (newState.model) {
         updates.model = newState.model;
     }
-    if (newState.selectedScenario !== undefined) {
+    if (newState.selectedScenario) {
         updates.scenario = newState.selectedScenario;
     }
-    if (newState.selectedDate !== undefined) {
+    if (newState.selectedDate) {
         updates.date = newState.selectedDate;
     }
-    if (newState.variable !== undefined) {
+    if (newState.variable) {
         updates.variable = newState.variable;
     }
-    if (newState.palette !== undefined) {
+    if (newState.palette) {
         updates.palette = newState.palette;
     }
 
     // Compare mode fields
-    if (newState.compareMode !== undefined) {
+    if (newState.compareMode) {
         updates.compareMode = newState.compareMode;
     }
-    if (newState.scenario1 !== undefined) {
+    if (newState.scenario1) {
         updates.compareScenarioA = newState.scenario1;
     }
-    if (newState.scenario2 !== undefined) {
+    if (newState.scenario2) {
         updates.compareScenarioB = newState.scenario2;
     }
-    if (newState.model1 !== undefined) {
+    if (newState.model1) {
         updates.compareModelA = newState.model1;
     }
-    if (newState.model2 !== undefined) {
+    if (newState.model2) {
         updates.compareModelB = newState.model2;
     }
-    if (newState.date1 !== undefined) {
+    if (newState.date1) {
         updates.compareDateStart = newState.date1;
     }
-    if (newState.date2 !== undefined) {
+    if (newState.date2) {
         updates.compareDateEnd = newState.date2;
     }
 
     // Chart mode fields
-    if (newState.chartMode !== undefined) {
+    if (newState.chartMode) {
         updates.chartMode = newState.chartMode;
-        updates.canvasView = "chart";
     }
-    if (newState.chartDate !== undefined) {
+    if (newState.chartDate) {
         updates.chartDate = newState.chartDate;
     }
-    if (newState.location !== undefined) {
+    if (newState.location) {
         updates.chartLocation = newState.location;
     }
-    if (newState.start_date !== undefined) {
+    if (newState.start_date) {
         updates.chartRangeStart = newState.start_date;
     }
-    if (newState.end_date !== undefined) {
+    if (newState.end_date) {
         updates.chartRangeEnd = newState.end_date;
     }
-    if (newState.models !== undefined) {
+    if (newState.models) {
         updates.chartModels = newState.models;
     }
-    if (newState.scenarios !== undefined) {
+    if (newState.scenarios) {
         updates.chartScenarios = newState.scenarios.map((s: string) =>
             normalizeScenarioLabel(s),
         );
+    }
+    if (newState.colorPalette) {
+        updates.colorPalette = normalizeColorPalette(newState.colorPalette);
+    }
+
+    if (newState.canvasView) {
+        updates.canvasView = newState.canvasView.toLowerCase();
     }
 
     if (Object.keys(updates).length > 0) {

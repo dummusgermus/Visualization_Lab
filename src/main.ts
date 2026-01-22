@@ -5848,12 +5848,12 @@ function renderManualSection(params: {
           </div>
         </div>
 
-        <div class="mode-pane-scrollable" style="${styleAttr(styles.modePane)}">
-          <div style="${styleAttr({
-              display: "flex",
-              flexDirection: "column",
-              gap: 14,
-          })}">
+                <div class="mode-pane-scrollable" style="${styleAttr(styles.modePane)}">
+                    <div data-role="compare-parameters" style="${styleAttr({
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 14,
+                    })}">
             <div style="${styleAttr({
                 display: "flex",
                 flexDirection: "column",
@@ -6551,7 +6551,7 @@ function renderChartSection() {
 
 function renderChatSectionWrapper() {
     return `
-    <div style="${styleAttr({
+    <div data-role="chat-section" style="${styleAttr({
         display: "flex",
         flexDirection: "column",
         gap: 8,
@@ -6782,10 +6782,14 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
 
                 state.canvasView = value;
 
+                if (value === "chart") {
+                    state.panelTab = "Manual";
+                }
+
                 const tutorialState = getTutorialState();
                 if (
                     tutorialState.active &&
-                    tutorialState.currentStep === 8 &&
+                    tutorialState.currentStep === 13 &&
                     value === "chart"
                 ) {
                     completeCurrentStep();
@@ -6843,6 +6847,16 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                     value === "Explore" ? "translateX(0%)" : "translateX(100%)";
 
                 state.mode = value;
+
+                const tutorialState = getTutorialState();
+                if (
+                    tutorialState.active &&
+                    tutorialState.currentStep === 9 &&
+                    value === "Compare"
+                ) {
+                    completeCurrentStep();
+                }
+
                 render();
 
                 const modeTrack = root.querySelector<HTMLElement>(
@@ -6931,6 +6945,15 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                     value === "Manual" ? "translateX(0%)" : "translateX(-50%)";
 
                 state.panelTab = value;
+
+                const tutorialState = getTutorialState();
+                if (
+                    tutorialState.active &&
+                    tutorialState.currentStep === 11 &&
+                    value === "Chat"
+                ) {
+                    completeCurrentStep();
+                }
                 render();
 
                 const tabTrack = root.querySelector<HTMLElement>(
@@ -8109,6 +8132,9 @@ async function init() {
         if (action === "start-tutorial") {
             e.preventDefault();
             e.stopPropagation();
+            state.canvasView = "map";
+            state.mode = "Explore";
+            state.panelTab = "Manual";
             startTutorial();
             render();
             return;

@@ -17,94 +17,174 @@ export type TutorialStep = {
     };
 };
 
+const STEP_IDS = {
+    map: "map",
+    scenario: "scenario",
+    models: "models",
+    date: "date",
+    variable: "variable",
+    unit: "unit",
+    palette: "palette",
+    timeframe: "timeframe",
+    mapReview: "map-review",
+    compareSwitch: "compare-switch",
+    compareParameters: "compare-parameters",
+    chatSwitch: "chat-switch",
+    chatOverview: "chat-overview",
+    analysisSwitch: "analysis-switch",
+    analysisOverview: "analysis-overview",
+} as const;
+
+const SELECTORS = {
+    map: "#map-canvas",
+    scenario: '[data-role="scenario-selector"]',
+    model: '[data-role="model-selector"]',
+    date: '[data-role="date-picker"]',
+    variable: '[data-role="variable-selector"]',
+    unit: '[data-role="unit-selector"]',
+    palette: '[data-role="palette-selector"]',
+    timeSlider: '[data-role="time-slider"]',
+    compareSwitch: '[data-action="set-mode"][data-value="Compare"]',
+    compareParameters: '[data-role="compare-parameters"]',
+    chatSwitch: '[data-action="set-tab"][data-value="Chat"]',
+    chatSection: '[data-role="chat-section"]',
+    analysisSwitch: '[data-action="set-canvas"][data-value="chart"]',
+    analysisOverview: '[data-role="chart-container"]',
+} as const;
+
 export const TUTORIAL_STEPS: TutorialStep[] = [
     {
-        id: "map",
+        id: STEP_IDS.map,
         title: "Welcome to Climate Visualization",
         description:
             "This interactive map shows climate data across the globe. You can pan by dragging, zoom with your mouse wheel, and hover over any location to see detailed information.",
-        targetSelector: "#map-canvas",
+        targetSelector: SELECTORS.map,
         position: "center",
         requiresAction: { type: "none" },
     },
     {
-        id: "scenario",
+        id: STEP_IDS.scenario,
         title: "Climate Scenarios",
         description:
             "Choose a climate scenario: Historical (1950-2014) shows past data, while SSP245, SSP370, and SSP585 represent different future warming pathways. Select one to continue.",
-        targetSelector: '[data-role="scenario-selector"]',
+        targetSelector: SELECTORS.scenario,
         position: "left",
         requiresAction: { type: "select", dataKey: "scenario" },
     },
     {
-        id: "models",
+        id: STEP_IDS.models,
         title: "Climate Models",
         description:
             "Select from 11 global climate models developed by research institutions worldwide. Each model provides unique projections. Choose a model to continue.",
-        targetSelector: '[data-role="model-selector"]',
+        targetSelector: SELECTORS.model,
         position: "left",
         requiresAction: { type: "select", dataKey: "model" },
     },
     {
-        id: "date",
+        id: STEP_IDS.date,
         title: "Date Selection",
         description:
             "Pick a date to view climate data. The available range depends on your chosen scenario. Select a date to continue.",
-        targetSelector: '[data-role="date-picker"]',
+        targetSelector: SELECTORS.date,
         position: "left",
         requiresAction: { type: "input", dataKey: "date" },
     },
     {
-        id: "variable",
+        id: STEP_IDS.variable,
         title: "Climate Variable",
         description:
             "Select which climate variable to visualize, such as temperature or precipitation. Choose one to continue.",
-        targetSelector: '[data-role="variable-selector"]',
+        targetSelector: SELECTORS.variable,
         position: "left",
         requiresAction: { type: "select", dataKey: "variable" },
     },
     {
-        id: "unit",
+        id: STEP_IDS.unit,
         title: "Unit Preferences",
         description:
             "Choose your preferred temperature unit: Celsius (°C), Fahrenheit (°F), or Kelvin (K). Select a unit to continue.",
-        targetSelector: '[data-role="unit-selector"]',
+        targetSelector: SELECTORS.unit,
         position: "left",
         requiresAction: { type: "select", dataKey: "unit" },
     },
     {
-        id: "palette",
+        id: STEP_IDS.palette,
         title: "Color Palette",
         description:
             "Select a color scheme for the map. Different palettes can help visualize temperature variations. Choose a palette to continue.",
-        targetSelector: '[data-role="palette-selector"]',
+        targetSelector: SELECTORS.palette,
         position: "left",
         requiresAction: { type: "select", dataKey: "palette" },
     },
     {
-        id: "timeframe",
+        id: STEP_IDS.timeframe,
         title: "Time Navigation",
         description:
             "Use this slider to quickly navigate through different dates and see how climate patterns change over time.",
-        targetSelector: '[data-role="time-slider"]',
+        targetSelector: SELECTORS.timeSlider,
         position: "top",
         requiresAction: { type: "none" },
     },
     {
-        id: "analysis-switch",
-        title: "Analysis Tools",
+        id: STEP_IDS.mapReview,
+        title: "Review the Map",
         description:
-            "Switch to the Analysis view to see detailed charts and statistics. Click the Analysis button to continue.",
-        targetSelector: '[data-action="set-canvas"][data-value="chart"]',
+            "Great! Your parameters are set. Take a quick look at the map with your chosen settings, then continue.",
+        targetSelector: SELECTORS.map,
+        position: "right",
+        requiresAction: { type: "none" },
+    },
+    {
+        id: STEP_IDS.compareSwitch,
+        title: "Compare Mode",
+        description:
+            "Now switch to Compare mode to explore differences side by side. Click Compare to continue.",
+        targetSelector: SELECTORS.compareSwitch,
         position: "left",
         requiresAction: { type: "click" },
     },
     {
-        id: "analysis-overview",
+        id: STEP_IDS.compareParameters,
+        title: "Compare Parameters",
+        description:
+            "These settings control what you compare and how the differences are calculated. Review the options, then continue.",
+        targetSelector: SELECTORS.compareParameters,
+        position: "left",
+        requiresAction: { type: "none" },
+    },
+    {
+        id: STEP_IDS.chatSwitch,
+        title: "Chat",
+        description:
+            "Open the Chat tab to ask questions about the data and get insights. Click Chat to continue.",
+        targetSelector: SELECTORS.chatSwitch,
+        position: "left",
+        requiresAction: { type: "click" },
+    },
+    {
+        id: STEP_IDS.chatOverview,
+        title: "Chat Overview",
+        description:
+            "Use the chat to explore insights, ask about trends, or get help interpreting results. You can also change the parameters with the chat, e.g. 'Compare optimistic and pessimistic prediction of precipitation for 2050. Change the color for a good representation'.<br><br>When you're ready, continue.",
+        targetSelector: SELECTORS.chatSection,
+        position: "left",
+        requiresAction: { type: "none" },
+    },
+    {
+        id: STEP_IDS.analysisSwitch,
+        title: "Analysis Tools",
+        description:
+            "Switch to the Analysis view to see detailed charts and statistics. Click the Analysis button to continue.",
+        targetSelector: SELECTORS.analysisSwitch,
+        position: "left",
+        requiresAction: { type: "click" },
+    },
+    {
+        id: STEP_IDS.analysisOverview,
         title: "Analysis Overview",
         description:
             "Here you can explore charts, compare scenarios, and analyze trends over time. This is where you dive deeper into the data. The tutorial is complete!",
-        targetSelector: '[data-role="chart-container"]',
+        targetSelector: SELECTORS.analysisOverview,
         position: "center",
         requiresAction: { type: "none" },
     },
@@ -173,9 +253,35 @@ export function getTutorialProgress(): { current: number; total: number } {
     };
 }
 
-function getTargetBounds(selector: string): DOMRect | null {
+function getTargetBounds(
+    selector: string,
+    stepId?: string,
+): DOMRect | null {
+    if (stepId === STEP_IDS.map) {
+        return null;
+    }
     const element = document.querySelector(selector);
     if (element) {
+        if (stepId === STEP_IDS.mapReview) {
+            const sidebar = document.querySelector('[data-role="sidebar"]');
+            const sidebarBounds = sidebar?.getBoundingClientRect();
+            const rightEdge = sidebarBounds ? sidebarBounds.left : window.innerWidth;
+            return new DOMRect(0, 0, Math.max(rightEdge, 0), window.innerHeight);
+        }
+
+        if (stepId === STEP_IDS.chatOverview) {
+            const sidebar = document.querySelector('[data-role="sidebar"]');
+            const sidebarBounds = sidebar?.getBoundingClientRect();
+            if (sidebarBounds) {
+                return new DOMRect(
+                    sidebarBounds.left,
+                    0,
+                    sidebarBounds.width,
+                    window.innerHeight,
+                );
+            }
+        }
+
         const bounds = element.getBoundingClientRect();
         
         // Check if this is a dropdown that's currently open
@@ -204,6 +310,7 @@ function getTargetBounds(selector: string): DOMRect | null {
 function getBoxPosition(
     targetBounds: DOMRect | null,
     position: string,
+    stepId?: string,
 ): { top?: string; bottom?: string; left?: string; right?: string } {
     if (!targetBounds) {
         return {
@@ -226,7 +333,14 @@ function getBoxPosition(
             break;
         case "left":
             result.top = `${targetBounds.top + targetBounds.height / 2}px`;
-            result.right = `${window.innerWidth - targetBounds.left + offset}px`;
+            if (stepId === STEP_IDS.chatSwitch || stepId === STEP_IDS.chatOverview) {
+                const sidebar = document.querySelector('[data-role="sidebar"]');
+                const sidebarBounds = sidebar?.getBoundingClientRect();
+                const anchorLeft = sidebarBounds ? sidebarBounds.left : targetBounds.left;
+                result.right = `${window.innerWidth - anchorLeft + offset}px`;
+            } else {
+                result.right = `${window.innerWidth - targetBounds.left + offset}px`;
+            }
             break;
         case "right":
             result.top = `${targetBounds.top + targetBounds.height / 2}px`;
@@ -278,8 +392,8 @@ export function renderTutorialOverlay(state: TutorialState): string {
     }
 
     const progress = getTutorialProgress();
-    const targetBounds = getTargetBounds(step.targetSelector);
-    const boxPosition = getBoxPosition(targetBounds, step.position);
+    const targetBounds = getTargetBounds(step.targetSelector, step.id);
+    const boxPosition = getBoxPosition(targetBounds, step.position, step.id);
 
     const showContinueButton = step.requiresAction?.type === "none";
 
@@ -321,7 +435,7 @@ export function renderTutorialOverlay(state: TutorialState): string {
     }
 
     return `
-        <div class="tutorial-backdrop" data-action="close-tutorial" style="${backdropStyle}"></div>
+        <div class="tutorial-backdrop" style="${backdropStyle}"></div>
         ${
             targetBounds
                 ? `<div class="tutorial-spotlight" style="

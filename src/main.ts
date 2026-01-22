@@ -124,6 +124,15 @@ export function normalizeScenarioLabel(input: string): string {
     return input;
 }
 
+export function normalizeColorPalette(input: string): string {
+    const lower = input.toLowerCase();
+    if (lower === "viridis") return "Viridis";
+    if (lower === "magma") return "Magma";
+    if (lower === "cividis") return "Cividis";
+    if (lower === "thermal") return "Thermal";
+    return input;
+}
+
 function parseDate(date: string): Date {
     return new Date(date);
 }

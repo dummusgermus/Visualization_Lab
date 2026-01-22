@@ -19,6 +19,16 @@ def update_variable(**kwargs) -> dict:
         "variable": variable
     }
 
+def update_color_palette(**kwargs) -> dict:
+    """Update color palette from keyword arguments."""
+    color_palette = kwargs.get('palette')
+    if not color_palette or color_palette in ('None', 'null', None):
+        raise ValueError("Color palette is required")
+    
+    return {
+        "colorPalette": color_palette
+    }
+
 class CompareMode(Enum):
     MODEL = "Models"
     SCENARIO = "Scenarios"
@@ -113,6 +123,7 @@ def switch_to_compare_mode(**kwargs) -> dict:
     )
     
     result = {
+        "canvasView": "map",
         "mode": "Compare",
         "compareMode": compare_mode
     }
@@ -177,6 +188,7 @@ def switch_to_explore_mode(**kwargs) -> dict:
     validate_date_for_scenario(date, scenario)
     
     return {
+        "canvasView": "map",
         "mode": "Explore",
         "selectedModel": model,
         "selectedScenario": scenario,
@@ -185,6 +197,8 @@ def switch_to_explore_mode(**kwargs) -> dict:
 
 def switch_to_chart_view(**kwargs) -> dict:
     """Switch to chart view mode from keyword arguments."""
+    current_state = kwargs.get('_current_state', {})
+
     location = kwargs.get('location')
     chart_mode = kwargs.get('chart_mode')
     chart_date = kwargs.get('date')
@@ -210,7 +224,10 @@ def switch_to_chart_view(**kwargs) -> dict:
         raise ValueError(f"Invalid chart_mode: {chart_mode}")
     if location not in config.VALID_CHART_LOCATIONS:
         raise ValueError(f"Invalid location: {location}")
-    
+
+    if not chart_date:
+        chart_date = current_state.get('selectedDate') or current_state.get('date')
+
     if parseDateToYear(chart_date) < 2015:
         scenarios = ['historical']
     else:
@@ -218,12 +235,16 @@ def switch_to_chart_view(**kwargs) -> dict:
 
 
     result = {
-        "view": "Chart",
+        "canvasView": "Chart",
         "chartMode": chart_mode,
         "location": location,
         "models": models,
         "scenarios": scenarios,
-        "chartDate": chart_date
+        "chartDate": chart_date,
+        "date": None,
+        "scenario": None,
+        "model": None, 
+        "mode": None,
     }
     
     if start_date:

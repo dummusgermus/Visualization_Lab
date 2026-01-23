@@ -256,6 +256,7 @@ export function getTutorialProgress(): { current: number; total: number } {
 function getTargetBounds(
     selector: string,
     stepId?: string,
+    includeDropdown = true,
 ): DOMRect | null {
     if (stepId === STEP_IDS.map) {
         return null;
@@ -286,7 +287,7 @@ function getTargetBounds(
         
         // Check if this is a dropdown that's currently open
         const dropdown = element.querySelector('.custom-select-dropdown');
-        if (dropdown && element.classList.contains('open')) {
+        if (includeDropdown && dropdown && element.classList.contains('open')) {
             const dropdownBounds = dropdown.getBoundingClientRect();
             // Expand bounds to include the dropdown - use actual visible bounds
             const combinedTop = Math.min(bounds.top, dropdownBounds.top);
@@ -392,10 +393,11 @@ export function renderTutorialOverlay(state: TutorialState): string {
     }
 
     const progress = getTutorialProgress();
-    const targetBounds = getTargetBounds(step.targetSelector, step.id);
-    const boxPosition = getBoxPosition(targetBounds, step.position, step.id);
+    const spotlightBounds = getTargetBounds(step.targetSelector, step.id, true);
+    const boxAnchorBounds = getTargetBounds(step.targetSelector, step.id, false);
+    const boxPosition = getBoxPosition(boxAnchorBounds, step.position, step.id);
 
-    const showContinueButton = step.requiresAction?.type === "none";
+    const showContinueButton = true;
 
     let positionStyle = "";
     if (step.position === "center") {
@@ -412,13 +414,13 @@ export function renderTutorialOverlay(state: TutorialState): string {
 
     // Create clip-path for backdrop with hole for spotlight
     let backdropStyle = "";
-    if (targetBounds) {
+    if (spotlightBounds) {
         // Add padding around the spotlight area for the hole
         const padding = 5;
-        const t = targetBounds.top - padding;
-        const l = targetBounds.left - padding;
-        const b = targetBounds.bottom + padding;
-        const r = targetBounds.right + padding;
+        const t = spotlightBounds.top - padding;
+        const l = spotlightBounds.left - padding;
+        const b = spotlightBounds.bottom + padding;
+        const r = spotlightBounds.right + padding;
         
         backdropStyle = `clip-path: polygon(
             0% 0%, 
@@ -437,12 +439,12 @@ export function renderTutorialOverlay(state: TutorialState): string {
     return `
         <div class="tutorial-backdrop" style="${backdropStyle}"></div>
         ${
-            targetBounds
+            spotlightBounds
                 ? `<div class="tutorial-spotlight" style="
-                    top: ${targetBounds.top}px;
-                    left: ${targetBounds.left}px;
-                    width: ${targetBounds.width}px;
-                    height: ${targetBounds.height}px;
+                    top: ${spotlightBounds.top}px;
+                    left: ${spotlightBounds.left}px;
+                    width: ${spotlightBounds.width}px;
+                    height: ${spotlightBounds.height}px;
                 "></div>`
                 : ""
         }

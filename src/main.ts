@@ -17,6 +17,7 @@ import {
     renderTutorialButton,
     renderTutorialOverlay,
     startTutorial,
+    TUTORIAL_STEPS,
 } from "./Components/tutorial";
 import { drawLegendGradient, renderMapLegend } from "./MapView/legend";
 import {
@@ -8116,6 +8117,41 @@ async function init() {
         if (action === "tutorial-continue") {
             e.preventDefault();
             e.stopPropagation();
+
+            const tutorialState = getTutorialState();
+            const currentStepId =
+                TUTORIAL_STEPS[tutorialState.currentStep]?.id ?? "";
+
+            if (currentStepId === "compare-switch") {
+                const compareBtn = document.querySelector<HTMLElement>(
+                    '[data-action="set-mode"][data-value="Compare"]',
+                );
+                if (compareBtn) {
+                    compareBtn.click();
+                    return;
+                }
+            }
+
+            if (currentStepId === "chat-switch") {
+                const chatBtn = document.querySelector<HTMLElement>(
+                    '[data-action="set-tab"][data-value="Chat"]',
+                );
+                if (chatBtn) {
+                    chatBtn.click();
+                    return;
+                }
+            }
+
+            if (currentStepId === "analysis-switch") {
+                const analysisBtn = document.querySelector<HTMLElement>(
+                    '[data-action="set-canvas"][data-value="chart"]',
+                );
+                if (analysisBtn) {
+                    analysisBtn.click();
+                    return;
+                }
+            }
+
             completeCurrentStep();
             render();
             return;

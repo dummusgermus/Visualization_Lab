@@ -3471,6 +3471,121 @@ function createPolygonMask(
     return mask;
 }
 
+function updateChartContainerDOM() {
+    const chartContainer = document.querySelector(
+        "[data-role='chart-container']",
+    );
+    if (!chartContainer) return;
+
+    const isRangeMode = state.chartMode === "range";
+    let body = "";
+
+    if (state.chartLoading) {
+        body = `
+          <div style="position:absolute; inset:0; pointer-events:none;">
+            <div style="${styleAttr(
+                mergeStyles(styles.loadingIndicator, {
+                    position: "absolute",
+                    left: 18,
+                    bottom: -95,
+                    pointerEvents: "auto",
+                }),
+            )}">
+              <div style="${styleAttr(styles.loadingSpinner)}"></div>
+              <div style="${styleAttr(styles.loadingTextGroup)}">
+                <div style="${styleAttr(styles.loadingText)}">Loading data</div>
+                <div style="${styleAttr(styles.loadingBar)}">
+                  <div style="${styleAttr({
+                      ...styles.loadingBarFill,
+                      width: `${Math.max(
+                          0,
+                          Math.min(
+                              100,
+                              Math.round(state.loadingProgress || 25),
+                          ),
+                      )}%`,
+                  })}"></div>
+                </div>
+                <div style="${styleAttr(styles.loadingSubtext)}">${
+                    state.chartLoadingProgress.total > 0
+                        ? `${state.chartLoadingProgress.done}/${state.chartLoadingProgress.total} datasets loaded`
+                        : "Preparing datasets"
+                }</div>
+              </div>
+            </div>
+            ${renderChartLoadingIndicator()}
+          </div>
+          ${
+              !isRangeMode && state.chartBoxes
+                  ? renderChartSvg(state.chartBoxes)
+                  : isRangeMode && state.chartRangeSeries
+                    ? renderChartRangeSvg(state.chartRangeSeries)
+                    : ""
+          }
+        `;
+    } else if (state.chartError) {
+        body = `<div style="${styleAttr(styles.chartError)}">${
+            state.chartError
+        }</div>`;
+    } else if (
+        (!isRangeMode && (!state.chartBoxes || !state.chartBoxes.length)) ||
+        (isRangeMode &&
+            (!state.chartRangeSeries || !state.chartRangeSeries.length))
+    ) {
+        const emptyCopy = isRangeMode
+            ? "Select scenarios, models, and a date range to see how the distribution evolves over time."
+            : "Select scenarios and models to fetch the global box plot.";
+        body = `<div style="${styleAttr(styles.chartEmpty)}">${emptyCopy}</div>`;
+    } else {
+        body = isRangeMode
+            ? renderChartRangeSvg(state.chartRangeSeries ?? [])
+            : renderChartSvg(state.chartBoxes ?? []);
+    }
+
+    const chartLocationLabel =
+        state.chartLocationName ||
+        (state.chartLocation === "Point" && state.chartPoint
+            ? `Point (${state.chartPoint.lat.toFixed(
+                  2,
+              )}, ${state.chartPoint.lon.toFixed(2)})`
+            : state.chartLocation === "Draw"
+              ? "Custom region"
+              : state.chartLocation === "World"
+                ? "Global"
+                : "");
+    const chartDateLabel =
+        state.chartMode === "range"
+            ? `${formatDisplayDate(state.chartRangeStart)} – ${formatDisplayDate(
+                  state.chartRangeEnd,
+              )}`
+            : formatDisplayDate(state.chartDate);
+
+    chartContainer.innerHTML = `
+        <div style="${styleAttr(styles.chartPanel)}">
+          <div style="${styleAttr(styles.chartHeader)}">
+            <div style="${styleAttr(styles.chartTitle)}">${getVariableLabel(
+                state.chartVariable,
+                state.metaData,
+            )}</div>
+            <div style="${styleAttr(styles.mapSubtitle)}">${
+                chartLocationLabel
+                    ? `${escapeHtml(chartLocationLabel)} · ${chartDateLabel}`
+                    : chartDateLabel
+            }</div>
+          </div>
+          <div style="${styleAttr(
+              mergeStyles(styles.chartPlotWrapper, {
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+              }),
+          )}">
+            ${body}
+          </div>
+        </div>
+      `;
+}
+
 async function loadChartData() {
     if (state.canvasView !== "chart") return;
 
@@ -3499,7 +3614,7 @@ async function loadChartData() {
                 return;
             }
         }
-        render();
+        updateChartContainerDOM();
     };
 
     if (
@@ -3512,7 +3627,7 @@ async function loadChartData() {
         state.chartSamples = [];
         state.chartLoading = false;
         state.chartLoadingProgress = { total: 0, done: 0 };
-        render();
+        updateChartContainerDOM();
         return;
     }
     if (state.chartLocation === "Point" && !state.chartPoint) {
@@ -3522,7 +3637,7 @@ async function loadChartData() {
         state.chartSamples = [];
         state.chartLoading = false;
         state.chartLoadingProgress = { total: 0, done: 0 };
-        render();
+        updateChartContainerDOM();
         return;
     }
     if (state.chartLocation === "Search" && !state.chartPoint) {
@@ -3534,7 +3649,7 @@ async function loadChartData() {
         state.chartSamples = [];
         state.chartLoading = false;
         state.chartLoadingProgress = { total: 0, done: 0 };
-        render();
+        updateChartContainerDOM();
         return;
     }
 
@@ -3545,7 +3660,7 @@ async function loadChartData() {
     state.chartSamples = [];
     state.chartBoxes = null;
     state.chartRangeSeries = null;
-    render();
+    updateChartContainerDOM();
 
     try {
         const metaData = state.metaData ?? (await fetchMetadata());
@@ -3577,7 +3692,7 @@ async function loadChartData() {
             state.chartRangeSeries = null;
             state.chartLoading = false;
             state.chartLoadingProgress = { total: 0, done: 0 };
-            render();
+            updateChartContainerDOM();
             return;
         }
 
@@ -3592,7 +3707,7 @@ async function loadChartData() {
             const totalRequests = activeScenarios.length * activeModels.length;
             state.chartLoadingProgress = { total: totalRequests, done: 0 };
             state.chartRangeSeries = null;
-            render();
+            updateChartContainerDOM();
 
             const samples: ChartSample[] = [];
 
@@ -3989,7 +4104,7 @@ async function loadChartData() {
                         done: 0,
                     };
                     state.chartBoxes = null;
-                    render();
+                    updateChartContainerDOM();
 
                     const samples: ChartSample[] = [];
 
@@ -4288,7 +4403,7 @@ async function loadChartData() {
                         state.chartRangeSeries = null;
                         state.chartLoading = false;
                         state.chartLoadingProgress = { total: 0, done: 0 };
-                        render();
+                        updateChartContainerDOM();
                         return;
                     }
 
@@ -4301,7 +4416,7 @@ async function loadChartData() {
                         done: 0,
                     };
                     state.chartBoxes = null;
-                    render();
+                    updateChartContainerDOM();
 
                     const samples: ChartSample[] = [];
 
@@ -4434,7 +4549,7 @@ async function loadChartData() {
         state.chartLoadingProgress = { total: 1, done: 1 };
     } finally {
         state.chartLoading = false;
-        render();
+        updateChartContainerDOM();
     }
 }
 
@@ -4705,7 +4820,7 @@ function render() {
                       : ""
               }
             `
-                : renderChartArea()
+                : `<div data-role="chart-container" style="pointer-events:auto; width:100%; display:flex; align-items:center; justify-content:center; padding:24px;"></div>`
         }
       </div>
 
@@ -4913,6 +5028,11 @@ function render() {
     const scale = state.sidebarOpen ? 1 : 0.9;
     applyChartLayoutOffset(currentPadding, scale);
     updateMapSearchPosition();
+
+    // Update chart view if active
+    if (state.canvasView === "chart") {
+        updateChartContainerDOM();
+    }
 }
 
 function renderLoadingIndicator() {
@@ -5421,119 +5541,6 @@ function renderChartRangeSvg(series: ChartSeries[]): string {
     `;
 }
 
-function renderChartArea() {
-    let body = "";
-    const isRangeMode = state.chartMode === "range";
-    if (state.chartLoading) {
-        body = `
-          <div style="position:absolute; inset:0; pointer-events:none;">
-            <div style="${styleAttr(
-                mergeStyles(styles.loadingIndicator, {
-                    position: "absolute",
-                    left: 18,
-                    bottom: -95,
-                    pointerEvents: "auto",
-                }),
-            )}">
-              <div style="${styleAttr(styles.loadingSpinner)}"></div>
-              <div style="${styleAttr(styles.loadingTextGroup)}">
-                <div style="${styleAttr(styles.loadingText)}">Loading data</div>
-                <div style="${styleAttr(styles.loadingBar)}">
-                  <div style="${styleAttr({
-                      ...styles.loadingBarFill,
-                      width: `${Math.max(
-                          0,
-                          Math.min(
-                              100,
-                              Math.round(state.loadingProgress || 25),
-                          ),
-                      )}%`,
-                  })}"></div>
-                </div>
-                <div style="${styleAttr(styles.loadingSubtext)}">${
-                    state.chartLoadingProgress.total > 0
-                        ? `${state.chartLoadingProgress.done}/${state.chartLoadingProgress.total} datasets loaded`
-                        : "Preparing datasets"
-                }</div>
-              </div>
-            </div>
-            ${renderChartLoadingIndicator()}
-          </div>
-          ${
-              !isRangeMode && state.chartBoxes
-                  ? renderChartSvg(state.chartBoxes)
-                  : isRangeMode && state.chartRangeSeries
-                    ? renderChartRangeSvg(state.chartRangeSeries)
-                    : ""
-          }
-        `;
-    } else if (state.chartError) {
-        body = `<div style="${styleAttr(styles.chartError)}">${
-            state.chartError
-        }</div>`;
-    } else if (
-        (!isRangeMode && (!state.chartBoxes || !state.chartBoxes.length)) ||
-        (isRangeMode &&
-            (!state.chartRangeSeries || !state.chartRangeSeries.length))
-    ) {
-        const emptyCopy = isRangeMode
-            ? "Select scenarios, models, and a date range to see how the distribution evolves over time."
-            : "Select scenarios and models to fetch the global box plot.";
-        body = `<div style="${styleAttr(styles.chartEmpty)}">${emptyCopy}</div>`;
-    } else {
-        body = isRangeMode
-            ? renderChartRangeSvg(state.chartRangeSeries ?? [])
-            : renderChartSvg(state.chartBoxes ?? []);
-    }
-
-    const chartLocationLabel =
-        state.chartLocationName ||
-        (state.chartLocation === "Point" && state.chartPoint
-            ? `Point (${state.chartPoint.lat.toFixed(
-                  2,
-              )}, ${state.chartPoint.lon.toFixed(2)})`
-            : state.chartLocation === "Draw"
-              ? "Custom region"
-              : state.chartLocation === "World"
-                ? "Global"
-                : "");
-    const chartDateLabel =
-        state.chartMode === "range"
-            ? `${formatDisplayDate(state.chartRangeStart)} – ${formatDisplayDate(
-                  state.chartRangeEnd,
-              )}`
-            : formatDisplayDate(state.chartDate);
-
-    const paddingRight = state.sidebarOpen ? SIDEBAR_WIDTH + 32 : 24;
-
-    return `
-      <div data-role="chart-container" style="pointer-events:auto; width:100%; display:flex; align-items:center; justify-content:center; padding:24px; padding-right:${paddingRight}px;">
-        <div style="${styleAttr(styles.chartPanel)}">
-          <div style="${styleAttr(styles.chartHeader)}">
-            <div style="${styleAttr(styles.chartTitle)}">${getVariableLabel(
-                state.chartVariable,
-                state.metaData,
-            )}</div>
-            <div style="${styleAttr(styles.mapSubtitle)}">${
-                chartLocationLabel
-                    ? `${escapeHtml(chartLocationLabel)} · ${chartDateLabel}`
-                    : chartDateLabel
-            }</div>
-          </div>
-          <div style="${styleAttr(
-              mergeStyles(styles.chartPlotWrapper, {
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-              }),
-          )}">
-            ${body}
-          </div>
-        </div>
-      </div>
-    `;
-}
-
 function renderField(label: string, controlHtml: string) {
     return `
     <div style="${styleAttr(styles.field)}">
@@ -5851,9 +5858,9 @@ function renderManualSection(params: {
 
                 <div class="mode-pane-scrollable" style="${styleAttr(styles.modePane)}">
                     <div data-role="compare-parameters" style="${styleAttr({
-                            display: "flex",
-                            flexDirection: "column",
-                            gap: 14,
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 14,
                     })}">
             <div style="${styleAttr({
                 display: "flex",
@@ -6279,6 +6286,7 @@ function renderMapSearchBar() {
 }
 
 function renderChartSection() {
+    console.log("Rendering chart section with state:", state);
     const chartModeIndicatorTransform =
         state.chartMode === "single" ? "translateX(0%)" : "translateX(100%)";
     const availableScenarios = state.metaData?.scenarios?.length
@@ -6364,7 +6372,7 @@ function renderChartSection() {
             }),
         )}
       </div>
-
+    
       <div style="margin-top:10px">
         ${renderField(
             "Location",
@@ -7515,6 +7523,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             void handleLocationSearch(query);
         };
 
+        // Only rerender the location search UI, not the whole view
         locationSearchInputs.forEach((input) => {
             input.addEventListener("input", () => {
                 const hadResults = state.chartLocationSearchResults.length > 0;
@@ -7525,20 +7534,19 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                 state.chartLocationSearchError = null;
 
                 clearLocationSearchDebounce();
-
                 const trimmed = input.value.trim();
 
                 if (!trimmed) {
                     state.chartLocationSearchResults = [];
                     state.chartLocationSearchLoading = false;
-                    render();
+                    renderLocationSearch();
                     return;
                 }
 
                 if (hadResults || wasLoading || hadError) {
                     state.chartLocationSearchResults = [];
                     state.chartLocationSearchLoading = false;
-                    render();
+                    renderLocationSearch();
                 }
 
                 locationSearchDebounce = window.setTimeout(() => {
@@ -7564,6 +7572,62 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                 applySearchedLocation({ displayName: name, lat, lon });
             });
         });
+        // Only rerenders the location search UI, not the entire view
+        function renderLocationSearch() {
+            const chartLocationWrapper = appRoot?.querySelector<HTMLElement>(
+                '.custom-select-wrapper[data-key="chartLocation"]',
+            );
+            if (!chartLocationWrapper) return;
+
+            // Update input value and loading state
+            const input = chartLocationWrapper.querySelector<HTMLInputElement>(
+                '[data-role="location-search-input"]',
+            );
+            if (input) {
+                input.value = state.chartLocationSearchQuery;
+            }
+
+            // Update results list
+            const resultsContainer =
+                chartLocationWrapper.querySelector<HTMLElement>(
+                    '[data-role="location-search-results-container"]',
+                );
+            if (resultsContainer) {
+                // Clear previous results
+                resultsContainer.innerHTML = "";
+                if (state.chartLocationSearchLoading) {
+                    resultsContainer.innerHTML =
+                        '<div class="search-loading">Loading...</div>';
+                } else if (state.chartLocationSearchError) {
+                    resultsContainer.innerHTML = `<div class="search-error">${state.chartLocationSearchError}</div>`;
+                } else if (state.chartLocationSearchResults.length > 0) {
+                    for (const result of state.chartLocationSearchResults) {
+                        const el = document.createElement("div");
+                        el.className = "custom-select-option search-result";
+                        el.setAttribute("data-role", "location-search-result");
+                        el.setAttribute("data-lat", String(result.lat));
+                        el.setAttribute("data-lon", String(result.lon));
+                        el.setAttribute(
+                            "data-name",
+                            result.displayName || "Selected place",
+                        );
+                        el.textContent =
+                            result.displayName ||
+                            `${result.lat}, ${result.lon}`;
+                        el.addEventListener("click", () => {
+                            chartLocationWrapper.classList.remove("open");
+                            applySearchedLocation({
+                                displayName:
+                                    result.displayName || "Selected place",
+                                lat: result.lat,
+                                lon: result.lon,
+                            });
+                        });
+                        resultsContainer.appendChild(el);
+                    }
+                }
+            }
+        }
 
         if (state.chartLocation === "Search") {
             const input = chartLocationWrapper.querySelector<HTMLInputElement>(
@@ -7624,7 +7688,6 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                 render();
                 return;
             }
-
             if (hadResults || wasLoading || hadError) {
                 state.mapLocationSearchResults = [];
                 state.mapLocationSearchLoading = false;

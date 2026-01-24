@@ -88,7 +88,7 @@ function resolutionNumberToString(resolution: number): Resolution {
 function decodeBase64Data(
     base64: string,
     _shape: [number, number],
-    dtype: string = "float32"
+    dtype: string = "float32",
 ): Float32Array | Float64Array {
     const binaryString = atob(base64);
     const bytes = new Uint8Array(binaryString.length);
@@ -115,7 +115,7 @@ function listToArray(list: number[][], _shape: [number, number]): Float32Array {
 
 export async function fetchClimateData(
     request: DataRequest,
-    options?: { apiUrl?: string }
+    options?: { apiUrl?: string },
 ): Promise<ClimateData> {
     const apiUrl = options?.apiUrl || API_BASE_URL;
     const url = `${apiUrl}/data`;
@@ -143,7 +143,7 @@ export async function fetchClimateData(
                 error.detail ||
                     `HTTP ${response.status}: ${response.statusText}`,
                 response.status,
-                error
+                error,
             );
         }
 
@@ -157,7 +157,7 @@ export async function fetchClimateData(
                 error instanceof Error ? error.message : String(error)
             }`,
             undefined,
-            error
+            error,
         );
     }
 }
@@ -179,7 +179,7 @@ export async function fetchMetadata(options?: {
         if (!response.ok) {
             throw new DataClientError(
                 `HTTP ${response.status}: ${response.statusText}`,
-                response.status
+                response.status,
             );
         }
 
@@ -191,18 +191,21 @@ export async function fetchMetadata(options?: {
         throw new DataClientError(
             `Failed to fetch metadata: ${
                 error instanceof Error ? error.message : String(error)
-            }`
+            }`,
         );
     }
 }
 
 export function dataToArray(
-    data: ClimateData
+    data: ClimateData,
 ): Float32Array | Float64Array | null {
     if (!data.data) return null;
 
     // Allow passing through precomputed typed arrays (used for client-side comparisons)
-    if (data.data instanceof Float32Array || data.data instanceof Float64Array) {
+    if (
+        data.data instanceof Float32Array ||
+        data.data instanceof Float64Array
+    ) {
         return data.data;
     }
 
@@ -305,7 +308,7 @@ export interface AggregateOnDemandResponse {
 
 export async function fetchPixelData(
     request: PixelDataRequest,
-    options?: { apiUrl?: string }
+    options?: { apiUrl?: string },
 ): Promise<PixelDataResponse> {
     const apiUrl = options?.apiUrl || API_BASE_URL;
     const url = `${apiUrl}/pixel-data`;
@@ -334,7 +337,7 @@ export async function fetchPixelData(
                 error.detail ||
                     `HTTP ${response.status}: ${response.statusText}`,
                 response.status,
-                error
+                error,
             );
         }
 
@@ -348,14 +351,14 @@ export async function fetchPixelData(
                 error instanceof Error ? error.message : String(error)
             }`,
             undefined,
-            error
+            error,
         );
     }
 }
 
 export async function fetchAggregateOnDemand(
     request: AggregateOnDemandRequest,
-    options?: { apiUrl?: string }
+    options?: { apiUrl?: string },
 ): Promise<AggregateOnDemandResponse> {
     const apiUrl = options?.apiUrl || API_BASE_URL;
     const url = `${apiUrl}/aggregate-on-demand`;
@@ -384,7 +387,7 @@ export async function fetchAggregateOnDemand(
                 error.detail ||
                     `HTTP ${response.status}: ${response.statusText}`,
                 response.status,
-                error
+                error,
             );
         }
 
@@ -398,7 +401,7 @@ export async function fetchAggregateOnDemand(
                 error instanceof Error ? error.message : String(error)
             }`,
             undefined,
-            error
+            error,
         );
     }
 }

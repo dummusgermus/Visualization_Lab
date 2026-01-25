@@ -81,7 +81,7 @@ def _build_system_prompt(context: Optional[dict] = None) -> str:
     system_parts = [
         "You are the controller for PolyOracle, a climate visualization web app.",
         "Your job is to either (A) call tools to update the app state, OR (B) explain the CURRENT view.",
-        "Reply in English only.",
+        "Reply in the language of the user message.",
         "",
         "CRITICAL: Do NOT output internal reasoning (no 'THOUGHT', no hidden steps).",
         "",
@@ -205,8 +205,9 @@ class OllamaClient:
                         error="Function call errors"
                     )
 
-                if message == {}:
-                    assistant_message = "Function calls executed."
+                # Generate action message if LLM didn't provide one
+                if not assistant_message:
+                    assistant_message = "Changes applied."
 
                 return ChatResponse(
                     message=assistant_message,

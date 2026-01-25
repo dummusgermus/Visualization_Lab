@@ -361,13 +361,58 @@ export function renderMapData(
         lowerEdited: boolean;
         upperEdited: boolean;
         statistic?: "mean" | "std" | "median" | "iqr" | "percentile" | "extremes";
+        variable?: string;
+        unit?: string;
     }>,
     ensembleStatistics?: Map<"mean" | "std" | "median" | "iqr" | "percentile" | "extremes", Float32Array> | null,
     isEnsembleMode?: boolean,
+    maskVariableData?: Map<string, ClimateData>,
 ): void {
     // masks parameter is used in the rendering loop below
     if (!mapCanvas) return;
 
+    try {
+        runRenderMapData(
+            data,
+            mapCanvas,
+            paletteOptions,
+            currentPalette,
+            min,
+            max,
+            variable,
+            selectedUnit,
+            masks,
+            ensembleStatistics,
+            isEnsembleMode,
+            maskVariableData,
+        );
+    } catch (err) {
+        console.error("renderMapData failed (e.g. when changing display variable with masks):", err);
+    }
+}
+
+function runRenderMapData(
+    data: ClimateData,
+    mapCanvas: HTMLCanvasElement,
+    paletteOptions: Array<{ name: string; colors: string[] }>,
+    currentPalette: string,
+    min: number,
+    max: number,
+    variable?: string,
+    selectedUnit?: string,
+    masks?: Array<{
+        lowerBound: number | null;
+        upperBound: number | null;
+        lowerEdited: boolean;
+        upperEdited: boolean;
+        statistic?: "mean" | "std" | "median" | "iqr" | "percentile" | "extremes";
+        variable?: string;
+        unit?: string;
+    }>,
+    ensembleStatistics?: Map<"mean" | "std" | "median" | "iqr" | "percentile" | "extremes", Float32Array> | null,
+    isEnsembleMode?: boolean,
+    maskVariableData?: Map<string, ClimateData>,
+): void {
     const arrayData = dataToArray(data);
     if (!arrayData) {
         console.warn("No data to render");
@@ -406,6 +451,10 @@ export function renderMapData(
         convertedMin = converted.min;
         convertedMax = converted.max;
     }
+    // Guard against NaN/non-finite min/max (e.g. new variable, bad API data) to avoid crash
+    if (!Number.isFinite(convertedMin)) convertedMin = 0;
+    if (!Number.isFinite(convertedMax)) convertedMax = 1;
+    if (convertedMax <= convertedMin) convertedMax = convertedMin + 1;
 
     // Set data range for tooltip/legend indicator (use converted values)
     setDataRange(convertedMin, convertedMax, variable, selectedUnit, isDifference);
@@ -415,8 +464,8 @@ export function renderMapData(
         paletteOptions[0];
     const colors = palette.colors;
 
-    // Pre-compute RGB values for palette
-    const paletteRgb = colors.map(hexToRgb);
+    // Pre-compute RGB values for palette (need at least one for indexing)
+    const paletteRgb = colors.length > 0 ? colors.map(hexToRgb) : [hexToRgb("#808080")];
 
     // Direct equirectangular projection (simple linear mapping)
     // This ensures accurate coordinate mapping without D3 projection quirks
@@ -520,28 +569,98 @@ export function renderMapData(
                         }
                     }
                 } else {
-                    // Non-ensemble mode: union logic - passes if ANY mask passes
+                    // Non-ensemble mode (Explore mode): 
+                    // - Union (OR) within same variable
+                    // - Intersection (AND) across different variables
+                    // - Filter uses only mask.variable; display variable must NOT affect which
+                    //   variables we filter on. Each mask's variable is fixed.
+                    
+                    // Group masks by variable (skip masks without explicit variable)
+                    const masksByVariable = new Map<string, typeof masks>();
                     for (const mask of masks) {
-                        const lowerUnrestricted = !mask.lowerEdited;
-                        const upperUnrestricted = !mask.upperEdited;
+                        const maskVar = mask.variable;
+                        if (!maskVar) continue; // Don't use display variable as fallback
+                        if (!masksByVariable.has(maskVar)) {
+                            masksByVariable.set(maskVar, []);
+                        }
+                        masksByVariable.get(maskVar)!.push(mask);
+                    }
+                    
+                    // For each variable, check if pixel passes (union within variable)
+                    // Then take intersection across variables
+                    passesMask = true;
+                    for (const [maskVar, varMasks] of masksByVariable) {
+                        let passesThisVariable = false;
                         
-                        let passesThisMask = true;
+                        // Get data for this variable
+                        let varData: Float32Array | Float64Array | null = null;
+                        let varRawValue: number;
                         
-                        if (!lowerUnrestricted && mask.lowerBound !== null) {
-                            if (displayValue < mask.lowerBound) {
-                                passesThisMask = false;
+                        if (maskVar === variable) {
+                            // Use current data - get raw value before unit conversion
+                            varRawValue = value; // 'value' is the raw value before unit conversion
+                        } else if (maskVariableData && maskVariableData.has(maskVar)) {
+                            // Get data from cache
+                            const cachedVarData = maskVariableData.get(maskVar)!;
+                            const varArrayData = dataToArray(cachedVarData);
+                            const expectedLen = width * height;
+                            if (
+                                varArrayData &&
+                                varArrayData.length === expectedLen
+                            ) {
+                                varData = varArrayData;
+                                const varIdx = (height - 1 - y) * width + x;
+                                varRawValue = varData[varIdx];
+                                if (!isFinite(varRawValue)) {
+                                    passesMask = false;
+                                    break;
+                                }
+                            } else {
+                                passesMask = false;
+                                break;
+                            }
+                        } else {
+                            // Variable data not available – fail pixel (don't widen filter)
+                            passesMask = false;
+                            break;
+                        }
+                        
+                        // Check if pixel passes any mask for this variable (union)
+                        for (const mask of varMasks) {
+                            const lowerUnrestricted = !mask.lowerEdited;
+                            const upperUnrestricted = !mask.upperEdited;
+                            
+                            // Convert raw value to the mask's specified unit
+                            const maskUnit = mask.unit;
+                            let varDisplayValue = varRawValue;
+                            if (maskUnit) {
+                                varDisplayValue = convertValue(varRawValue, maskVar, maskUnit);
+                            }
+                            
+                            let passesThisMask = true;
+                            
+                            if (!lowerUnrestricted && mask.lowerBound !== null) {
+                                if (varDisplayValue < mask.lowerBound) {
+                                    passesThisMask = false;
+                                }
+                            }
+                            
+                            if (!upperUnrestricted && mask.upperBound !== null) {
+                                if (varDisplayValue > mask.upperBound) {
+                                    passesThisMask = false;
+                                }
+                            }
+                            
+                            // If this mask passes, the variable passes (union logic)
+                            if (passesThisMask) {
+                                passesThisVariable = true;
+                                break;
                             }
                         }
                         
-                        if (!upperUnrestricted && mask.upperBound !== null) {
-                            if (displayValue > mask.upperBound) {
-                                passesThisMask = false;
-                            }
-                        }
-                        
-                        // If this mask passes, the pixel passes (union logic)
-                        if (passesThisMask) {
-                            passesMask = true;
+                        // If this variable doesn't pass, the pixel doesn't pass (intersection logic)
+                        if (!passesThisVariable) {
+                            passesMask = false;
                             break;
                         }
                     }
@@ -560,21 +679,31 @@ export function renderMapData(
                 g = 24;
                 b = 32;
             } else {
-                // Guard against zero data range (e.g., identical datasets) to avoid NaN
+                // Guard against zero/NaN range and non-finite displayValue to avoid crash when switching variables
                 const range = convertedMax - convertedMin;
-                const normalized =
-                    range === 0
-                        ? 0.5
-                        : Math.min(
-                              1,
-                              Math.max(0, (displayValue - convertedMin) / range),
-                          );
+                let normalized: number;
+                if (
+                    !Number.isFinite(range) ||
+                    range <= 0 ||
+                    !Number.isFinite(displayValue)
+                ) {
+                    normalized = 0.5;
+                } else {
+                    normalized = Math.min(
+                        1,
+                        Math.max(0, (displayValue - convertedMin) / range),
+                    );
+                    if (!Number.isFinite(normalized)) normalized = 0.5;
+                }
 
-                const colorIdx = Math.floor(normalized * (paletteRgb.length - 1));
-                const c1 = paletteRgb[Math.min(colorIdx, paletteRgb.length - 1)];
-                const c2 =
-                    paletteRgb[Math.min(colorIdx + 1, paletteRgb.length - 1)];
-                const t = normalized * (paletteRgb.length - 1) - colorIdx;
+                const lastIdx = Math.max(0, paletteRgb.length - 1);
+                const colorIdx = Math.min(
+                    Math.max(0, Math.floor(normalized * lastIdx)),
+                    lastIdx,
+                );
+                const c1 = paletteRgb[colorIdx]!;
+                const c2 = paletteRgb[Math.min(colorIdx + 1, lastIdx)] ?? c1;
+                const t = Math.max(0, Math.min(1, normalized * lastIdx - colorIdx));
 
                 r = Math.round(c1.r + (c2.r - c1.r) * t);
                 g = Math.round(c1.g + (c2.g - c1.g) * t);

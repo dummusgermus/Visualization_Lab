@@ -171,6 +171,25 @@ function clipDateToRange(date: string, range: { start: string; end: string }) {
     return date;
 }
 
+function buildMapRangeWindow(date: string): { start: string; end: string } {
+    const parsed = parseDate(date);
+    if (Number.isNaN(parsed.getTime())) {
+        return { start: "2015-01-01", end: "2099-01-01" };
+    }
+    const month = parsed.getMonth();
+    const day = parsed.getDate();
+    const clampDay = (year: number) => {
+        const lastDay = new Date(year, month + 1, 0).getDate();
+        return Math.min(day, lastDay);
+    };
+    const start = new Date(2015, month, clampDay(2015));
+    const end = new Date(2099, month, clampDay(2099));
+    return {
+        start: start.toISOString().slice(0, 10),
+        end: end.toISOString().slice(0, 10),
+    };
+}
+
 type Style = Record<string, string | number>;
 
 const scenarios = ["Historical", "SSP245", "SSP370", "SSP585"];
@@ -510,6 +529,83 @@ const styles: Record<string, Style> = {
         color: "var(--text-secondary)",
     },
     mapInfoLoadingSpinner: {
+        width: 14,
+        height: 14,
+        borderRadius: "50%",
+        border: "2px solid rgba(255,255,255,0.18)",
+        borderTop: "2px solid #34d399",
+        animation: "sv-spin 1s linear infinite",
+        flexShrink: 0,
+    },
+    mapRangeOverlay: {
+        position: "fixed",
+        left: 0,
+        bottom: 0,
+        right: 0,
+        height: "min(280px, 36vh)",
+        display: "flex",
+        alignItems: "flex-end",
+        pointerEvents: "none",
+        zIndex: 9,
+        transition: "right 220ms ease, opacity 180ms ease",
+    },
+    mapRangePanel: {
+        width: "100%",
+        height: "100%",
+        padding: "12px 18px 12px",
+        display: "flex",
+        flexDirection: "column",
+        gap: 10,
+        pointerEvents: "auto",
+        background:
+            "linear-gradient(180deg, rgba(6, 10, 18, 0) 0%, rgba(6, 10, 18, 0.55) 45%, rgba(6, 10, 18, 0.94) 100%)",
+        backdropFilter: "blur(8px)",
+    },
+    mapRangeHeader: {
+        display: "flex",
+        alignItems: "flex-start",
+        justifyContent: "space-between",
+        gap: 12,
+    },
+    mapRangeTitleGroup: {
+        display: "flex",
+        flexDirection: "column",
+        gap: 3,
+        minWidth: 0,
+    },
+    mapRangeTitle: {
+        fontSize: 14,
+        fontWeight: 700,
+        letterSpacing: 0.2,
+        color: "var(--text-primary)",
+    },
+    mapRangeSubtitle: {
+        fontSize: 11.5,
+        color: "var(--text-secondary)",
+    },
+    mapRangeBody: {
+        display: "flex",
+        flexDirection: "column",
+        gap: 10,
+        maxHeight: 220,
+        overflow: "hidden",
+    },
+    mapRangeChartWrap: {
+        width: "100%",
+        display: "flex",
+        justifyContent: "center",
+        alignItems: "flex-start",
+        height: 220,
+        overflow: "hidden",
+    },
+    mapRangeLoadingRow: {
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        fontSize: 11,
+        color: "var(--text-secondary)",
+    },
+    mapRangeLoadingSpinner: {
         width: 14,
         height: 14,
         borderRadius: "50%",
@@ -1070,6 +1166,14 @@ export type AppState = {
     mapInfoError: string | null;
     mapInfoLoadingProgress: ChartLoadingProgress;
     mapInfoOpen: boolean;
+    mapRangeSamples: ChartSample[];
+    mapRangeSeries: ChartSeries[] | null;
+    mapRangeLoading: boolean;
+    mapRangeError: string | null;
+    mapRangeLoadingProgress: ChartLoadingProgress;
+    mapRangeOpen: boolean;
+    mapRangeStart: string;
+    mapRangeEnd: string;
     mapPolygon: LatLon[] | null;
     chartPolygon: LatLon[] | null;
     chartPoint: LatLon | null;
@@ -1100,6 +1204,7 @@ export type AppState = {
     currentData: ClimateData | null;
     apiAvailable: boolean | null;
     metaData?: Metadata;
+    maskVariableData: Map<string, ClimateData>; // Cache for data of different variables used in masks
     dataMin: number | null;
     dataMax: number | null;
     dataMean: number | null;
@@ -1114,6 +1219,8 @@ export type AppState = {
         lowerEdited: boolean;
         upperEdited: boolean;
         statistic?: EnsembleStatistic; // Only used in ensemble mode
+        variable?: string; // Variable for this mask (used in explore mode)
+        unit?: string; // Unit for this mask (used in explore mode)
     }>;
 };
 
@@ -1165,6 +1272,14 @@ const state: AppState = {
     mapInfoError: null,
     mapInfoLoadingProgress: { total: 0, done: 0 },
     mapInfoOpen: false,
+    mapRangeSamples: [],
+    mapRangeSeries: null,
+    mapRangeLoading: false,
+    mapRangeError: null,
+    mapRangeLoadingProgress: { total: 0, done: 0 },
+    mapRangeOpen: false,
+    mapRangeStart: "2015-01-01",
+    mapRangeEnd: "2099-01-01",
     mapPolygon: null,
     chartPolygon: null,
     chartPoint: null,
@@ -1201,6 +1316,7 @@ const state: AppState = {
     timeRange: null,
     metaData: undefined,
     compareInfoOpen: false,
+    maskVariableData: new Map<string, ClimateData>(),
 };
 
 let mapCanvas: HTMLCanvasElement | null = null;
@@ -1218,6 +1334,8 @@ let mapLocationSearchDebounce: number | null = null;
 let mapLocationSearchRequestId = 0;
 let mapInfoRequestId = 0;
 let mapInfoDelayTimer: number | null = null;
+let mapRangeRequestId = 0;
+let mapRangeDelayTimer: number | null = null;
 const LOCATION_SEARCH_DEBOUNCE_MS = 500;
 
 function toKebab(input: string) {
@@ -1278,6 +1396,10 @@ function getVariableLabel(variable: string, meta?: Metadata): string {
         meta?.variable_metadata?.[variable]?.description ||
         variable
     );
+}
+
+function getMapRangeVariable(): { variable: string; unit: string } {
+    return { variable: state.variable, unit: state.selectedUnit };
 }
 
 function describeCompareContext(state: AppState): {
@@ -2154,6 +2276,95 @@ function renderMapInfoWindow() {
     `;
 }
 
+function renderMapRangeBody(): string {
+    const { unit } = getMapRangeVariable();
+    if (state.mapRangeLoading) {
+        const progressText =
+            state.mapRangeLoadingProgress.total > 0
+                ? `${state.mapRangeLoadingProgress.done}/${state.mapRangeLoadingProgress.total} datasets loaded`
+                : "Preparing datasets";
+        const preview =
+            state.mapRangeSeries && state.mapRangeSeries.length
+                ? `<div style="${styleAttr(styles.mapRangeChartWrap)}">${renderChartRangeSvg(
+                      state.mapRangeSeries,
+                      { compact: true, unitLabel: unit },
+                  )}</div>`
+                : `<div style="${styleAttr(
+                      styles.chartEmpty,
+                  )}">Loading range view...</div>`;
+        return `
+          <div style="${styleAttr(styles.mapRangeLoadingRow)}">
+            <div style="${styleAttr(styles.mapRangeLoadingSpinner)}"></div>
+            <div>${progressText}</div>
+          </div>
+          ${preview}
+        `;
+    }
+
+    if (state.mapRangeError) {
+        return `<div style="${styleAttr(styles.chartError)}">${escapeHtml(
+            state.mapRangeError,
+        )}</div>`;
+    }
+
+    if (!state.mapRangeSeries || !state.mapRangeSeries.length) {
+        return `<div style="${styleAttr(
+            styles.chartEmpty,
+        )}">Click a location to load the range view.</div>`;
+    }
+
+    return `<div style="${styleAttr(styles.mapRangeChartWrap)}">${renderChartRangeSvg(
+        state.mapRangeSeries,
+        { compact: true, unitLabel: unit },
+    )}</div>`;
+}
+
+function renderMapRangeOverlay() {
+    if (
+        state.canvasView !== "map" ||
+        !state.mapRangeOpen ||
+        !state.mapMarker ||
+        (state.mapPolygon !== null && state.mapPolygon.length >= 3)
+    ) {
+        return "";
+    }
+    const { variable } = getMapRangeVariable();
+    const variableLabel = getVariableLabel(variable, state.metaData);
+    const title = `${variableLabel}`;
+    const rightOffset = state.sidebarOpen ? SIDEBAR_WIDTH : 0;
+    return `
+      <div id="map-range-overlay" style="${styleAttr({
+          ...styles.mapRangeOverlay,
+          right: rightOffset,
+      })}">
+        <div style="${styleAttr(styles.mapRangePanel)}">
+          <div style="${styleAttr(styles.mapRangeHeader)}">
+            <div style="${styleAttr(styles.mapRangeTitleGroup)}">
+              <div class="map-range-title" style="${styleAttr(styles.mapRangeTitle)}">${escapeHtml(
+                  title,
+              )}</div>
+            </div>
+            <button
+              type="button"
+              data-action="close-map-range"
+              aria-label="Close range view"
+              style="${styleAttr(styles.mapInfoActionBtn)}"
+              onmouseover="this.style.color='var(--text-primary)';this.style.background='rgba(15, 23, 42, 0.85)';"
+              onmouseout="this.style.color='var(--text-secondary)';this.style.background='transparent';"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M6 6l12 12M18 6l-12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+            </button>
+          </div>
+          <div class="map-range-body" style="${styleAttr(styles.mapRangeBody)}">
+            ${renderMapRangeBody()}
+          </div>
+        </div>
+      </div>
+    `;
+}
+
 function startRegionDrawing() {
     state.chartLocation = "Draw";
     state.chartPolygon = null;
@@ -2181,6 +2392,7 @@ function startMapDrawing() {
     state.mapPolygon = null;
     state.mapMarker = null;
     state.mapInfoOpen = false;
+    closeMapRangeOverlay();
     state.drawState = { active: true, points: [], previewPoint: null };
     state.pointSelectActive = false;
     ensureDrawKeyListener(completeMapDrawing);
@@ -2202,6 +2414,7 @@ function completeMapDrawing() {
     }
     state.mapPolygon = state.drawState.points;
     state.mapMarker = null;
+    closeMapRangeOverlay();
     state.drawState = resetDrawState();
     removeDrawKeyListener();
     state.mapInfoError = null;
@@ -2387,6 +2600,7 @@ function applyMapSearchedLocation(result: LocationSearchResult) {
         renderMapMarkerPosition();
     }
     scheduleMapInfoOpen();
+    openMapRangeOverlay();
 }
 
 async function handleMapLocationSearch(query: string) {
@@ -2458,6 +2672,18 @@ function updateMapMarkerNameOnly(placeName: string) {
             titleElement.textContent = title;
         }
     }
+
+    if (state.mapRangeOpen && state.mapMarker) {
+        const titleElement = appRoot.querySelector<HTMLDivElement>(
+            ".map-range-title",
+        );
+        if (titleElement) {
+            const { variable } = getMapRangeVariable();
+            const variableLabel = getVariableLabel(variable, state.metaData);
+            const title = `${placeName} · ${variableLabel}`;
+            titleElement.textContent = title;
+        }
+    }
 }
 
 async function handleMapClick(coords: LatLon) {
@@ -2475,6 +2701,7 @@ async function handleMapClick(coords: LatLon) {
         renderMapMarkerPosition();
     }
     scheduleMapInfoOpen();
+    openMapRangeOverlay();
 
     // Fetch place name from OpenStreetMap reverse geocoding
     try {
@@ -2560,6 +2787,187 @@ function updateMapInfoPreview(samples: ChartSample[]) {
 
     // Fallback to full render if elements not found
     render();
+}
+
+function openMapRangeOverlay(delayMs = 560) {
+    if (!state.mapMarker || state.mapPolygon) return;
+    if (mapRangeDelayTimer !== null) {
+        window.clearTimeout(mapRangeDelayTimer);
+        mapRangeDelayTimer = null;
+    }
+    mapRangeDelayTimer = window.setTimeout(() => {
+        mapRangeDelayTimer = null;
+        if (!state.mapMarker || state.mapPolygon) return;
+        const range = buildMapRangeWindow(state.date);
+        state.mapRangeStart = range.start;
+        state.mapRangeEnd = range.end;
+        state.mapRangeOpen = true;
+        render();
+        void loadMapRangeData();
+    }, delayMs);
+}
+
+function closeMapRangeOverlay() {
+    if (mapRangeDelayTimer !== null) {
+        window.clearTimeout(mapRangeDelayTimer);
+        mapRangeDelayTimer = null;
+    }
+    mapRangeRequestId += 1;
+    state.mapRangeOpen = false;
+    state.mapRangeLoading = false;
+    state.mapRangeError = null;
+    state.mapRangeSamples = [];
+    state.mapRangeSeries = null;
+    state.mapRangeLoadingProgress = { total: 0, done: 0 };
+    render();
+}
+
+function updateMapRangePreview(samples: ChartSample[]) {
+    const { variable, unit } = getMapRangeVariable();
+    state.mapRangeSamples = samples;
+    try {
+        state.mapRangeSeries = buildChartRangeSeries(
+            samples,
+            variable,
+            unit,
+        );
+    } catch {
+        return;
+    }
+
+    if (!appRoot) {
+        render();
+        return;
+    }
+
+    const rangePanel = appRoot.querySelector<HTMLDivElement>("#map-range-overlay");
+    if (rangePanel) {
+        const bodyElement =
+            rangePanel.querySelector<HTMLDivElement>(".map-range-body");
+        if (bodyElement) {
+            bodyElement.innerHTML = renderMapRangeBody();
+            return;
+        }
+    }
+
+    render();
+}
+
+async function loadMapRangeData() {
+    if (state.canvasView !== "map") return;
+    const hasPoint = state.mapMarker !== null;
+    const hasPolygon = state.mapPolygon !== null && state.mapPolygon.length >= 3;
+
+    if (!hasPoint || hasPolygon || !state.mapMarker) {
+        state.mapRangeLoading = false;
+        state.mapRangeError = null;
+        state.mapRangeSamples = [];
+        state.mapRangeSeries = null;
+        state.mapRangeLoadingProgress = { total: 0, done: 0 };
+        state.mapRangeOpen = false;
+        render();
+        return;
+    }
+
+    const requestId = ++mapRangeRequestId;
+    const range = buildMapRangeWindow(state.date);
+    const { variable: rangeVariable, unit: rangeUnit } = getMapRangeVariable();
+    state.mapRangeStart = range.start;
+    state.mapRangeEnd = range.end;
+    state.mapRangeLoading = true;
+    state.mapRangeError = null;
+    state.mapRangeSamples = [];
+    state.mapRangeSeries = null;
+    state.mapRangeLoadingProgress = { total: 0, done: 0 };
+    state.mapRangeOpen = true;
+    render();
+
+    try {
+        const metaData = state.metaData ?? (await fetchMetadata());
+        if (!state.metaData) {
+            state.metaData = metaData;
+        }
+
+        const scenarioOptions = metaData?.scenarios?.length
+            ? Array.from(
+                  new Set(metaData.scenarios.map(normalizeScenarioLabel)),
+              )
+            : scenarios;
+        const modelOptions = metaData?.models?.length ? metaData.models : models;
+
+        const activeScenarios = (
+            state.chartScenarios.length ? state.chartScenarios : scenarioOptions
+        ).filter((s) => scenarioOptions.includes(s));
+        const activeModels = (
+            state.chartModels.length ? state.chartModels : modelOptions
+        ).filter((m) => modelOptions.includes(m));
+
+        if (!activeScenarios.length || !activeModels.length) {
+            state.mapRangeError = "Select at least one scenario and one model.";
+            state.mapRangeLoading = false;
+            state.mapRangeLoadingProgress = { total: 0, done: 0 };
+            render();
+            return;
+        }
+
+        const totalRequests = activeScenarios.length * activeModels.length;
+        state.mapRangeLoadingProgress = { total: totalRequests, done: 0 };
+        render();
+
+        const samples: ChartSample[] = [];
+        const useFixedAnnualSamples = shouldUseFixedAnnualSamples(
+            range.start,
+            range.end,
+        );
+        const fixedReferenceDate = range.start;
+
+        for (const model of activeModels) {
+            for (const scenario of activeScenarios) {
+                if (requestId !== mapRangeRequestId) return;
+                const pointSamples = await loadRangePointSamples({
+                    variable: rangeVariable,
+                    model,
+                    scenario,
+                    point: state.mapMarker,
+                    rangeStart: range.start,
+                    rangeEnd: range.end,
+                    useFixedAnnualSamples,
+                    fixedReferenceDate,
+                });
+                if (requestId !== mapRangeRequestId) return;
+                samples.push(...pointSamples);
+
+                state.mapRangeLoadingProgress = {
+                    total: totalRequests,
+                    done: state.mapRangeLoadingProgress.done + 1,
+                };
+                updateMapRangePreview(samples);
+            }
+        }
+
+        if (requestId !== mapRangeRequestId) return;
+        state.mapRangeSamples = samples;
+        state.mapRangeSeries = buildChartRangeSeries(
+            samples,
+            rangeVariable,
+            rangeUnit,
+        );
+        state.mapRangeLoadingProgress = {
+            total: totalRequests,
+            done: totalRequests,
+        };
+    } catch (error) {
+        if (requestId !== mapRangeRequestId) return;
+        state.mapRangeError =
+            error instanceof Error ? error.message : "Failed to load range data.";
+        state.mapRangeSamples = [];
+        state.mapRangeSeries = null;
+        state.mapRangeLoadingProgress = { total: 0, done: 0 };
+    } finally {
+        if (requestId !== mapRangeRequestId) return;
+        state.mapRangeLoading = false;
+        render();
+    }
 }
 
 async function loadMapInfoData() {
@@ -3170,6 +3578,127 @@ function buildFixedAnnualSampleDates(
     return Array.from(new Set(dates)).sort(
         (a, b) => parseDate(a).getTime() - parseDate(b).getTime(),
     );
+}
+
+async function loadRangePointSamples(params: {
+    variable: string;
+    model: string;
+    scenario: string;
+    point: LatLon;
+    rangeStart: string;
+    rangeEnd: string;
+    useFixedAnnualSamples: boolean;
+    fixedReferenceDate: string;
+}): Promise<ChartSample[]> {
+    const {
+        variable,
+        model,
+        scenario,
+        point,
+        rangeStart,
+        rangeEnd,
+        useFixedAnnualSamples,
+        fixedReferenceDate,
+    } = params;
+    const scenarioRange = getTimeRangeForScenario(scenario);
+    const clippedStart = clipDateToRange(rangeStart, scenarioRange);
+    const clippedEnd = clipDateToRange(rangeEnd, scenarioRange);
+
+    if (parseDate(clippedStart) > parseDate(clippedEnd)) {
+        return [];
+    }
+
+    try {
+        const [x, y] = latLonToGridIndices(point.lat, point.lon);
+        const pixelData = await fetchPixelData({
+            variable,
+            model,
+            x0: x,
+            x1: x,
+            y0: y,
+            y1: y,
+            start_date: clippedStart,
+            end_date: clippedEnd,
+            scenario: normalizeScenario(scenario),
+            resolution: "low",
+            step_days: 1,
+        });
+
+        const samples: ChartSample[] = [];
+        for (let i = 0; i < pixelData.timestamps.length; i++) {
+            const timestamp = pixelData.timestamps[i];
+            if (
+                useFixedAnnualSamples &&
+                !isSameMonthDay(timestamp, fixedReferenceDate)
+            ) {
+                continue;
+            }
+            const value = pixelData.values[i];
+            if (value !== null && isFinite(value)) {
+                const rawValue =
+                    variable === "hurs" ? Math.min(value, 100) : value;
+                samples.push({
+                    scenario,
+                    model,
+                    rawValue,
+                    dateUsed: timestamp,
+                });
+            }
+        }
+        return samples;
+    } catch (error) {
+        console.warn("Range point pixel API failed, falling back:", error);
+        const sampledDates = useFixedAnnualSamples
+            ? buildFixedAnnualSampleDates(
+                  fixedReferenceDate,
+                  clippedStart,
+                  clippedEnd,
+                  50,
+              )
+            : buildRangeSampleDates(clippedStart, clippedEnd, 50);
+
+        const samples: ChartSample[] = [];
+        for (const dateCandidate of sampledDates) {
+            const dateForScenario = useFixedAnnualSamples
+                ? dateCandidate
+                : clipDateToRange(dateCandidate, scenarioRange);
+            if (
+                useFixedAnnualSamples &&
+                !isDateWithinRange(dateForScenario, scenarioRange)
+            ) {
+                continue;
+            }
+            const request = createDataRequest({
+                variable,
+                date: dateForScenario,
+                model,
+                scenario,
+                resolution: 1,
+            });
+            let data: ClimateData | null = null;
+            try {
+                data = await fetchClimateData(request);
+            } catch (error) {
+                console.warn(
+                    "Range point request failed, skipping date:",
+                    error,
+                );
+                continue;
+            }
+            const arr = dataToArray(data);
+            if (!arr) {
+                continue;
+            }
+            const avg = valueAtPoint(arr, variable, data.shape, point);
+            samples.push({
+                scenario,
+                model,
+                rawValue: avg,
+                dateUsed: dateForScenario,
+            });
+        }
+        return samples;
+    }
 }
 
 function buildChartRangeSeries(
@@ -4486,56 +5015,18 @@ async function loadChartData() {
                                         state.chartLocation === "Search") &&
                                     state.chartPoint
                                 ) {
-                                    // Single point: use pixel-data API with date range
-                                    const [x, y] = latLonToGridIndices(
-                                        state.chartPoint.lat,
-                                        state.chartPoint.lon,
-                                    );
-                                    const pixelData = await fetchPixelData({
-                                        variable: state.chartVariable,
-                                        model,
-                                        x0: x,
-                                        x1: x,
-                                        y0: y,
-                                        y1: y,
-                                        start_date: clippedStart,
-                                        end_date: clippedEnd,
-                                        scenario: normalizeScenario(scenario),
-                                        resolution: "low",
-                                        step_days: 1,
-                                    });
-
-                                    // Convert time series response to samples
-                                    for (
-                                        let i = 0;
-                                        i < pixelData.timestamps.length;
-                                        i++
-                                    ) {
-                                        const timestamp =
-                                            pixelData.timestamps[i];
-                                        if (
-                                            useFixedAnnualSamples &&
-                                            !isSameMonthDay(
-                                                timestamp,
-                                                fixedReferenceDate,
-                                            )
-                                        ) {
-                                            continue;
-                                        }
-                                        const value = pixelData.values[i];
-                                        if (value !== null && isFinite(value)) {
-                                            const rawValue =
-                                                state.chartVariable === "hurs"
-                                                    ? Math.min(value, 100)
-                                                    : value;
-                                            samples.push({
-                                                scenario,
-                                                model,
-                                                rawValue,
-                                                dateUsed: timestamp,
-                                            });
-                                        }
-                                    }
+                                    const pointSamples =
+                                        await loadRangePointSamples({
+                                            variable: state.chartVariable,
+                                            model,
+                                            scenario,
+                                            point: state.chartPoint,
+                                            rangeStart,
+                                            rangeEnd,
+                                            useFixedAnnualSamples,
+                                            fixedReferenceDate,
+                                        });
+                                    samples.push(...pointSamples);
                                     updateChartPreview(samples);
                                 } else if (
                                     state.chartLocation === "Draw" &&
@@ -5006,6 +5497,66 @@ async function loadClimateData() {
         state.dataMax = result.max;
         state.dataMean = result.mean;
 
+        // In Explore mode, load and cache data for all variables used in masks
+        if (state.mode === "Explore" && state.masks && state.masks.length > 0) {
+            const clippedDate = clipDateToScenarioRange(
+                state.date,
+                activeScenarioForRange,
+            );
+            
+            // Collect unique variables from masks (excluding the current variable)
+            const maskVariables = new Set<string>();
+            for (const mask of state.masks) {
+                if (mask.variable && mask.variable !== state.variable) {
+                    maskVariables.add(mask.variable);
+                }
+            }
+            
+            // Load data for each mask variable
+            state.maskVariableData.clear();
+            for (const maskVar of maskVariables) {
+                try {
+                    const maskRequest = createDataRequest({
+                        variable: maskVar,
+                        date: clippedDate,
+                        model: state.model,
+                        scenario: state.scenario,
+                        resolution: state.resolution,
+                    });
+                    
+                    const maskData = await fetchClimateData(maskRequest);
+                    
+                    // Cap relative humidity to 100% if needed
+                    if (maskVar === "hurs") {
+                        const arrayData = dataToArray(maskData);
+                        if (arrayData) {
+                            const clamped = new Float32Array(arrayData.length);
+                            for (let i = 0; i < arrayData.length; i++) {
+                                const val = arrayData[i];
+                                if (!isFinite(val)) {
+                                    clamped[i] = NaN;
+                                } else {
+                                    clamped[i] = Math.min(val, 100);
+                                }
+                            }
+                            state.maskVariableData.set(maskVar, {
+                                ...maskData,
+                                data: clamped,
+                                data_encoding: "none",
+                            });
+                        } else {
+                            state.maskVariableData.set(maskVar, maskData);
+                        }
+                    } else {
+                        state.maskVariableData.set(maskVar, maskData);
+                    }
+                } catch (error) {
+                    console.warn(`Failed to load data for mask variable ${maskVar}:`, error);
+                    // Continue loading other variables even if one fails
+                }
+            }
+        }
+
         setLoadingProgress(100);
         state.isLoading = false;
 
@@ -5128,6 +5679,7 @@ function render() {
                           : state.selectedUnit,
                       state.mode === "Compare" || 
                       (state.mode === "Ensemble" && state.ensembleStatistic !== "mean"),
+                      state.mapRangeOpen ? 70 : 0,
                   )
                 : ""
         }
@@ -5189,6 +5741,8 @@ function render() {
                 : `<div data-role="chart-container" style="pointer-events:auto; width:100%; display:flex; align-items:center; justify-content:center; padding:24px;"></div>`
         }
       </div>
+
+      ${renderMapRangeOverlay()}
 
       <aside data-role="sidebar" class="sidebar" style="width: ${SIDEBAR_WIDTH}px; transform: ${
           state.sidebarOpen
@@ -5297,7 +5851,7 @@ function render() {
       ${renderSidebarToggle(state.sidebarOpen)}
 
       ${
-          state.canvasView === "map"
+          state.canvasView === "map" && !state.mapRangeOpen
               ? renderTimeSlider({
                     date: state.date,
                     timeRange: state.timeRange,
@@ -5361,37 +5915,45 @@ function render() {
             state.dataMin !== null &&
             state.dataMax !== null
         ) {
-            applyMapInteractions(mapCanvas);
-            renderMapData(
-                state.currentData,
-                mapCanvas,
-                paletteOptions,
-                state.palette,
-                state.dataMin,
-                state.dataMax,
-                state.mode === "Ensemble"
-                    ? state.ensembleVariable
-                    : state.variable,
-                state.mode === "Ensemble"
-                    ? state.ensembleUnit
-                    : state.selectedUnit,
-                state.masks,
-                state.mode === "Ensemble" ? state.ensembleStatistics : null,
-                state.mode === "Ensemble",
-            );
+            try {
+                applyMapInteractions(mapCanvas);
+                renderMapData(
+                    state.currentData,
+                    mapCanvas,
+                    paletteOptions,
+                    state.palette,
+                    state.dataMin,
+                    state.dataMax,
+                    state.mode === "Ensemble"
+                        ? state.ensembleVariable
+                        : state.variable,
+                    state.mode === "Ensemble"
+                        ? state.ensembleUnit
+                        : state.selectedUnit,
+                    state.masks,
+                    state.mode === "Ensemble" ? state.ensembleStatistics : null,
+                    state.mode === "Ensemble",
+                    state.mode === "Explore" ? state.maskVariableData : undefined,
+                );
 
-            // Draw the gradient on the legend canvas
-            const palette =
-                paletteOptions.find((p) => p.name === state.palette) ||
-                paletteOptions[0];
-            drawLegendGradient("legend-gradient-canvas", palette.colors);
+                // Draw the gradient on the legend canvas
+                const palette =
+                    paletteOptions.find((p) => p.name === state.palette) ||
+                    paletteOptions[0];
+                drawLegendGradient("legend-gradient-canvas", palette.colors);
 
-            // Render overlay if actively drawing or if there's a completed polygon
-            if (
-                state.drawState.active ||
-                (state.mapPolygon !== null && state.mapPolygon.length >= 3)
-            ) {
-                requestAnimationFrame(renderDrawOverlayPaths);
+                // Render overlay if actively drawing or if there's a completed polygon
+                if (
+                    state.drawState.active ||
+                    (state.mapPolygon !== null && state.mapPolygon.length >= 3)
+                ) {
+                    requestAnimationFrame(renderDrawOverlayPaths);
+                }
+            } catch (mapErr) {
+                console.error(
+                    "Map render failed (e.g. changing display variable with masks):",
+                    mapErr,
+                );
             }
         }
     }
@@ -5752,7 +6314,10 @@ function renderMiniChartSvg(boxes: ChartBox[], unitLabel: string): string {
     `;
 }
 
-function renderChartRangeSvg(series: ChartSeries[]): string {
+function renderChartRangeSvg(
+    series: ChartSeries[],
+    options?: { compact?: boolean; unitLabel?: string },
+): string {
     if (!series.length) {
         return `<div style="${styleAttr(
             styles.chartEmpty,
@@ -5764,11 +6329,19 @@ function renderChartRangeSvg(series: ChartSeries[]): string {
         paletteOptions[0];
     const colors = palette.colors;
 
+    const compact = options?.compact ?? false;
+    const unitLabel = options?.unitLabel ?? state.chartUnit;
+
     const width = 960;
-    const height = 460;
-    const margin = { top: 28, right: 32, bottom: 82, left: 86 };
+    const height = compact ? 220 : 460;
+    const margin = compact
+        ? { top: 24, right: 26, bottom: 64, left: 70 }
+        : { top: 28, right: 32, bottom: 82, left: 86 };
     const plotWidth = width - margin.left - margin.right;
     const plotHeight = height - margin.top - margin.bottom;
+    const tickFont = compact ? 10 : 11;
+    const legendFont = compact ? 10.5 : 11.5;
+    const yLabelOffset = compact ? 54 : 70;
 
     const allPoints = series.flatMap((s) => s.points);
     const allDates = allPoints.map((p) => parseDate(p.date));
@@ -5789,7 +6362,7 @@ function renderChartRangeSvg(series: ChartSeries[]): string {
         .scaleTime()
         .domain([domainStart, domainEnd])
         .range([0, plotWidth]);
-    const xTicks = xScale.ticks(6);
+    const xTicks = xScale.ticks(compact ? 5 : 6);
     const formatTick = d3.timeFormat("%b %Y");
 
     const allExtrema = allPoints.flatMap((p) => [p.stats.min, p.stats.max]);
@@ -5813,7 +6386,7 @@ function renderChartRangeSvg(series: ChartSeries[]): string {
           }" y1="${y}" y2="${y}" stroke="rgba(255,255,255,0.08)" />
           <text x="${margin.left - 10}" y="${
               y + 4
-          }" fill="var(--text-secondary)" font-size="11" text-anchor="end">
+          }" fill="var(--text-secondary)" font-size="${tickFont}" text-anchor="end">
             ${formatNumberCompact(tick)}
           </text>
         </g>
@@ -5829,7 +6402,7 @@ function renderChartRangeSvg(series: ChartSeries[]): string {
           <line x1="${x}" x2="${x}" y1="${margin.top}" y2="${
               height - margin.bottom
           }" stroke="rgba(255,255,255,0.06)" />
-          <text x="${x}" y="${height - margin.bottom + 26}" fill="var(--text-secondary)" font-size="11" text-anchor="middle">
+          <text x="${x}" y="${height - margin.bottom + 26}" fill="var(--text-secondary)" font-size="${tickFont}" text-anchor="middle">
             ${formatTick(tick)}
           </text>
         </g>
@@ -5917,21 +6490,21 @@ function renderChartRangeSvg(series: ChartSeries[]): string {
 
     const yLabel = `
       <text
-        x="${margin.left - 70}"
+        x="${margin.left - yLabelOffset}"
         y="${margin.top + plotHeight / 2}"
         fill="var(--text-secondary)"
-        font-size="12"
+        font-size="${compact ? 11 : 12}"
         text-anchor="middle"
-        transform="rotate(-90 ${margin.left - 70} ${margin.top + plotHeight / 2})"
+        transform="rotate(-90 ${margin.left - yLabelOffset} ${margin.top + plotHeight / 2})"
       >
-        ${state.chartUnit}
+        ${unitLabel}
       </text>
     `;
 
     return `
       <div style="width:100%; display:flex; flex-direction:column; gap:12px; align-items:center;">
         <div style="position:relative; width:100%; display:flex; justify-content:center;">
-          <div style="position:absolute; top:10px; right:16px; display:flex; gap:12px; align-items:center; color:var(--text-secondary); font-size:11.5px; z-index:2;">
+          <div style="position:absolute; top:10px; right:16px; display:flex; gap:12px; align-items:center; color:var(--text-secondary); font-size:${legendFont}px; z-index:2;">
             <div style="display:flex; align-items:center; gap:6px;">
               <span style="display:inline-block; width:26px; height:0; border-top:1px solid var(--text-primary);"></span>
               <span>Median</span>
@@ -5941,7 +6514,7 @@ function renderChartRangeSvg(series: ChartSeries[]): string {
               <span>Mean</span>
             </div>
           </div>
-          <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Distribution over time" preserveAspectRatio="xMidYMid meet" style="width:100%; height:auto;">
+          <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Distribution over time" preserveAspectRatio="xMidYMid meet" style="width:100%; height:${compact ? "100%" : "auto"};">
             ${axisTicksY}
             ${axisTicksX}
             <path
@@ -5955,7 +6528,10 @@ function renderChartRangeSvg(series: ChartSeries[]): string {
             ${yLabel}
           </svg>
         </div>
-        <div style="${styleAttr(styles.chartLegend)}">
+        ${
+            compact
+                ? ""
+                : `<div style="${styleAttr(styles.chartLegend)}">
           ${series
               .map((entry, idx) => {
                   const color = colors[idx % colors.length];
@@ -5967,7 +6543,8 @@ function renderChartRangeSvg(series: ChartSeries[]): string {
           `;
               })
               .join("")}
-        </div>
+        </div>`
+        }
       </div>
     `;
 }
@@ -6393,6 +6970,39 @@ function renderManualSection(params: {
                                     ).replace(
                                         'class="custom-select-wrapper"',
                                         `class="custom-select-wrapper" data-mask-index="${index}" style="width: 100px;"`,
+                                    )}
+                                  </div>
+                                  `
+                                  : state.mode === "Explore"
+                                    ? `
+                                  <div style="${styleAttr({
+                                      display: "flex",
+                                      alignItems: "center",
+                                      gap: 8,
+                                      marginBottom: 4,
+                                  })}">
+                                    ${renderSelect(
+                                        "maskVariable",
+                                        variables,
+                                        mask.variable || state.variable,
+                                        {
+                                            dataKey: "maskVariable",
+                                            infoType: "variable",
+                                        },
+                                    ).replace(
+                                        'class="custom-select-wrapper"',
+                                        `class="custom-select-wrapper" data-mask-index="${index}" style="width: 140px;"`,
+                                    )}
+                                    ${renderSelect(
+                                        "maskUnit",
+                                        getUnitOptions(mask.variable || state.variable).map(opt => opt.label),
+                                        mask.unit || getDefaultUnitOption(mask.variable || state.variable).label,
+                                        {
+                                            dataKey: "maskUnit",
+                                        },
+                                    ).replace(
+                                        'class="custom-select-wrapper"',
+                                        `class="custom-select-wrapper" data-mask-index="${index}" style="width: 120px;"`,
                                     )}
                                   </div>
                                   `
@@ -6836,6 +7446,32 @@ function renderManualSection(params: {
                                               'class="custom-select-wrapper"',
                                               `class="custom-select-wrapper" data-mask-index="${index}"`,
                                           )
+                                        : state.mode === "Explore"
+                                          ? `
+                                            ${renderSelect(
+                                                "maskVariable",
+                                                variables,
+                                                mask.variable || state.variable,
+                                                {
+                                                    dataKey: "maskVariable",
+                                                    infoType: "variable",
+                                                },
+                                            ).replace(
+                                                'class="custom-select-wrapper"',
+                                                `class="custom-select-wrapper" data-mask-index="${index}" style="width: 140px;"`,
+                                            )}
+                                            ${renderSelect(
+                                                "maskUnit",
+                                                getUnitOptions(mask.variable || state.variable).map(opt => opt.label),
+                                                mask.unit || getDefaultUnitOption(mask.variable || state.variable).label,
+                                                {
+                                                    dataKey: "maskUnit",
+                                                },
+                                            ).replace(
+                                                'class="custom-select-wrapper"',
+                                                `class="custom-select-wrapper" data-mask-index="${index}" style="width: 120px;"`,
+                                            )}
+                                          `
                                         : ""
                                 }
                                 <input
@@ -7203,6 +7839,39 @@ function renderManualSection(params: {
                                     ).replace(
                                         'class="custom-select-wrapper"',
                                         `class="custom-select-wrapper" data-mask-index="${index}" style="width: 100px;"`,
+                                    )}
+                                  </div>
+                                  `
+                                  : state.mode === "Explore"
+                                    ? `
+                                  <div style="${styleAttr({
+                                      display: "flex",
+                                      alignItems: "center",
+                                      gap: 8,
+                                      marginBottom: 4,
+                                  })}">
+                                    ${renderSelect(
+                                        "maskVariable",
+                                        variables,
+                                        mask.variable || state.variable,
+                                        {
+                                            dataKey: "maskVariable",
+                                            infoType: "variable",
+                                        },
+                                    ).replace(
+                                        'class="custom-select-wrapper"',
+                                        `class="custom-select-wrapper" data-mask-index="${index}" style="width: 140px;"`,
+                                    )}
+                                    ${renderSelect(
+                                        "maskUnit",
+                                        getUnitOptions(mask.variable || state.variable).map(opt => opt.label),
+                                        mask.unit || getDefaultUnitOption(mask.variable || state.variable).label,
+                                        {
+                                            dataKey: "maskUnit",
+                                        },
+                                    ).replace(
+                                        'class="custom-select-wrapper"',
+                                        `class="custom-select-wrapper" data-mask-index="${index}" style="width: 120px;"`,
                                     )}
                                   </div>
                                   `
@@ -8653,31 +9322,34 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                     const canvas =
                         appRoot.querySelector<HTMLCanvasElement>("#map-canvas");
                     if (canvas) {
-                        mapCanvas = canvas;
-                        applyMapInteractions(canvas);
-                        renderMapData(
-                            state.currentData,
-                            mapCanvas,
-                            paletteOptions,
-                            state.palette,
-                            state.dataMin,
-                            state.dataMax,
-                            state.variable,
-                            state.selectedUnit,
-                            state.masks,
-                            null,
-                            false,
-                        );
-
-                        // Redraw gradient with new palette
-                        const palette =
-                            paletteOptions.find(
-                                (p) => p.name === state.palette,
-                            ) || paletteOptions[0];
-                        drawLegendGradient(
-                            "legend-gradient-canvas",
-                            palette.colors,
-                        );
+                        try {
+                            mapCanvas = canvas;
+                            applyMapInteractions(canvas);
+                            renderMapData(
+                                state.currentData,
+                                mapCanvas,
+                                paletteOptions,
+                                state.palette,
+                                state.dataMin,
+                                state.dataMax,
+                                state.variable,
+                                state.selectedUnit,
+                                state.masks,
+                                null,
+                                false,
+                                state.mode === "Explore" ? state.maskVariableData : undefined,
+                            );
+                            const palette =
+                                paletteOptions.find(
+                                    (p) => p.name === state.palette,
+                                ) || paletteOptions[0];
+                            drawLegendGradient(
+                                "legend-gradient-canvas",
+                                palette.colors,
+                            );
+                        } catch (e) {
+                            console.error("Map redraw (unit change) failed:", e);
+                        }
                     }
                 }
                 if (state.mapMarker) {
@@ -8691,6 +9363,19 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                             render();
                         } else if (!state.mapInfoLoading) {
                             void loadMapInfoData();
+                        }
+                    }
+                    if (state.mapRangeOpen) {
+                        if (state.mapRangeSamples.length) {
+                            const { variable, unit } = getMapRangeVariable();
+                            state.mapRangeSeries = buildChartRangeSeries(
+                                state.mapRangeSamples,
+                                variable,
+                                unit,
+                            );
+                            render();
+                        } else if (!state.mapRangeLoading) {
+                            void loadMapRangeData();
                         }
                     }
                 }
@@ -8721,6 +9406,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                             state.masks,
                             null,
                             false,
+                            state.mode === "Explore" ? state.maskVariableData : undefined,
                         );
 
                         // Redraw gradient with new palette
@@ -8846,6 +9532,19 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                         );
                     }
                 }
+                if (state.mapRangeOpen) {
+                    if (state.mapRangeSamples.length) {
+                        const { variable, unit } = getMapRangeVariable();
+                        state.mapRangeSeries = buildChartRangeSeries(
+                            state.mapRangeSamples,
+                            variable,
+                            unit,
+                        );
+                        render();
+                    } else if (!state.mapRangeLoading) {
+                        void loadMapRangeData();
+                    }
+                }
                 return;
             case "ensembleStatistic":
                 state.ensembleStatistic = val as EnsembleStatistic;
@@ -8861,6 +9560,55 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                         index < state.masks.length
                     ) {
                         state.masks[index].statistic = val as EnsembleStatistic;
+                        render();
+                        // Don't reload map automatically - user will click Apply button
+                    }
+                }
+                return;
+            }
+            case "maskVariable": {
+                // Use the mask index passed from the click handler
+                if (maskIndex !== undefined) {
+                    const index = Number.parseInt(maskIndex, 10);
+                    if (
+                        !Number.isNaN(index) &&
+                        index >= 0 &&
+                        index < state.masks.length
+                    ) {
+                        const m = state.masks[index];
+                        m.variable = val;
+                        m.unit = getDefaultUnitOption(val).label;
+                        // Reset bounds to unrestricted – old bounds were for the previous variable
+                        // (e.g. temp K); applying them to the new variable (e.g. humidity %)
+                        // would fail every pixel. Unrestricted = "full range" until user sets bounds.
+                        m.lowerBound = null;
+                        m.upperBound = null;
+                        m.lowerEdited = false;
+                        m.upperEdited = false;
+                        render();
+                        // Reload so we fetch/cache the new mask variable; otherwise
+                        // maskVariableData lacks it and the filtered mask appears empty.
+                        if (
+                            state.mode === "Explore" &&
+                            state.canvasView === "map"
+                        ) {
+                            void loadClimateData();
+                            render(); // show loading state
+                        }
+                    }
+                }
+                return;
+            }
+            case "maskUnit": {
+                // Use the mask index passed from the click handler
+                if (maskIndex !== undefined) {
+                    const index = Number.parseInt(maskIndex, 10);
+                    if (
+                        !Number.isNaN(index) &&
+                        index >= 0 &&
+                        index < state.masks.length
+                    ) {
+                        state.masks[index].unit = val;
                         render();
                         // Don't reload map automatically - user will click Apply button
                     }
@@ -8906,21 +9654,34 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                 triggerChartReload = true;
                 break;
         }
-        render();
-        if (state.canvasView === "map" && triggerMapReload) {
-            loadClimateData();
-            const hasPoint = state.mapMarker !== null;
-            const hasPolygon =
-                state.mapPolygon !== null && state.mapPolygon.length >= 3;
-            if ((hasPoint || hasPolygon) && state.mapInfoOpen) {
-                void loadMapInfoData();
+        // Defer render + reload to next tick. Otherwise we replace the entire DOM
+        // (including the dropdown we just clicked) during the click handler,
+        // which can crash the page (e.g. when changing variable with masks).
+        const doRenderAndReload = () => {
+            render();
+            if (state.canvasView === "map" && triggerMapReload) {
+                loadClimateData();
+                const hasPoint = state.mapMarker !== null;
+                const hasPolygon =
+                    state.mapPolygon !== null && state.mapPolygon.length >= 3;
+                if ((hasPoint || hasPolygon) && state.mapInfoOpen) {
+                    void loadMapInfoData();
+                }
+                if (hasPoint && state.mapRangeOpen) {
+                    void loadMapRangeData();
+                }
             }
-        }
-        if (
-            state.canvasView === "chart" &&
-            (triggerChartReload || triggerMapReload)
-        ) {
-            loadChartData();
+            if (
+                state.canvasView === "chart" &&
+                (triggerChartReload || triggerMapReload)
+            ) {
+                loadChartData();
+            }
+        };
+        if (triggerMapReload || triggerChartReload) {
+            setTimeout(doRenderAndReload, 0);
+        } else {
+            doRenderAndReload();
         }
     };
 
@@ -9616,6 +10377,8 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                 lowerEdited: boolean;
                 upperEdited: boolean;
                 statistic?: EnsembleStatistic;
+                variable?: string;
+                unit?: string;
             } = {
                 lowerBound: state.dataMin,
                 upperBound: state.dataMax,
@@ -9625,6 +10388,11 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             // In ensemble mode, default to "mean" statistic
             if (state.mode === "Ensemble") {
                 newMask.statistic = "mean";
+            }
+            // In explore mode, default to current variable and unit
+            if (state.mode === "Explore") {
+                newMask.variable = state.variable;
+                newMask.unit = state.selectedUnit;
             }
             state.masks.push(newMask);
             render();
@@ -9682,6 +10450,14 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         closeMapInfoWindow();
     });
 
+    const mapRangeCloseBtn = root.querySelector<HTMLButtonElement>(
+        '[data-action="close-map-range"]',
+    );
+    mapRangeCloseBtn?.addEventListener("click", (e) => {
+        e.preventDefault();
+        closeMapRangeOverlay();
+    });
+
     const mapInfoExpandBtn = root.querySelector<HTMLButtonElement>(
         '[data-action="open-map-info-chart"]',
     );
@@ -9737,6 +10513,9 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                 state.mapPolygon !== null && state.mapPolygon.length >= 3;
             if ((hasPoint || hasPolygon) && state.mapInfoOpen) {
                 void loadMapInfoData();
+            }
+            if (hasPoint && state.mapRangeOpen) {
+                void loadMapRangeData();
             }
         },
         getMode: () => state.mode,

@@ -46,7 +46,13 @@ def _validate_compare_mode_parameters(
     date: str = None
 ) -> None:
     """Validate parameters for the specified compare mode."""
-    
+
+    # Normalize scenarios to lowercase (LLM returns "Historical", config uses "historical")
+    if scenario_a:
+        scenario_a = scenario_a.lower()
+    if scenario_b:
+        scenario_b = scenario_b.lower()
+
     compare_mode_enum = CompareMode(compare_mode)
     
     match compare_mode_enum:
@@ -114,7 +120,13 @@ def switch_to_compare_mode(**kwargs) -> dict:
     if compare_mode == 'Scenarios':
         if not scenario_a:
             scenario_a = current_state.get('selectedScenario') or current_state.get('scenario')
-    
+
+    # Normalize scenarios to lowercase (LLM returns "Historical", config uses "historical")
+    if scenario_a:
+        scenario_a = scenario_a.lower()
+    if scenario_b:
+        scenario_b = scenario_b.lower()
+
     if not compare_mode or compare_mode not in CompareMode._value2member_map_:
         raise ValueError(f"Invalid compare_mode: {compare_mode}. Valid: {[m.value for m in CompareMode]}")
     
@@ -179,12 +191,15 @@ def switch_to_explore_mode(**kwargs) -> dict:
         raise ValueError("Scenario is required")
     if not date:
         raise ValueError("Date is required")
-    
+
+    # Normalize scenario to lowercase (LLM returns "Historical", config uses "historical")
+    scenario = scenario.lower()
+
     if model not in config.VALID_MODELS:
         raise ValueError(f"Invalid model: {model}")
-    if scenario.lower() not in config.SCENARIO_METADATA.keys():
+    if scenario not in config.SCENARIO_METADATA.keys():
         raise ValueError(f"Invalid scenario: {scenario}")
-    
+
     validate_date_for_scenario(date, scenario)
     
     return {

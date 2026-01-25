@@ -1397,7 +1397,7 @@ async function checkApiAvailability() {
  * - SSP245/SSP585: returns current date (or earliest valid date if current date is before 2015)
  */
 function getDateForScenario(scenario: string): string {
-    if (scenario === "Historical") {
+    if (scenario.toLowerCase() === "historical") {
         return "2000-01-01";
     }
 
@@ -1431,7 +1431,7 @@ function getTimeRangeForScenario(scenario: string): {
     start: string;
     end: string;
 } {
-    if (scenario === "Historical") {
+    if (scenario.toLowerCase() === "historical") {
         return {
             start: "1950-01-01",
             end: "2014-12-31",

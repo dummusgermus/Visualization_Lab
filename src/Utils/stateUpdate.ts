@@ -34,11 +34,13 @@ export function updateState(
     if (newState.mode) {
         updates.mode = newState.mode;
     }
-    if (newState.model) {
+    if (newState.selectedModel) {
+        updates.model = newState.selectedModel;
+    } else if (newState.model) {
         updates.model = newState.model;
     }
     if (newState.selectedScenario) {
-        updates.scenario = newState.selectedScenario;
+        updates.scenario = normalizeScenarioLabel(newState.selectedScenario);
     }
     if (newState.selectedDate) {
         updates.date = newState.selectedDate;

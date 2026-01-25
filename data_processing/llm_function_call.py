@@ -17,6 +17,74 @@ FUNCTION_REGISTRY: Dict[str, callable] = {
 }
 
 
+def _format_user_friendly_error(func_name: str, error_msg: str) -> str:
+    """Convert technical error messages to user-friendly messages with valid options."""
+    error_lower = error_msg.lower()
+
+    # Invalid location
+    if "invalid location" in error_lower:
+        valid_locations = ", ".join(config.VALID_CHART_LOCATIONS)
+        return (
+            f"The location you specified is not available. "
+            f"Valid options are: {valid_locations}. "
+            f"Use 'Search' to find a specific city or 'Point' to select on the map."
+        )
+
+    # Invalid variable
+    if "invalid variable" in error_lower:
+        valid_vars = []
+        for var, meta in config.VARIABLE_METADATA.items():
+            valid_vars.append(f"{var} ({meta['name']})")
+        return (
+            f"The variable you specified is not available. "
+            f"Valid options are: {', '.join(valid_vars)}"
+        )
+
+    # Invalid scenario
+    if "invalid scenario" in error_lower:
+        valid_scenarios = []
+        for scenario, meta in config.SCENARIO_METADATA.items():
+            valid_scenarios.append(f"{scenario} ({meta['period']})")
+        return (
+            f"The scenario you specified is not available. "
+            f"Valid options are: {', '.join(valid_scenarios)}"
+        )
+
+    # Invalid model
+    if "invalid model" in error_lower:
+        return (
+            f"The model you specified is not available. "
+            f"Valid models are: {', '.join(config.VALID_MODELS)}"
+        )
+
+    # Invalid chart mode
+    if "invalid chart_mode" in error_lower:
+        return (
+            f"The chart mode you specified is not available. "
+            f"Valid options are: 'single' (for one date) or 'range' (for a time period)"
+        )
+
+    # Invalid palette
+    if "invalid" in error_lower and "palette" in error_lower:
+        return (
+            f"The color palette you specified is not available. "
+            f"Valid options are: viridis, thermal, magma, cividis"
+        )
+
+    # Date/scenario mismatch
+    if "historical" in error_lower and ("2015" in error_lower or "scenario" in error_lower):
+        return (
+            f"Date and scenario don't match. "
+            f"For dates before 2015, use 'historical'. "
+            f"For dates 2015 and later, use 'ssp245', 'ssp370', or 'ssp585'."
+        )
+
+    # Default: return original but remove function name prefix
+    if ": " in error_msg:
+        return error_msg.split(": ", 1)[1]
+    return error_msg
+
+
 def execute_function_calls(tool_calls: list, current_state: dict) -> tuple[dict, list[str]]:
     """
     Execute multiple function calls from the LLM and merge results into state.
@@ -57,17 +125,20 @@ def execute_function_calls(tool_calls: list, current_state: dict) -> tuple[dict,
             updated_state.update(result)
             
         except (ValueError, utils.ParameterValidationError) as e:
-            error_msg = f"{func_name}: {str(e)}"
-            print(f"ERROR - {error_msg}")
-            errors.append(error_msg)
+            error_msg = str(e)
+            print(f"ERROR - {func_name}: {error_msg}")
+            user_friendly_msg = _format_user_friendly_error(func_name, error_msg)
+            errors.append(user_friendly_msg)
         except TypeError as e:
-            error_msg = f"{func_name}: Invalid arguments - {str(e)}"
-            print(f"ERROR - {error_msg}")
-            errors.append(error_msg)
+            error_msg = f"Invalid arguments - {str(e)}"
+            print(f"ERROR - {func_name}: {error_msg}")
+            user_friendly_msg = _format_user_friendly_error(func_name, error_msg)
+            errors.append(user_friendly_msg)
         except Exception as e:
-            error_msg = f"{func_name}: Unexpected error - {str(e)}"
-            print(f"ERROR - {error_msg}")
-            errors.append(error_msg)
+            error_msg = f"Unexpected error - {str(e)}"
+            print(f"ERROR - {func_name}: {error_msg}")
+            user_friendly_msg = _format_user_friendly_error(func_name, error_msg)
+            errors.append(user_friendly_msg)
     
     return updated_state, errors
 

@@ -355,7 +355,17 @@ export function renderMapData(
     max: number,
     variable?: string,
     selectedUnit?: string,
+    masks?: Array<{
+        lowerBound: number | null;
+        upperBound: number | null;
+        lowerEdited: boolean;
+        upperEdited: boolean;
+        statistic?: "mean" | "std" | "median" | "iqr" | "percentile" | "extremes";
+    }>,
+    ensembleStatistics?: Map<"mean" | "std" | "median" | "iqr" | "percentile" | "extremes", Float32Array> | null,
+    isEnsembleMode?: boolean,
 ): void {
+    // masks parameter is used in the rendering loop below
     if (!mapCanvas) return;
 
     const arrayData = dataToArray(data);
@@ -397,8 +407,8 @@ export function renderMapData(
         convertedMax = converted.max;
     }
 
-    // Set data range for tooltip/legend indicator
-    setDataRange(min, max, variable, selectedUnit, isDifference);
+    // Set data range for tooltip/legend indicator (use converted values)
+    setDataRange(convertedMin, convertedMax, variable, selectedUnit, isDifference);
 
     const palette =
         paletteOptions.find((p) => p.name === currentPalette) ||
@@ -457,25 +467,119 @@ export function renderMapData(
                 });
             }
 
-            // Guard against zero data range (e.g., identical datasets) to avoid NaN
-            const range = convertedMax - convertedMin;
-            const normalized =
-                range === 0
-                    ? 0.5
-                    : Math.min(
-                          1,
-                          Math.max(0, (displayValue - convertedMin) / range),
-                      );
+            // Apply all masks
+            // In ensemble mode: intersection (AND) - pixel must pass ALL masks
+            // In other modes: union (OR) - pixel passes if it passes ANY mask
+            let passesMask = false;
+            if (masks && masks.length > 0) {
+                if (isEnsembleMode && ensembleStatistics) {
+                    // Ensemble mode: intersection logic - must pass ALL masks
+                    passesMask = true;
+                    for (const mask of masks) {
+                        const lowerUnrestricted = !mask.lowerEdited;
+                        const upperUnrestricted = !mask.upperEdited;
+                        
+                        // Get the statistic value for this mask
+                        const maskStat = mask.statistic || "mean";
+                        const statArray = ensembleStatistics.get(maskStat);
+                        if (!statArray) {
+                            // Statistic not available, skip this mask
+                            continue;
+                        }
+                        
+                        // Get the statistic value at this pixel
+                        const idx = (height - 1 - y) * width + x;
+                        const statValue = statArray[idx];
+                        if (!isFinite(statValue)) {
+                            passesMask = false;
+                            break;
+                        }
+                        
+                        // Convert statistic value if unit conversion is needed
+                        let statDisplayValue = statValue;
+                        if (variable && selectedUnit) {
+                            const isStatDifference = maskStat !== "mean";
+                            statDisplayValue = convertValue(statValue, variable, selectedUnit, {
+                                isDifference: isStatDifference || isDifference,
+                            });
+                        }
+                        
+                        // Check bounds
+                        if (!lowerUnrestricted && mask.lowerBound !== null) {
+                            if (statDisplayValue < mask.lowerBound) {
+                                passesMask = false;
+                                break;
+                            }
+                        }
+                        
+                        if (!upperUnrestricted && mask.upperBound !== null) {
+                            if (statDisplayValue > mask.upperBound) {
+                                passesMask = false;
+                                break;
+                            }
+                        }
+                    }
+                } else {
+                    // Non-ensemble mode: union logic - passes if ANY mask passes
+                    for (const mask of masks) {
+                        const lowerUnrestricted = !mask.lowerEdited;
+                        const upperUnrestricted = !mask.upperEdited;
+                        
+                        let passesThisMask = true;
+                        
+                        if (!lowerUnrestricted && mask.lowerBound !== null) {
+                            if (displayValue < mask.lowerBound) {
+                                passesThisMask = false;
+                            }
+                        }
+                        
+                        if (!upperUnrestricted && mask.upperBound !== null) {
+                            if (displayValue > mask.upperBound) {
+                                passesThisMask = false;
+                            }
+                        }
+                        
+                        // If this mask passes, the pixel passes (union logic)
+                        if (passesThisMask) {
+                            passesMask = true;
+                            break;
+                        }
+                    }
+                }
+            } else {
+                // No masks means everything passes
+                passesMask = true;
+            }
 
-            const colorIdx = Math.floor(normalized * (paletteRgb.length - 1));
-            const c1 = paletteRgb[Math.min(colorIdx, paletteRgb.length - 1)];
-            const c2 =
-                paletteRgb[Math.min(colorIdx + 1, paletteRgb.length - 1)];
-            const t = normalized * (paletteRgb.length - 1) - colorIdx;
+            let r: number, g: number, b: number;
+            
+            if (!passesMask && masks && masks.length > 0) {
+                // Render masked pixels in dark gray (slightly lighter than background)
+                // Background is #070b13 (rgb(7, 11, 19)), use a slightly lighter gray
+                r = 20;
+                g = 24;
+                b = 32;
+            } else {
+                // Guard against zero data range (e.g., identical datasets) to avoid NaN
+                const range = convertedMax - convertedMin;
+                const normalized =
+                    range === 0
+                        ? 0.5
+                        : Math.min(
+                              1,
+                              Math.max(0, (displayValue - convertedMin) / range),
+                          );
 
-            const r = Math.round(c1.r + (c2.r - c1.r) * t);
-            const g = Math.round(c1.g + (c2.g - c1.g) * t);
-            const b = Math.round(c1.b + (c2.b - c1.b) * t);
+                const colorIdx = Math.floor(normalized * (paletteRgb.length - 1));
+                const c1 = paletteRgb[Math.min(colorIdx, paletteRgb.length - 1)];
+                const c2 =
+                    paletteRgb[Math.min(colorIdx + 1, paletteRgb.length - 1)];
+                const t = normalized * (paletteRgb.length - 1) - colorIdx;
+
+                r = Math.round(c1.r + (c2.r - c1.r) * t);
+                g = Math.round(c1.g + (c2.g - c1.g) * t);
+                b = Math.round(c1.b + (c2.b - c1.b) * t);
+            }
 
             // Fill pixels directly in buffer for better performance
             const startX = Math.max(0, Math.floor(px - halfCell));

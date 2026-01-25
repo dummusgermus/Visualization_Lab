@@ -11,7 +11,7 @@ interface RenderTimeSliderParams {
     timeRange: TimeRange | null;
     sidebarOpen: boolean;
     sidebarWidth: number;
-    mode: "Explore" | "Compare";
+    mode: "Explore" | "Compare" | "Ensemble";
     compareMode: "Scenarios" | "Models" | "Dates";
     compareDateStart?: string;
     compareDateEnd?: string;
@@ -157,7 +157,7 @@ interface AttachTimeSliderHandlersParams {
     root: HTMLElement;
     getTimeRange: () => TimeRange | null;
     onDateChange: (date: string) => void;
-    getMode?: () => "Explore" | "Compare";
+    getMode?: () => "Explore" | "Compare" | "Ensemble";
     getCompareMode?: () => "Scenarios" | "Models" | "Dates";
     getCompareDates?: () => { start: string; end: string };
     onDateRangeChange?: (start: string, end: string) => void;

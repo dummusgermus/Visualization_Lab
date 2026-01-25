@@ -66,7 +66,7 @@ import {
 // Toggle to switch between real API data and toy mock chart data (range mode)
 const USE_TOY_RANGE_DATA = false;
 
-type Mode = "Explore" | "Compare";
+type Mode = "Explore" | "Compare" | "Ensemble";
 type PanelTab = "Manual" | "Chat";
 type CanvasView = "map" | "chart";
 type CompareMode = "Scenarios" | "Models" | "Dates";
@@ -95,6 +95,8 @@ type ChartDropdownState = {
     scenariosOpen: boolean;
     modelsOpen: boolean;
 };
+
+type EnsembleStatistic = "mean" | "std" | "median" | "iqr" | "percentile" | "extremes";
 
 type ChartLoadingProgress = {
     total: number;
@@ -775,7 +777,7 @@ const styles: Record<string, Style> = {
     modeSwitch: {
         position: "relative",
         display: "grid",
-        gridTemplateColumns: "1fr 1fr",
+        gridTemplateColumns: "1fr 1fr 1fr",
         gap: 4,
         padding: 2,
         borderRadius: 10,
@@ -788,7 +790,7 @@ const styles: Record<string, Style> = {
         top: 2,
         bottom: 2,
         left: 2,
-        width: "calc(50% - 2px)",
+        width: "calc(33.333% - 2px)",
         borderRadius: 8,
         background: "var(--gradient-mode-indicator)",
         boxShadow: "var(--shadow-combined)",
@@ -871,8 +873,8 @@ const styles: Record<string, Style> = {
     },
     modeTrack: {
         display: "grid",
-        gridTemplateColumns: "1fr 1fr",
-        width: "200%",
+        gridTemplateColumns: "1fr 1fr 1fr",
+        width: "300%",
         height: "100%",
         transition: "transform 220ms ease",
     },
@@ -1084,6 +1086,14 @@ export type AppState = {
     compareModelB: string;
     compareDateStart: string;
     compareDateEnd: string;
+    ensembleScenarios: string[];
+    ensembleModels: string[];
+    ensembleDropdown: ChartDropdownState;
+    ensembleStatistic: EnsembleStatistic;
+    ensembleDate: string;
+    ensembleVariable: string;
+    ensembleUnit: string;
+    ensembleStatistics: Map<EnsembleStatistic, Float32Array> | null; // Cached statistics for mask filtering
     isLoading: boolean;
     loadingProgress: number;
     dataError: string | null;
@@ -1098,6 +1108,13 @@ export type AppState = {
         end: string;
     } | null;
     compareInfoOpen: boolean;
+    masks: Array<{
+        lowerBound: number | null;
+        upperBound: number | null;
+        lowerEdited: boolean;
+        upperEdited: boolean;
+        statistic?: EnsembleStatistic; // Only used in ensemble mode
+    }>;
 };
 
 //TODO set 0 from available models to active model and so on
@@ -1164,6 +1181,15 @@ const state: AppState = {
     compareModelB: models[1] ?? models[0],
     compareDateStart: "1962-06-28",
     compareDateEnd: "2007-06-28",
+    masks: [],
+    ensembleScenarios: ["SSP245", "SSP370", "SSP585"],
+    ensembleModels: [...models],
+    ensembleDropdown: { scenariosOpen: false, modelsOpen: false },
+    ensembleStatistic: "mean",
+    ensembleDate: "2000-01-01",
+    ensembleVariable: variables[0],
+    ensembleUnit: getDefaultUnitOption(variables[0]).label,
+    ensembleStatistics: null,
     isLoading: false,
     loadingProgress: 0,
     dataError: null,
@@ -1663,14 +1689,18 @@ function removeDrawKeyListener() {
 
 function applyMapInteractions(canvas: HTMLCanvasElement) {
     const useDrawMode = state.drawState.active || state.pointSelectActive;
+    const activeVariable =
+        state.mode === "Ensemble" ? state.ensembleVariable : state.variable;
+    const activeUnit =
+        state.mode === "Ensemble" ? state.ensembleUnit : state.selectedUnit;
     const defaultUnit =
-        state.metaData?.variable_metadata[state.variable]?.unit || "";
+        state.metaData?.variable_metadata[activeVariable]?.unit || "";
     setupMapInteractions(
         canvas,
         state.currentData,
         defaultUnit,
-        state.variable,
-        state.selectedUnit,
+        activeVariable,
+        activeUnit,
         {
             drawMode: useDrawMode,
             onDrawClick: state.pointSelectActive
@@ -3378,6 +3408,254 @@ async function loadCompareData(
     return createDifferenceData(dataA, dataB, labelA, labelB);
 }
 
+/**
+ * Compute percentile of a sorted array
+ */
+function percentile(sortedValues: number[], p: number): number {
+    if (sortedValues.length === 0) return NaN;
+    if (sortedValues.length === 1) return sortedValues[0];
+    
+    const index = (p / 100) * (sortedValues.length - 1);
+    const lower = Math.floor(index);
+    const upper = Math.ceil(index);
+    const weight = index - lower;
+    
+    if (lower === upper) {
+        return sortedValues[lower];
+    }
+    
+    return sortedValues[lower] * (1 - weight) + sortedValues[upper] * weight;
+}
+
+async function loadEnsembleData(
+    onProgress?: (progress: number) => void,
+): Promise<{ data: ClimateData; min: number; max: number; mean: number }> {
+    const activeScenarios =
+        state.ensembleScenarios.length > 0
+            ? state.ensembleScenarios
+            : scenarios.filter((s) => s !== "Historical");
+    const activeModels =
+        state.ensembleModels.length > 0
+            ? state.ensembleModels
+            : models;
+
+    if (activeScenarios.length === 0 || activeModels.length === 0) {
+        throw new Error("Please select at least one scenario and one model.");
+    }
+
+    // Find common date range for all selected scenarios
+    const commonRange = intersectScenarioRange(activeScenarios);
+    const ensembleDate = clipDateToRange(state.ensembleDate, commonRange);
+    if (ensembleDate !== state.ensembleDate) {
+        state.ensembleDate = ensembleDate;
+    }
+
+    const totalRequests = activeScenarios.length * activeModels.length;
+    const allDataArrays: (Float32Array | Float64Array)[] = [];
+    const allShapes: Array<[number, number]> = [];
+
+    onProgress?.(10);
+
+    // Fetch all data
+    for (let i = 0; i < activeScenarios.length; i++) {
+        const scenario = activeScenarios[i];
+        for (let j = 0; j < activeModels.length; j++) {
+            const model = activeModels[j];
+            const progress = 10 + Math.round((i * activeModels.length + j) / totalRequests * 80);
+            onProgress?.(progress);
+
+            const request = createDataRequest({
+                variable: state.ensembleVariable,
+                date: ensembleDate,
+                model,
+                scenario,
+                resolution: state.resolution,
+            });
+
+            try {
+                const data = await fetchClimateData(request);
+                const arrayData = dataToArray(data);
+                if (arrayData) {
+                    allDataArrays.push(arrayData);
+                    allShapes.push(data.shape);
+                }
+            } catch (error) {
+                console.warn(
+                    `Failed to fetch data for ${scenario}/${model}:`,
+                    error,
+                );
+                // Continue with other datasets
+            }
+        }
+    }
+
+    if (allDataArrays.length === 0) {
+        throw new Error("No valid data could be loaded for the selected scenarios and models.");
+    }
+
+    onProgress?.(90);
+
+    // Verify all arrays have the same shape
+    const firstShape = allShapes[0];
+    for (let i = 1; i < allShapes.length; i++) {
+        if (
+            allShapes[i][0] !== firstShape[0] ||
+            allShapes[i][1] !== firstShape[1]
+        ) {
+            throw new Error(
+                "Ensemble datasets have mismatched shapes. Cannot compute statistics.",
+            );
+        }
+    }
+
+    const length = allDataArrays[0].length;
+    const resultArray = new Float32Array(length);
+    let min = Infinity;
+    let max = -Infinity;
+    let sum = 0;
+    let count = 0;
+
+    // Determine which statistics we need to compute
+    const neededStats = new Set<EnsembleStatistic>([state.ensembleStatistic]);
+    if (state.masks && state.masks.length > 0) {
+        for (const mask of state.masks) {
+            if (mask.statistic) {
+                neededStats.add(mask.statistic);
+            }
+        }
+    }
+
+    // Create arrays for all needed statistics
+    const statsArrays = new Map<EnsembleStatistic, Float32Array>();
+    for (const stat of neededStats) {
+        statsArrays.set(stat, new Float32Array(length));
+    }
+
+    // Compute statistics pixel by pixel
+    for (let i = 0; i < length; i++) {
+        const values: number[] = [];
+
+        // Collect all valid values for this pixel
+        for (const arrayData of allDataArrays) {
+            const val = arrayData[i];
+            if (isFinite(val)) {
+                // Cap relative humidity to 100%
+                const processedVal =
+                    state.ensembleVariable === "hurs"
+                        ? Math.min(val, 100)
+                        : val;
+                values.push(processedVal);
+            }
+        }
+
+        if (values.length === 0) {
+            resultArray[i] = NaN;
+            for (const stat of neededStats) {
+                statsArrays.get(stat)![i] = NaN;
+            }
+            continue;
+        }
+
+        // Compute all needed statistics for this pixel
+        const sorted = neededStats.has("median") || neededStats.has("iqr") || 
+                       neededStats.has("percentile") 
+            ? [...values].sort((a, b) => a - b)
+            : null;
+        const mean = neededStats.has("mean") || neededStats.has("std")
+            ? values.reduce((a, b) => a + b, 0) / values.length
+            : 0;
+
+        for (const stat of neededStats) {
+            let result: number;
+            if (stat === "mean") {
+                result = mean;
+            } else if (stat === "median") {
+                result = percentile(sorted!, 50);
+            } else if (stat === "std") {
+                const variance =
+                    values.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) /
+                    values.length;
+                result = Math.sqrt(variance);
+            } else if (stat === "iqr") {
+                const q75 = percentile(sorted!, 75);
+                const q25 = percentile(sorted!, 25);
+                result = q75 - q25;
+            } else if (stat === "percentile") {
+                const p90 = percentile(sorted!, 90);
+                const p10 = percentile(sorted!, 10);
+                result = p90 - p10;
+            } else if (stat === "extremes") {
+                result = Math.max(...values) - Math.min(...values);
+            } else {
+                result = mean;
+            }
+
+            statsArrays.get(stat)![i] = result;
+        }
+
+        // Use the displayed statistic for resultArray
+        const displayedResult = statsArrays.get(state.ensembleStatistic)![i];
+        resultArray[i] = displayedResult;
+
+        if (isFinite(displayedResult)) {
+            min = Math.min(min, displayedResult);
+            max = Math.max(max, displayedResult);
+            sum += displayedResult;
+            count += 1;
+        }
+    }
+
+    // Store all computed statistics in state
+    state.ensembleStatistics = statsArrays;
+
+    if (!isFinite(min) || !isFinite(max)) {
+        throw new Error("Ensemble computation produced no valid numeric values.");
+    }
+
+    const mean = count > 0 ? sum / count : NaN;
+
+    // Use the first dataset as a template for the result
+    const templateRequest = createDataRequest({
+        variable: state.ensembleVariable,
+        date: ensembleDate,
+        model: activeModels[0],
+        scenario: activeScenarios[0],
+        resolution: state.resolution,
+    });
+
+    // We need to create a ClimateData object with the computed statistics
+    // For now, we'll use the first dataset's structure
+    const templateData = await fetchClimateData(templateRequest);
+    // Mark spread/difference measures as differences (not absolute values)
+    // so unit conversions don't apply absolute offsets (e.g., Kelvin -> Celsius)
+    // Mean is absolute, all others (std, median, iqr, percentile, extremes) are differences
+    const isDifferenceStatistic = state.ensembleStatistic !== "mean";
+    const metadata = isDifferenceStatistic
+        ? { 
+            ...(templateData.metadata || {}), 
+            comparison: { 
+                labelA: "Ensemble", 
+                labelB: state.ensembleStatistic === "std" ? "Std Dev"
+                    : state.ensembleStatistic === "median" ? "Median"
+                    : state.ensembleStatistic === "iqr" ? "IQR"
+                    : state.ensembleStatistic === "percentile" ? "Percentile Band"
+                    : "Extremes"
+            } 
+        }
+        : templateData.metadata;
+
+    const ensembleData: ClimateData = {
+        ...templateData,
+        data: resultArray,
+        data_encoding: "none",
+        metadata,
+    };
+
+    onProgress?.(100);
+
+    return { data: ensembleData, min, max, mean };
+}
+
 // Grid shape constants - matching data_processing/config.py GRID_SHAPE = (600, 1440)
 const GRID_HEIGHT = 600;
 const GRID_WIDTH = 1440;
@@ -3584,6 +3862,70 @@ function updateChartContainerDOM() {
           </div>
         </div>
       `;
+
+    // Add hover event listeners for boxplot model indicators
+    if (!isRangeMode && state.chartBoxes && state.chartBoxes.length > 0) {
+        // Use setTimeout to ensure DOM is fully parsed
+        setTimeout(() => {
+            attachBoxplotHoverListeners();
+        }, 0);
+    }
+}
+
+function attachBoxplotHoverListeners() {
+    const svg = document.querySelector("[data-role='chart-container'] svg");
+    if (!svg) {
+        return;
+    }
+
+    const hoverOverlay = svg.querySelector(".boxplot-hover-overlay") as SVGElement;
+    if (!hoverOverlay) {
+        return;
+    }
+
+    const hoverAreas = svg.querySelectorAll(".boxplot-hover-area");
+    const modelIndicators = svg.querySelectorAll(".model-indicator");
+
+    if (hoverAreas.length === 0) {
+        return;
+    }
+
+    // Initially hide all indicators
+    modelIndicators.forEach((indicator) => {
+        (indicator as SVGElement).style.opacity = "0";
+    });
+
+    hoverAreas.forEach((area) => {
+        const boxplotGroup = area.closest(".boxplot-group") as SVGElement;
+        if (!boxplotGroup) return;
+
+        const boxplotIdx = boxplotGroup.getAttribute("data-boxplot-idx");
+        if (boxplotIdx === null) return;
+
+        area.addEventListener("mouseenter", () => {
+            hoverOverlay.style.opacity = "1";
+            hoverOverlay.style.pointerEvents = "auto";
+            // Show only indicators for this boxplot
+            modelIndicators.forEach((indicator) => {
+                const indicatorGroup = indicator as SVGElement;
+                const indicatorIdx = indicatorGroup.getAttribute("data-boxplot-idx");
+                if (indicatorIdx === boxplotIdx) {
+                    indicatorGroup.style.opacity = "1";
+                } else {
+                    indicatorGroup.style.opacity = "0";
+                }
+            });
+        });
+
+        area.addEventListener("mouseleave", () => {
+            hoverOverlay.style.opacity = "0";
+            hoverOverlay.style.pointerEvents = "none";
+            // Hide all indicators on mouse leave
+            modelIndicators.forEach((indicator) => {
+                (indicator as SVGElement).style.opacity = "0";
+            });
+        });
+    });
 }
 
 async function loadChartData() {
@@ -4554,6 +4896,11 @@ async function loadChartData() {
 }
 
 async function loadClimateData() {
+    // Prevent reloads during mask updates - user must click Apply button
+    if ((state as any).__updatingMask) {
+        console.log("Skipping loadClimateData - mask update in progress");
+        return;
+    }
     console.log("fetching");
     if (state.canvasView !== "map") {
         return;
@@ -4573,7 +4920,11 @@ async function loadClimateData() {
         const activeScenarioForRange =
             state.mode === "Compare" && state.compareMode === "Scenarios"
                 ? state.compareScenarioA
-                : state.scenario;
+                : state.mode === "Ensemble"
+                  ? state.ensembleScenarios.length > 0
+                      ? state.ensembleScenarios[0]
+                      : state.scenario
+                  : state.scenario;
         // Update time range based on the scenario driving the current request
         state.timeRange = getTimeRangeForScenario(activeScenarioForRange);
         setLoadingProgress(30);
@@ -4584,7 +4935,9 @@ async function loadClimateData() {
                       activeScenarioForRange,
                       setLoadingProgress,
                   )
-                : await (async () => {
+                : state.mode === "Ensemble"
+                  ? await loadEnsembleData(setLoadingProgress)
+                  : await (async () => {
                       setLoadingProgress(40);
                       const clippedDate = clipDateToScenarioRange(
                           state.date,
@@ -4737,9 +5090,17 @@ function render() {
     const resolutionFill = ((state.resolution - 1) / (3 - 1)) * 100;
 
     const modeTransform =
-        state.mode === "Explore" ? "translateX(0%)" : "translateX(-50%)";
+        state.mode === "Explore"
+            ? "translateX(0%)"
+            : state.mode === "Compare"
+              ? "translateX(-33.333%)"
+              : "translateX(-66.666%)";
     const modeIndicatorTransform =
-        state.mode === "Explore" ? "translateX(0%)" : "translateX(100%)";
+        state.mode === "Explore"
+            ? "translateX(0%)"
+            : state.mode === "Compare"
+              ? "translateX(100%)"
+              : "translateX(200%)";
     const canvasIndicatorTransform =
         state.canvasView === "map" ? "translateX(0%)" : "translateX(100%)";
     const tabTransform =
@@ -4756,12 +5117,17 @@ function render() {
             state.dataMin !== null &&
             state.dataMax !== null
                 ? renderMapLegend(
-                      state.variable,
+                      state.mode === "Ensemble"
+                          ? state.ensembleVariable
+                          : state.variable,
                       state.dataMin,
                       state.dataMax,
                       state.metaData,
-                      state.selectedUnit,
-                      state.mode === "Compare",
+                      state.mode === "Ensemble"
+                          ? state.ensembleUnit
+                          : state.selectedUnit,
+                      state.mode === "Compare" || 
+                      (state.mode === "Ensemble" && state.ensembleStatistic !== "mean"),
                   )
                 : ""
         }
@@ -5003,8 +5369,15 @@ function render() {
                 state.palette,
                 state.dataMin,
                 state.dataMax,
-                state.variable,
-                state.selectedUnit,
+                state.mode === "Ensemble"
+                    ? state.ensembleVariable
+                    : state.variable,
+                state.mode === "Ensemble"
+                    ? state.ensembleUnit
+                    : state.selectedUnit,
+                state.masks,
+                state.mode === "Ensemble" ? state.ensembleStatistics : null,
+                state.mode === "Ensemble",
             );
 
             // Draw the gradient on the legend canvas
@@ -5139,11 +5512,11 @@ function renderChartSvg(boxes: ChartBox[]): string {
             const boxTop = yScale(q3) + margin.top;
             const boxBottom = yScale(q1) + margin.top;
             const rectHeight = Math.max(2, boxBottom - boxTop);
+            const whiskerTop = yScale(min) + margin.top;
+            const whiskerBottom = yScale(max) + margin.top;
             return `
-        <g>
-          <line x1="${x}" x2="${x}" y1="${yScale(min) + margin.top}" y2="${
-              yScale(max) + margin.top
-          }" stroke="${color}" stroke-width="2" stroke-linecap="round" />
+        <g data-boxplot-idx="${idx}" class="boxplot-group">
+          <line x1="${x}" x2="${x}" y1="${whiskerTop}" y2="${whiskerBottom}" stroke="${color}" stroke-width="2" stroke-linecap="round" />
           <rect x="${
               x - 24
           }" y="${boxTop}" width="48" height="${rectHeight}" fill="rgba(255,255,255,0.06)" stroke="${color}" stroke-width="2" rx="6" />
@@ -5165,8 +5538,63 @@ function renderChartSvg(boxes: ChartBox[]): string {
           }" fill="var(--text-secondary)" font-size="11" text-anchor="middle">${
               box.samples.length
           } model${box.samples.length === 1 ? "" : "s"}</text>
+          <rect x="${
+              x - 35
+          }" y="${margin.top}" width="70" height="${plotHeight}" fill="transparent" class="boxplot-hover-area" style="cursor: pointer; pointer-events: all;" />
         </g>
       `;
+        })
+        .join("");
+
+    // Create hover overlay group for model value indicators
+    const hoverOverlayMarkup = sortedBoxes
+        .map((box, idx) => {
+            const x = margin.left + xStep * (idx + 1);
+            const boxplotRight = x + 30; // Right edge of boxplot
+            const lineStartX = boxplotRight;
+            const lineEndX = boxplotRight + 6; // Horizontal line to show position
+            const labelStartX = lineEndX + 6; // Start of label text
+            
+            const modelIndicators = box.samples
+                .map((sample) => {
+                    const y = yScale(sample.value) + margin.top;
+                    return {
+                        model: sample.model,
+                        value: sample.value,
+                        y,
+                    };
+                })
+                .sort((a, b) => a.y - b.y); // Sort by y position
+
+            // Adjust label positions to avoid overlaps
+            const minLabelSpacing = 12; // Minimum vertical spacing between labels
+            const adjustedIndicators: Array<{ model: string; value: number; y: number; adjustedY: number }> = [];
+            modelIndicators.forEach((indicator, i) => {
+                if (i === 0) {
+                    adjustedIndicators.push({ ...indicator, adjustedY: indicator.y });
+                } else {
+                    const prevY = adjustedIndicators[i - 1].adjustedY;
+                    const minY = prevY + minLabelSpacing;
+                    adjustedIndicators.push({
+                        ...indicator,
+                        adjustedY: Math.max(indicator.y, minY),
+                    });
+                }
+            });
+
+            const indicatorsHtml = adjustedIndicators
+                .map((indicator) => {
+                    const labelY = indicator.adjustedY || indicator.y;
+                    return `
+                    <g class="model-indicator" data-boxplot-idx="${idx}">
+                      <line x1="${lineStartX}" x2="${lineEndX}" y1="${indicator.y}" y2="${indicator.y}" stroke="white" stroke-width="1" stroke-linecap="round" />
+                      <text x="${labelStartX}" y="${labelY + 4}" fill="white" font-size="10" font-weight="300" opacity="0.95">${indicator.model}</text>
+                    </g>
+                  `;
+                })
+                .join("");
+
+            return indicatorsHtml;
         })
         .join("");
 
@@ -5201,6 +5629,9 @@ function renderChartSvg(boxes: ChartBox[]): string {
         ${axisLine}
         ${axisTicks}
         ${boxesMarkup}
+        <g class="boxplot-hover-overlay" style="opacity: 0; pointer-events: none;">
+          ${hoverOverlayMarkup}
+        </g>
         ${yLabel}
       </svg>
     `;
@@ -5622,8 +6053,18 @@ function renderSelect(
         </div>
         <div class="custom-select-dropdown" id="${uniqueId}-dropdown" role="listbox">
           ${options
-              .map(
-                  (opt) => `
+              .map((opt) => {
+                  // Format statistic labels for better display
+                  const displayLabel = (dataKey === "ensembleStatistic" || dataKey === "maskStatistic")
+                      ? opt === "mean" ? "Mean"
+                          : opt === "median" ? "Median"
+                          : opt === "std" ? "Std"
+                          : opt === "iqr" ? "IQR"
+                          : opt === "percentile" ? "Percentile"
+                          : opt === "extremes" ? "Extremes"
+                          : opt
+                      : opt;
+                  return `
                 <div class="custom-select-option ${
                     opt === current ? "selected" : ""
                 }" 
@@ -5633,10 +6074,10 @@ function renderSelect(
                      role="option"
                      ${opt === current ? 'aria-selected="true"' : ""}
                      tabindex="0">
-                  ${opt}
+                  ${displayLabel}
                 </div>
-              `,
-              )
+              `;
+              })
               .join("")}
           ${extraContent}
         </div>
@@ -5669,6 +6110,59 @@ function renderManualSection(params: {
     modeIndicatorTransform: string;
 }) {
     const { modeTransform, resolutionFill, modeIndicatorTransform } = params;
+
+    const renderCollapsible = (
+        label: string,
+        open: boolean,
+        countLabel: string,
+        content: string,
+        dataKey: string,
+    ) => {
+        return `
+          <div style="${styleAttr({
+              border: "1px solid var(--border-medium)",
+              borderRadius: 12,
+              background: "var(--bg-subtle)",
+              padding: "10px 12px",
+          })}">
+            <button
+              type="button"
+              data-action="toggle-collapse"
+              data-key="${dataKey}"
+              style="${styleAttr({
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  width: "100%",
+                  background: "transparent",
+                  border: "none",
+                  color: "var(--text-primary)",
+                  fontWeight: 700,
+                  fontSize: 13,
+                  cursor: "pointer",
+                  padding: 0,
+              })}"
+            >
+              <span>${label}</span>
+              <span style="${styleAttr({
+                  color: "var(--text-secondary)",
+                  fontWeight: 600,
+                  fontSize: 12,
+              })}">${countLabel} ${open ? "▴" : "▾"}</span>
+            </button>
+            ${
+                open
+                    ? `<div style="${styleAttr({
+                          marginTop: 10,
+                          display: "flex",
+                          flexWrap: "wrap",
+                          gap: 8,
+                      })}">${content}</div>`
+                    : ""
+            }
+          </div>
+        `;
+    };
     const compareParameters =
         state.compareMode === "Models"
             ? [
@@ -5711,7 +6205,7 @@ function renderManualSection(params: {
           ...styles.modeIndicator,
           transform: modeIndicatorTransform,
       })}"></div>
-      ${(["Explore", "Compare"] as const)
+      ${(["Explore", "Compare", "Ensemble"] as const)
           .map(
               (value) =>
                   `
@@ -5852,6 +6346,216 @@ function renderManualSection(params: {
                           : "High"
                 }</div>
               </div>
+            </div>
+          </div>
+
+          <div style="margin-top:14px">
+            <div style="${styleAttr({
+                display: "flex",
+                flexDirection: "column",
+                gap: 8,
+            })}">
+              <div style="${styleAttr(styles.sectionTitle)}">Mask</div>
+              ${
+                  state.masks.length > 0
+                      ? `
+                      <div style="${styleAttr({
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: 8,
+                      })}">
+                        ${state.masks
+                            .map(
+                                (mask, index) => `
+                          ${
+                              state.mode === "Ensemble"
+                                  ? `
+                                  <div style="${styleAttr({
+                                      display: "flex",
+                                      alignItems: "center",
+                                      gap: 8,
+                                      marginBottom: 4,
+                                  })}">
+                                    ${renderSelect(
+                                        "maskStatistic",
+                                        ["mean", "std", "median", "iqr", "percentile", "extremes"],
+                                        mask.statistic || "mean",
+                                        {
+                                            dataKey: "maskStatistic",
+                                            selectedLabel: mask.statistic === "mean" ? "Mean"
+                                                : mask.statistic === "std" ? "Std"
+                                                : mask.statistic === "median" ? "Median"
+                                                : mask.statistic === "iqr" ? "IQR"
+                                                : mask.statistic === "percentile" ? "Percentile"
+                                                : mask.statistic === "extremes" ? "Extremes"
+                                                : "Mean",
+                                        },
+                                    ).replace(
+                                        'class="custom-select-wrapper"',
+                                        `class="custom-select-wrapper" data-mask-index="${index}" style="width: 100px;"`,
+                                    )}
+                                  </div>
+                                  `
+                                  : ""
+                          }
+                          <div style="${styleAttr({
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 8,
+                          })}">
+                            <input
+                              type="number"
+                              step="any"
+                              value="${mask.lowerEdited && mask.lowerBound !== null ? mask.lowerBound : ""}"
+                              data-action="update-mask-bound"
+                              data-mask-index="${index}"
+                              data-bound="lower"
+                              placeholder="${state.dataMin !== null ? state.dataMin.toFixed(2) : ""}"
+                              style="${styleAttr({
+                                  width: "90px",
+                                  background: "var(--gradient-bg)",
+                                  border: "1px solid var(--border-strong)",
+                                  borderRadius: 8,
+                                  color: "var(--text-primary)",
+                                  padding: "6px 10px",
+                                  fontSize: 12.5,
+                                  fontWeight: 600,
+                                  fontFamily: "var(--font-geist-sans)",
+                                  letterSpacing: 0.25,
+                                  minHeight: 32,
+                                  boxShadow: "inset 0 1px 0 var(--inset-light)",
+                              })}"
+                            />
+                            <span style="${styleAttr({
+                                fontSize: 12.5,
+                                color: "var(--text-secondary)",
+                                minWidth: "20px",
+                                textAlign: "center",
+                            })}">to</span>
+                            <input
+                              type="number"
+                              step="any"
+                              value="${mask.upperEdited && mask.upperBound !== null ? mask.upperBound : ""}"
+                              data-action="update-mask-bound"
+                              data-mask-index="${index}"
+                              data-bound="upper"
+                              placeholder="${state.dataMax !== null ? state.dataMax.toFixed(2) : ""}"
+                              style="${styleAttr({
+                                  width: "90px",
+                                  background: "var(--gradient-bg)",
+                                  border: "1px solid var(--border-strong)",
+                                  borderRadius: 8,
+                                  color: "var(--text-primary)",
+                                  padding: "6px 10px",
+                                  fontSize: 12.5,
+                                  fontWeight: 600,
+                                  fontFamily: "var(--font-geist-sans)",
+                                  letterSpacing: 0.25,
+                                  minHeight: 32,
+                                  boxShadow: "inset 0 1px 0 var(--inset-light)",
+                              })}"
+                            />
+                            <button
+                              type="button"
+                              data-action="remove-mask"
+                              data-mask-index="${index}"
+                              style="${styleAttr({
+                                  width: 28,
+                                  height: 28,
+                                  padding: 0,
+                                  borderRadius: 6,
+                                  border: "1px solid var(--border-medium)",
+                                  background: "var(--bg-transparent)",
+                                  color: "var(--text-secondary)",
+                                  fontSize: 16,
+                                  fontWeight: 600,
+                                  cursor: "pointer",
+                                  transition: "all 0.15s ease",
+                                  display: "flex",
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                  flexShrink: 0,
+                              })}"
+                              onmouseover="this.style.borderColor='var(--border-bright)'; this.style.background='var(--bg-medium)'"
+                              onmouseout="this.style.borderColor='var(--border-medium)'; this.style.background='var(--bg-transparent)'"
+                            >
+                              −
+                            </button>
+                          </div>
+                        `,
+                            )
+                            .join("")}
+                        <button
+                          type="button"
+                          data-action="apply-masks"
+                          style="${styleAttr({
+                              padding: "10px 16px",
+                              borderRadius: 10,
+                              border: "1px solid var(--border-strong)",
+                              background: "var(--gradient-primary)",
+                              color: "white",
+                              fontSize: 12.5,
+                              fontWeight: 700,
+                              cursor: "pointer",
+                              transition: "all 0.15s ease",
+                              textAlign: "center",
+                              width: "100%",
+                              marginTop: 8,
+                              boxShadow: "var(--shadow-combined)",
+                          })}"
+                          onmouseover="this.style.borderColor='var(--accent-border-bright)'; this.style.boxShadow='var(--shadow-elevated)'"
+                          onmouseout="this.style.borderColor='var(--border-strong)'; this.style.boxShadow='var(--shadow-combined)'"
+                        >
+                          Apply Masks
+                        </button>
+                        <button
+                          type="button"
+                          data-action="add-mask"
+                          style="${styleAttr({
+                              padding: "8px 14px",
+                              borderRadius: 10,
+                              border: "1px solid var(--border-subtle)",
+                              background: "var(--bg-transparent)",
+                              color: "var(--text-secondary)",
+                              fontSize: 12.5,
+                              fontWeight: 600,
+                              cursor: "pointer",
+                              transition: "all 0.15s ease",
+                              textAlign: "left",
+                              width: "100%",
+                              marginTop: 4,
+                          })}"
+                          onmouseover="this.style.borderColor='var(--border-medium)'; this.style.background='var(--bg-subtle)'"
+                          onmouseout="this.style.borderColor='var(--border-subtle)'; this.style.background='var(--bg-transparent)'"
+                        >
+                          + Add Mask
+                        </button>
+                      </div>
+                      `
+                      : `
+                      <button
+                        type="button"
+                        data-action="add-mask"
+                        style="${styleAttr({
+                            padding: "8px 14px",
+                            borderRadius: 10,
+                            border: "1px solid var(--border-subtle)",
+                            background: "var(--bg-transparent)",
+                            color: "var(--text-secondary)",
+                            fontSize: 12.5,
+                            fontWeight: 600,
+                            cursor: "pointer",
+                            transition: "all 0.15s ease",
+                            textAlign: "left",
+                            width: "100%",
+                        })}"
+                        onmouseover="this.style.borderColor='var(--border-medium)'; this.style.background='var(--bg-subtle)'"
+                        onmouseout="this.style.borderColor='var(--border-subtle)'; this.style.background='var(--bg-transparent)'"
+                      >
+                        + Add Mask
+                      </button>
+                      `
+              }
             </div>
           </div>
         </div>
@@ -6083,6 +6787,585 @@ function renderManualSection(params: {
                   </div>
                 </div>
               </div>
+
+              <div style="margin-top:14px">
+                <div style="${styleAttr({
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 8,
+                })}">
+                  <div style="${styleAttr(
+                      styles.sectionTitle,
+                  )}">Mask</div>
+                  ${
+                      state.masks.length > 0
+                          ? `
+                          <div style="${styleAttr({
+                              display: "flex",
+                              flexDirection: "column",
+                              gap: 8,
+                          })}">
+                            ${state.masks
+                                .map(
+                                    (mask, index) => `
+                              <div style="${styleAttr({
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: 8,
+                              })}">
+                                ${
+                                    state.mode === "Ensemble"
+                                        ? renderSelect(
+                                              "maskStatistic",
+                                              ["mean", "std", "median", "iqr", "percentile", "extremes"],
+                                              mask.statistic || "mean",
+                                              {
+                                                  dataKey: "maskStatistic",
+                                                  selectedLabel: mask.statistic === "mean" ? "Mean"
+                                                      : mask.statistic === "std" ? "Std"
+                                                      : mask.statistic === "median" ? "Median"
+                                                      : mask.statistic === "iqr" ? "IQR"
+                                                      : mask.statistic === "percentile" ? "Percentile"
+                                                      : mask.statistic === "extremes" ? "Extremes"
+                                                      : "Mean",
+                                              },
+                                          ).replace(
+                                              'data-key="maskStatistic"',
+                                              `data-key="maskStatistic" data-mask-index="${index}"`,
+                                          ).replace(
+                                              'class="custom-select-wrapper"',
+                                              `class="custom-select-wrapper" data-mask-index="${index}"`,
+                                          )
+                                        : ""
+                                }
+                                <input
+                                  type="number"
+                                  step="any"
+                                  value="${mask.lowerEdited && mask.lowerBound !== null ? mask.lowerBound : ""}"
+                                  data-action="update-mask-bound"
+                                  data-mask-index="${index}"
+                                  data-bound="lower"
+                                  placeholder="${state.dataMin !== null ? state.dataMin.toFixed(2) : ""}"
+                                  style="${styleAttr({
+                                      width: "90px",
+                                      background: "var(--gradient-bg)",
+                                      border: "1px solid var(--border-strong)",
+                                      borderRadius: 8,
+                                      color: "var(--text-primary)",
+                                      padding: "6px 10px",
+                                      fontSize: 12.5,
+                                      fontWeight: 600,
+                                      fontFamily: "var(--font-geist-sans)",
+                                      letterSpacing: 0.25,
+                                      minHeight: 32,
+                                      boxShadow: "inset 0 1px 0 var(--inset-light)",
+                                  })}"
+                                />
+                                <span style="${styleAttr({
+                                    fontSize: 12.5,
+                                    color: "var(--text-secondary)",
+                                    minWidth: "20px",
+                                    textAlign: "center",
+                                })}">to</span>
+                                <input
+                                  type="number"
+                                  step="any"
+                                  value="${mask.upperEdited && mask.upperBound !== null ? mask.upperBound : ""}"
+                                  data-action="update-mask-bound"
+                                  data-mask-index="${index}"
+                                  data-bound="upper"
+                                  placeholder="${state.dataMax !== null ? state.dataMax.toFixed(2) : ""}"
+                                  style="${styleAttr({
+                                      width: "90px",
+                                      background: "var(--gradient-bg)",
+                                      border: "1px solid var(--border-strong)",
+                                      borderRadius: 8,
+                                      color: "var(--text-primary)",
+                                      padding: "6px 10px",
+                                      fontSize: 12.5,
+                                      fontWeight: 600,
+                                      fontFamily: "var(--font-geist-sans)",
+                                      letterSpacing: 0.25,
+                                      minHeight: 32,
+                                      boxShadow: "inset 0 1px 0 var(--inset-light)",
+                                  })}"
+                                />
+                                <button
+                                  type="button"
+                                  data-action="remove-mask"
+                                  data-mask-index="${index}"
+                                  style="${styleAttr({
+                                      width: 28,
+                                      height: 28,
+                                      padding: 0,
+                                      borderRadius: 6,
+                                      border: "1px solid var(--border-medium)",
+                                      background: "var(--bg-transparent)",
+                                      color: "var(--text-secondary)",
+                                      fontSize: 16,
+                                      fontWeight: 600,
+                                      cursor: "pointer",
+                                      transition: "all 0.15s ease",
+                                      display: "flex",
+                                      alignItems: "center",
+                                      justifyContent: "center",
+                                      flexShrink: 0,
+                                  })}"
+                                  onmouseover="this.style.borderColor='var(--border-bright)'; this.style.background='var(--bg-medium)'"
+                                  onmouseout="this.style.borderColor='var(--border-medium)'; this.style.background='var(--bg-transparent)'"
+                                >
+                                  −
+                                </button>
+                              </div>
+                            `,
+                                )
+                                .join("")}
+                            <button
+                              type="button"
+                              data-action="add-mask"
+                              style="${styleAttr({
+                                  padding: "8px 14px",
+                                  borderRadius: 10,
+                                  border: "1px solid var(--border-subtle)",
+                                  background: "var(--bg-transparent)",
+                                  color: "var(--text-secondary)",
+                                  fontSize: 12.5,
+                                  fontWeight: 600,
+                                  cursor: "pointer",
+                                  transition: "all 0.15s ease",
+                                  textAlign: "left",
+                                  width: "100%",
+                                  marginTop: 4,
+                              })}"
+                              onmouseover="this.style.borderColor='var(--border-medium)'; this.style.background='var(--bg-subtle)'"
+                              onmouseout="this.style.borderColor='var(--border-subtle)'; this.style.background='var(--bg-transparent)'"
+                            >
+                              + Add Mask
+                            </button>
+                          </div>
+                          `
+                          : `
+                          <button
+                            type="button"
+                            data-action="add-mask"
+                            style="${styleAttr({
+                                padding: "8px 14px",
+                                borderRadius: 10,
+                                border: "1px solid var(--border-subtle)",
+                                background: "var(--bg-transparent)",
+                                color: "var(--text-secondary)",
+                                fontSize: 12.5,
+                                fontWeight: 600,
+                                cursor: "pointer",
+                                transition: "all 0.15s ease",
+                                textAlign: "left",
+                                width: "100%",
+                            })}"
+                            onmouseover="this.style.borderColor='var(--border-medium)'; this.style.background='var(--bg-subtle)'"
+                            onmouseout="this.style.borderColor='var(--border-subtle)'; this.style.background='var(--bg-transparent)'"
+                          >
+                            + Add Mask
+                          </button>
+                          `
+                  }
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="mode-pane-scrollable" style="${styleAttr(styles.modePane)}">
+          <div style="${styleAttr({
+              display: "flex",
+              flexDirection: "column",
+              gap: 8,
+          })}">
+            <div style="${styleAttr(styles.sectionTitle)}">Parameters</div>
+            <div style="${styleAttr(styles.paramGrid)}">
+              ${renderField(
+                  "Date",
+                  (() => {
+                      const commonRange = intersectScenarioRange(
+                          state.ensembleScenarios.length
+                              ? state.ensembleScenarios
+                              : scenarios,
+                      );
+                      return renderInput("ensembleDate", state.ensembleDate, {
+                          dataKey: "ensembleDate",
+                          min: commonRange.start,
+                          max: commonRange.end,
+                      });
+                  })(),
+              )}
+              ${renderField(
+                  "Variable",
+                  renderSelect(
+                      "ensembleVariable",
+                      variables,
+                      state.ensembleVariable,
+                      {
+                          dataKey: "ensembleVariable",
+                          infoType: "variable",
+                      },
+                  ),
+              )}
+            </div>
+          </div>
+
+          <div style="margin-top:14px">
+            <div style="${styleAttr({
+                display: "flex",
+                flexDirection: "column",
+                gap: 8,
+            })}">
+              <div style="${styleAttr(styles.sectionTitle)}">Statistic</div>
+              ${renderField(
+                  "",
+                  renderSelect(
+                      "ensembleStatistic",
+                      [
+                          "mean",
+                          "median",
+                          "std",
+                          "iqr",
+                          "percentile",
+                          "extremes",
+                      ],
+                      state.ensembleStatistic,
+                      {
+                          dataKey: "ensembleStatistic",
+                          selectedLabel: state.ensembleStatistic === "mean" ? "Mean"
+                              : state.ensembleStatistic === "median" ? "Median"
+                              : state.ensembleStatistic === "std" ? "Std Deviation"
+                              : state.ensembleStatistic === "iqr" ? "IQR (Interquartile Range)"
+                              : state.ensembleStatistic === "percentile" ? "Percentile Band (90th-10th)"
+                              : "Extremes (Max-Min)",
+                      },
+                  ),
+              )}
+            </div>
+          </div>
+
+          <div style="margin-top:14px">
+            ${renderCollapsible(
+                "Scenarios",
+                state.ensembleDropdown.scenariosOpen,
+                `${state.ensembleScenarios.length} selected`,
+                renderChipGroup(
+                    state.metaData?.scenarios?.length
+                        ? Array.from(
+                              new Set(
+                                  state.metaData.scenarios.map(
+                                      normalizeScenarioLabel,
+                                  ),
+                              ),
+                          )
+                        : scenarios,
+                    state.ensembleScenarios,
+                    "ensembleScenarios",
+                ),
+                "ensembleScenarios",
+            )}
+          </div>
+
+          <div style="margin-top:14px">
+            ${renderCollapsible(
+                "Models",
+                state.ensembleDropdown.modelsOpen,
+                `${state.ensembleModels.length} selected`,
+                renderChipGroup(
+                    state.metaData?.models?.length
+                        ? state.metaData.models
+                        : models,
+                    state.ensembleModels,
+                    "ensembleModels",
+                ),
+                "ensembleModels",
+            )}
+          </div>
+
+          <div style="margin-top:14px">
+            <div style="${styleAttr({
+                display: "flex",
+                flexDirection: "column",
+                gap: 8,
+            })}">
+              <div style="${styleAttr(styles.sectionTitle)}">Unit</div>
+              ${renderField(
+                  "",
+                  renderSelect(
+                      "ensembleUnit",
+                      getUnitOptions(state.ensembleVariable).map(
+                          (opt) => opt.label,
+                      ),
+                      state.ensembleUnit,
+                      { dataKey: "ensembleUnit" },
+                  ),
+              )}
+            </div>
+          </div>
+
+          <div style="margin-top:14px">
+            <div style="${styleAttr({
+                display: "flex",
+                flexDirection: "column",
+                gap: 8,
+            })}">
+              <div style="${styleAttr(styles.sectionTitle)}">Color palette</div>
+              ${renderField(
+                  "",
+                  renderSelect(
+                      "palette",
+                      paletteOptions.map((p) => p.name),
+                      state.palette,
+                      { dataKey: "palette", dataRole: "palette-selector" },
+                  ),
+              )}
+            </div>
+          </div>
+
+          <div style="margin-top:14px">
+            <div style="${styleAttr({
+                display: "flex",
+                flexDirection: "column",
+                gap: 8,
+            })}">
+              <div style="${styleAttr(styles.sectionTitle)}">Resolution</div>
+              <div style="${styleAttr(styles.resolutionRow)}">
+                <input
+                  type="range"
+                  min="1"
+                  max="3"
+                  step="1"
+                  value="${state.resolution}"
+                  data-action="set-resolution"
+                  class="resolution-slider"
+                  style="${styleAttr(
+                      mergeStyles(styles.range, {
+                          "--slider-fill": `${resolutionFill}%`,
+                      }),
+                  )}"
+                />
+                <div data-role="resolution-value" style="${styleAttr(
+                    styles.resolutionValue,
+                )}">${
+                    state.resolution === 1
+                        ? "Low"
+                        : state.resolution === 2
+                          ? "Medium"
+                          : "High"
+                }</div>
+              </div>
+            </div>
+          </div>
+
+          <div style="margin-top:14px">
+            <div style="${styleAttr({
+                display: "flex",
+                flexDirection: "column",
+                gap: 8,
+            })}">
+              <div style="${styleAttr(styles.sectionTitle)}">Mask</div>
+              ${
+                  state.masks.length > 0
+                      ? `
+                      <div style="${styleAttr({
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: 8,
+                      })}">
+                        ${state.masks
+                            .map(
+                                (mask, index) => `
+                          ${
+                              state.mode === "Ensemble"
+                                  ? `
+                                  <div style="${styleAttr({
+                                      display: "flex",
+                                      alignItems: "center",
+                                      gap: 8,
+                                      marginBottom: 4,
+                                  })}">
+                                    ${renderSelect(
+                                        "maskStatistic",
+                                        ["mean", "std", "median", "iqr", "percentile", "extremes"],
+                                        mask.statistic || "mean",
+                                        {
+                                            dataKey: "maskStatistic",
+                                            selectedLabel: mask.statistic === "mean" ? "Mean"
+                                                : mask.statistic === "std" ? "Std"
+                                                : mask.statistic === "median" ? "Median"
+                                                : mask.statistic === "iqr" ? "IQR"
+                                                : mask.statistic === "percentile" ? "Percentile"
+                                                : mask.statistic === "extremes" ? "Extremes"
+                                                : "Mean",
+                                        },
+                                    ).replace(
+                                        'class="custom-select-wrapper"',
+                                        `class="custom-select-wrapper" data-mask-index="${index}" style="width: 100px;"`,
+                                    )}
+                                  </div>
+                                  `
+                                  : ""
+                          }
+                          <div style="${styleAttr({
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 8,
+                          })}">
+                            <input
+                              type="number"
+                              step="any"
+                              value="${mask.lowerEdited && mask.lowerBound !== null ? mask.lowerBound : ""}"
+                              data-action="update-mask-bound"
+                              data-mask-index="${index}"
+                              data-bound="lower"
+                              placeholder="${state.dataMin !== null ? state.dataMin.toFixed(2) : ""}"
+                              style="${styleAttr({
+                                  width: "90px",
+                                  background: "var(--gradient-bg)",
+                                  border: "1px solid var(--border-strong)",
+                                  borderRadius: 8,
+                                  color: "var(--text-primary)",
+                                  padding: "6px 10px",
+                                  fontSize: 12.5,
+                                  fontWeight: 600,
+                                  fontFamily: "var(--font-geist-sans)",
+                                  letterSpacing: 0.25,
+                                  minHeight: 32,
+                                  boxShadow: "inset 0 1px 0 var(--inset-light)",
+                              })}"
+                            />
+                            <span style="${styleAttr({
+                                fontSize: 12.5,
+                                color: "var(--text-secondary)",
+                                minWidth: "20px",
+                                textAlign: "center",
+                            })}">to</span>
+                            <input
+                              type="number"
+                              step="any"
+                              value="${mask.upperEdited && mask.upperBound !== null ? mask.upperBound : ""}"
+                              data-action="update-mask-bound"
+                              data-mask-index="${index}"
+                              data-bound="upper"
+                              placeholder="${state.dataMax !== null ? state.dataMax.toFixed(2) : ""}"
+                              style="${styleAttr({
+                                  width: "90px",
+                                  background: "var(--gradient-bg)",
+                                  border: "1px solid var(--border-strong)",
+                                  borderRadius: 8,
+                                  color: "var(--text-primary)",
+                                  padding: "6px 10px",
+                                  fontSize: 12.5,
+                                  fontWeight: 600,
+                                  fontFamily: "var(--font-geist-sans)",
+                                  letterSpacing: 0.25,
+                                  minHeight: 32,
+                                  boxShadow: "inset 0 1px 0 var(--inset-light)",
+                              })}"
+                            />
+                            <button
+                              type="button"
+                              data-action="remove-mask"
+                              data-mask-index="${index}"
+                              style="${styleAttr({
+                                  width: 28,
+                                  height: 28,
+                                  padding: 0,
+                                  borderRadius: 6,
+                                  border: "1px solid var(--border-medium)",
+                                  background: "var(--bg-transparent)",
+                                  color: "var(--text-secondary)",
+                                  fontSize: 16,
+                                  fontWeight: 600,
+                                  cursor: "pointer",
+                                  transition: "all 0.15s ease",
+                                  display: "flex",
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                  flexShrink: 0,
+                              })}"
+                              onmouseover="this.style.borderColor='var(--border-bright)'; this.style.background='var(--bg-medium)'"
+                              onmouseout="this.style.borderColor='var(--border-medium)'; this.style.background='var(--bg-transparent)'"
+                            >
+                              −
+                            </button>
+                          </div>
+                        `,
+                            )
+                            .join("")}
+                        <button
+                          type="button"
+                          data-action="apply-masks"
+                          style="${styleAttr({
+                              padding: "10px 16px",
+                              borderRadius: 10,
+                              border: "1px solid var(--border-strong)",
+                              background: "var(--gradient-primary)",
+                              color: "white",
+                              fontSize: 12.5,
+                              fontWeight: 700,
+                              cursor: "pointer",
+                              transition: "all 0.15s ease",
+                              textAlign: "center",
+                              width: "100%",
+                              marginTop: 8,
+                              boxShadow: "var(--shadow-combined)",
+                          })}"
+                          onmouseover="this.style.borderColor='var(--accent-border-bright)'; this.style.boxShadow='var(--shadow-elevated)'"
+                          onmouseout="this.style.borderColor='var(--border-strong)'; this.style.boxShadow='var(--shadow-combined)'"
+                        >
+                          Apply Masks
+                        </button>
+                        <button
+                          type="button"
+                          data-action="add-mask"
+                          style="${styleAttr({
+                              padding: "8px 14px",
+                              borderRadius: 10,
+                              border: "1px solid var(--border-subtle)",
+                              background: "var(--bg-transparent)",
+                              color: "var(--text-secondary)",
+                              fontSize: 12.5,
+                              fontWeight: 600,
+                              cursor: "pointer",
+                              transition: "all 0.15s ease",
+                              textAlign: "left",
+                              width: "100%",
+                              marginTop: 4,
+                          })}"
+                          onmouseover="this.style.borderColor='var(--border-medium)'; this.style.background='var(--bg-subtle)'"
+                          onmouseout="this.style.borderColor='var(--border-subtle)'; this.style.background='var(--bg-transparent)'"
+                        >
+                          + Add Mask
+                        </button>
+                      </div>
+                      `
+                      : `
+                      <button
+                        type="button"
+                        data-action="add-mask"
+                        style="${styleAttr({
+                            padding: "8px 14px",
+                            borderRadius: 10,
+                            border: "1px solid var(--border-subtle)",
+                            background: "var(--bg-transparent)",
+                            color: "var(--text-secondary)",
+                            fontSize: 12.5,
+                            fontWeight: 600,
+                            cursor: "pointer",
+                            transition: "all 0.15s ease",
+                            textAlign: "left",
+                            width: "100%",
+                        })}"
+                        onmouseover="this.style.borderColor='var(--border-medium)'; this.style.background='var(--bg-subtle)'"
+                        onmouseout="this.style.borderColor='var(--border-subtle)'; this.style.background='var(--bg-transparent)'"
+                      >
+                        + Add Mask
+                      </button>
+                      `
+              }
             </div>
           </div>
         </div>
@@ -6755,6 +8038,78 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
 
     setupBrandEyeTracking(root);
 
+    // Handle mask inputs FIRST, before other input handlers
+    // This ensures mask inputs are handled before any other blur handlers
+    const maskBoundInputs = root.querySelectorAll<HTMLInputElement>(
+        '[data-action="update-mask-bound"]',
+    );
+    maskBoundInputs.forEach((input) => {
+        // Mark this input so other handlers can skip it
+        (input as any).__isMaskInput = true;
+        
+        // Only commit changes on blur or Enter key, not on every input
+        const commitMaskChange = (e?: Event) => {
+            if (e) {
+                e.stopPropagation(); // Prevent event from bubbling up
+                e.preventDefault(); // Prevent any default behavior
+                e.stopImmediatePropagation(); // Stop all other handlers on this element
+            }
+            const bound = input.dataset.bound;
+            const indexStr = input.dataset.maskIndex;
+            if (!bound || indexStr === undefined) return;
+            const index = Number.parseInt(indexStr, 10);
+            if (Number.isNaN(index) || index < 0 || index >= state.masks.length) {
+                return;
+            }
+
+            const value = input.value.trim();
+            const numValue = value === "" ? null : Number.parseFloat(value);
+            if (value === "" || !Number.isNaN(numValue!)) {
+                const mask = state.masks[index];
+                let changed = false;
+                if (bound === "lower") {
+                    if (mask.lowerBound !== numValue) {
+                        mask.lowerBound = numValue;
+                        mask.lowerEdited = value !== "";
+                        changed = true;
+                    }
+                } else {
+                    if (mask.upperBound !== numValue) {
+                        mask.upperBound = numValue;
+                        mask.upperEdited = value !== "";
+                        changed = true;
+                    }
+                }
+                // Don't reload map automatically - user will click Apply button
+                // Only re-render the UI, don't trigger any data reloads
+                if (changed) {
+                    // Set a flag to prevent any reloads during this render
+                    (state as any).__updatingMask = true;
+                    render();
+                    // Clear the flag immediately after render completes
+                    // Use setTimeout with 0 delay to ensure it runs after render
+                    setTimeout(() => {
+                        (state as any).__updatingMask = false;
+                    }, 0);
+                }
+            }
+        };
+
+        // Use capture phase and stopImmediatePropagation to ensure this runs first
+        input.addEventListener("blur", (e) => {
+            commitMaskChange(e);
+        }, { capture: true }); 
+        input.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") {
+                e.preventDefault();
+                e.stopPropagation();
+                e.stopImmediatePropagation();
+                commitMaskChange(e);
+                input.blur(); // Trigger blur to close any dropdowns
+            }
+        }, { capture: true });
+    });
+
     attachSidebarHandlers({
         root,
         getSidebarOpen: () => state.sidebarOpen,
@@ -6845,15 +8200,27 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                 const previousModeTransform =
                     previousMode === "Explore"
                         ? "translateX(0%)"
-                        : "translateX(-50%)";
+                        : previousMode === "Compare"
+                          ? "translateX(-33.333%)"
+                          : "translateX(-66.666%)";
                 const previousIndicatorTransform =
                     previousMode === "Explore"
                         ? "translateX(0%)"
-                        : "translateX(100%)";
+                        : previousMode === "Compare"
+                          ? "translateX(100%)"
+                          : "translateX(200%)";
                 const nextModeTransform =
-                    value === "Explore" ? "translateX(0%)" : "translateX(-50%)";
+                    value === "Explore"
+                        ? "translateX(0%)"
+                        : value === "Compare"
+                          ? "translateX(-33.333%)"
+                          : "translateX(-66.666%)";
                 const nextIndicatorTransform =
-                    value === "Explore" ? "translateX(0%)" : "translateX(100%)";
+                    value === "Explore"
+                        ? "translateX(0%)"
+                        : value === "Compare"
+                          ? "translateX(100%)"
+                          : "translateX(200%)";
 
                 state.mode = value;
 
@@ -7154,8 +8521,11 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                 wrapper.classList.remove("open");
                 hideInfo();
 
+                // Get mask index from wrapper if it's a mask statistic selector
+                const maskIndex = wrapper.dataset.maskIndex;
+                
                 // Trigger the change handler
-                handleSelectChange(dataKey, value);
+                handleSelectChange(dataKey, value, maskIndex);
 
                 // Handle tutorial progression - detect when a selection is made during tutorial
                 const tutorialState = getTutorialState();
@@ -7245,7 +8615,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
     });
 
     // Handle select change (reusable function)
-    const handleSelectChange = async (key: string, val: string) => {
+    const handleSelectChange = async (key: string, val: string, maskIndex?: string) => {
         if (!key) return;
         let triggerMapReload = false;
         let triggerChartReload = false;
@@ -7254,6 +8624,8 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                 state.scenario = val;
                 // Automatically update date to a valid date for the selected scenario
                 state.date = getDateForScenario(val);
+                // Sync date to ensemble mode
+                state.ensembleDate = state.date;
                 // Update time range for the slider
                 state.timeRange = getTimeRangeForScenario(val);
                 triggerMapReload = true;
@@ -7292,6 +8664,9 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                             state.dataMax,
                             state.variable,
                             state.selectedUnit,
+                            state.masks,
+                            null,
+                            false,
                         );
 
                         // Redraw gradient with new palette
@@ -7343,6 +8718,9 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                             state.dataMax,
                             state.variable,
                             state.selectedUnit,
+                            state.masks,
+                            null,
+                            false,
                         );
 
                         // Redraw gradient with new palette
@@ -7422,6 +8800,73 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                 }
                 render();
                 return;
+            case "ensembleVariable":
+                state.ensembleVariable = val;
+                state.ensembleUnit = getDefaultUnitOption(val).label;
+                triggerMapReload = true;
+                break;
+            case "ensembleUnit":
+                state.ensembleUnit = val;
+                render();
+                // Re-render map with new unit conversion
+                if (
+                    state.currentData &&
+                    appRoot &&
+                    state.dataMin !== null &&
+                    state.dataMax !== null &&
+                    state.mode === "Ensemble"
+                ) {
+                    const canvas =
+                        appRoot.querySelector<HTMLCanvasElement>("#map-canvas");
+                    if (canvas) {
+                        mapCanvas = canvas;
+                        applyMapInteractions(canvas);
+                        renderMapData(
+                            state.currentData,
+                            mapCanvas,
+                            paletteOptions,
+                            state.palette,
+                            state.dataMin,
+                            state.dataMax,
+                            state.ensembleVariable,
+                            state.ensembleUnit,
+                            state.masks,
+                            state.ensembleStatistics,
+                            true,
+                        );
+
+                        // Redraw gradient with new palette
+                        const palette =
+                            paletteOptions.find(
+                                (p) => p.name === state.palette,
+                            ) || paletteOptions[0];
+                        drawLegendGradient(
+                            "legend-gradient-canvas",
+                            palette.colors,
+                        );
+                    }
+                }
+                return;
+            case "ensembleStatistic":
+                state.ensembleStatistic = val as EnsembleStatistic;
+                triggerMapReload = true;
+                break;
+            case "maskStatistic": {
+                // Use the mask index passed from the click handler
+                if (maskIndex !== undefined) {
+                    const index = Number.parseInt(maskIndex, 10);
+                    if (
+                        !Number.isNaN(index) &&
+                        index >= 0 &&
+                        index < state.masks.length
+                    ) {
+                        state.masks[index].statistic = val as EnsembleStatistic;
+                        render();
+                        // Don't reload map automatically - user will click Apply button
+                    }
+                }
+                return;
+            }
             case "chartLocation":
                 if (val === "Draw") {
                     startRegionDrawing();
@@ -7823,9 +9268,76 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                 state.chartModels = set.size ? Array.from(set) : [...available];
             }
 
+            if (key === "ensembleScenarios") {
+                const available =
+                    state.metaData?.scenarios?.length &&
+                    state.metaData.scenarios
+                        ? Array.from(
+                              new Set(
+                                  state.metaData.scenarios.map(
+                                      normalizeScenarioLabel,
+                                  ),
+                              ),
+                          )
+                        : scenarios;
+                const isHistorical = value === "Historical";
+                const set = new Set(state.ensembleScenarios);
+
+                if (set.has(value)) {
+                    set.delete(value);
+                } else {
+                    // Add new value
+                    if (isHistorical) {
+                        // Selecting Historical deselects SSPs
+                        set.clear();
+                        set.add("Historical");
+                    } else {
+                        // Selecting SSP deselects Historical
+                        set.delete("Historical");
+                        set.add(value);
+                    }
+                }
+
+                // Prevent empty selection: fallback to Historical if cleared
+                if (set.size === 0) {
+                    set.add(isHistorical ? "Historical" : value);
+                }
+
+                state.ensembleScenarios = Array.from(set).filter((s) =>
+                    available.includes(s),
+                );
+
+                // Clip date to new common range
+                const commonRange = intersectScenarioRange(
+                    state.ensembleScenarios,
+                );
+                state.ensembleDate = clipDateToRange(
+                    state.ensembleDate,
+                    commonRange,
+                );
+            }
+
+            if (key === "ensembleModels") {
+                const available =
+                    state.metaData?.models?.length
+                        ? state.metaData.models
+                        : models;
+                const set = new Set(state.ensembleModels);
+
+                if (set.has(value)) {
+                    set.delete(value);
+                } else {
+                    set.add(value);
+                }
+
+                state.ensembleModels = set.size ? Array.from(set) : [...available];
+            }
+
             render();
             if (state.canvasView === "chart") {
                 loadChartData();
+            } else if (state.canvasView === "map" && state.mode === "Ensemble") {
+                loadClimateData();
             }
         }),
     );
@@ -7845,6 +9357,14 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                 state.chartDropdown.modelsOpen =
                     !state.chartDropdown.modelsOpen;
             }
+            if (key === "ensembleScenarios") {
+                state.ensembleDropdown.scenariosOpen =
+                    !state.ensembleDropdown.scenariosOpen;
+            }
+            if (key === "ensembleModels") {
+                state.ensembleDropdown.modelsOpen =
+                    !state.ensembleDropdown.modelsOpen;
+            }
             render();
         }),
     );
@@ -7853,7 +9373,28 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         '[data-action="update-input"]',
     );
     textInputs.forEach((input) => {
-        const updateDate = () => {
+        // Track if user is actively typing (input is focused)
+        let isTyping = false;
+        let typingTimeout: number | null = null;
+
+        // Validation feedback only (doesn't commit changes)
+        const validateInput = () => {
+            const value = input.value;
+            // Validate date format (YYYY-MM-DD) and that it's a valid date
+            const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+            const isValidFormat = dateRegex.test(value);
+            const isValidDate =
+                isValidFormat && !isNaN(new Date(value).getTime());
+
+            if (!isValidDate && value.length > 0) {
+                input.style.borderColor = "rgba(239, 68, 68, 0.6)";
+            } else {
+                input.style.borderColor = "";
+            }
+        };
+
+        // Commit the date change (updates state and reloads data)
+        const commitDateChange = () => {
             const key = input.dataset.key;
             if (!key) return;
             const value = input.value;
@@ -7865,7 +9406,21 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                 isValidFormat && !isNaN(new Date(value).getTime());
 
             if (!isValidDate) {
-                input.style.borderColor = "rgba(239, 68, 68, 0.6)";
+                // Invalid date - restore previous value
+                const currentValue =
+                    key === "date"
+                        ? state.date
+                        : key === "compareDateStart"
+                          ? state.compareDateStart
+                          : key === "compareDateEnd"
+                            ? state.compareDateEnd
+                            : key === "chartRangeStart"
+                              ? state.chartRangeStart
+                              : key === "chartRangeEnd"
+                                ? state.chartRangeEnd
+                                : state.chartDate;
+                input.value = currentValue;
+                input.style.borderColor = "";
                 return;
             }
 
@@ -7901,7 +9456,8 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             switch (key) {
                 case "date":
                     state.date = clippedValue;
-
+                    // Sync date to ensemble mode
+                    state.ensembleDate = clippedValue;
                     break;
                 case "compareDateStart":
                     state.compareDateStart = value;
@@ -7919,6 +9475,9 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                     break;
                 case "chartRangeEnd":
                     state.chartRangeEnd = value;
+                    break;
+                case "ensembleDate":
+                    state.ensembleDate = value;
                     break;
             }
 
@@ -7941,7 +9500,8 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             if (
                 key === "date" ||
                 (state.mode === "Compare" &&
-                    (key === "compareDateStart" || key === "compareDateEnd"))
+                    (key === "compareDateStart" || key === "compareDateEnd")) ||
+                (state.mode === "Ensemble" && key === "ensembleDate")
             ) {
                 loadClimateData();
                 const hasPoint = state.mapMarker !== null;
@@ -7961,9 +9521,56 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             }
         };
 
-        // Update on change (date picker selection) and blur (manual typing)
-        input.addEventListener("change", updateDate);
-        input.addEventListener("blur", updateDate);
+        // Real-time validation feedback while typing
+        input.addEventListener("input", () => {
+            isTyping = true;
+            validateInput();
+            // Clear any pending timeout
+            if (typingTimeout !== null) {
+                window.clearTimeout(typingTimeout);
+            }
+            // Reset typing flag after a short delay
+            typingTimeout = window.setTimeout(() => {
+                isTyping = false;
+            }, 300);
+        });
+
+        // Commit on blur (user finished typing or clicked away)
+        // Skip if this is a mask input (handled separately)
+        input.addEventListener("blur", (e) => {
+            // Skip if this is a mask input
+            if ((e.target as any).__isMaskInput) {
+                return;
+            }
+            isTyping = false;
+            if (typingTimeout !== null) {
+                window.clearTimeout(typingTimeout);
+                typingTimeout = null;
+            }
+            commitDateChange();
+        });
+
+        // Commit on Enter key press
+        input.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") {
+                e.preventDefault();
+                isTyping = false;
+                if (typingTimeout !== null) {
+                    window.clearTimeout(typingTimeout);
+                    typingTimeout = null;
+                }
+                commitDateChange();
+                input.blur(); // Remove focus from input
+            }
+        });
+
+        // Commit on change only if user is NOT actively typing (i.e., used date picker UI)
+        input.addEventListener("change", () => {
+            // Only commit if user is not actively typing (used date picker, not keyboard)
+            if (!isTyping) {
+                commitDateChange();
+            }
+        });
     });
 
     const resolutionInputs = root.querySelectorAll<HTMLInputElement>(
@@ -7995,6 +9602,59 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             }
         }),
     );
+
+    // Mask handlers
+    const addMaskBtns = root.querySelectorAll<HTMLButtonElement>(
+        '[data-action="add-mask"]',
+    );
+    addMaskBtns.forEach((btn) => {
+        btn.addEventListener("click", () => {
+            // Initialize new mask with current data min/max
+            const newMask: {
+                lowerBound: number | null;
+                upperBound: number | null;
+                lowerEdited: boolean;
+                upperEdited: boolean;
+                statistic?: EnsembleStatistic;
+            } = {
+                lowerBound: state.dataMin,
+                upperBound: state.dataMax,
+                lowerEdited: false,
+                upperEdited: false,
+            };
+            // In ensemble mode, default to "mean" statistic
+            if (state.mode === "Ensemble") {
+                newMask.statistic = "mean";
+            }
+            state.masks.push(newMask);
+            render();
+        });
+    });
+
+    const removeMaskBtns = root.querySelectorAll<HTMLButtonElement>(
+        '[data-action="remove-mask"]',
+    );
+    removeMaskBtns.forEach((btn) => {
+        btn.addEventListener("click", () => {
+            const indexStr = btn.dataset.maskIndex;
+            if (indexStr === undefined) return;
+            const index = Number.parseInt(indexStr, 10);
+            if (!Number.isNaN(index) && index >= 0 && index < state.masks.length) {
+                state.masks.splice(index, 1);
+                render();
+                // Don't reload map automatically - user will click Apply button if needed
+            }
+        });
+    });
+
+    const applyMaskBtn = root.querySelector<HTMLButtonElement>(
+        '[data-action="apply-masks"]',
+    );
+    applyMaskBtn?.addEventListener("click", () => {
+        if (state.canvasView === "map") {
+            loadClimateData();
+        }
+    });
 
     const infoOpenBtn = root.querySelector<HTMLButtonElement>(
         '[data-action="open-compare-info"]',
@@ -8069,6 +9729,8 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         getTimeRange: () => state.timeRange,
         onDateChange: (date) => {
             state.date = date;
+            // Sync date to ensemble mode
+            state.ensembleDate = date;
             loadClimateData();
             const hasPoint = state.mapMarker !== null;
             const hasPolygon =

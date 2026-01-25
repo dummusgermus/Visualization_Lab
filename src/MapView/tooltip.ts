@@ -48,26 +48,9 @@ export function showTooltip(
     tooltip.style.top = `${clientY + 10}px`;
 
     // Update legend indicator (use converted value for indicator position)
-    // But we need to convert the min/max too for proper indicator position
-    let convertedMin = currentMin;
-    let convertedMax = currentMax;
-    if (currentSelectedUnit && currentVariable) {
-        const minConverted = convertValue(
-            currentMin,
-            currentVariable,
-            currentSelectedUnit,
-            { isDifference: isDifference ?? currentIsDifference }
-        );
-        const maxConverted = convertValue(
-            currentMax,
-            currentVariable,
-            currentSelectedUnit,
-            { isDifference: isDifference ?? currentIsDifference }
-        );
-        convertedMin = minConverted;
-        convertedMax = maxConverted;
-    }
-    updateLegendIndicator(convertedValue, convertedMin, convertedMax);
+    // currentMin and currentMax are already converted (set by setDataRange in renderMapData)
+    // so we don't need to convert them again here
+    updateLegendIndicator(convertedValue, currentMin, currentMax);
 }
 
 export function hideTooltip(): void {

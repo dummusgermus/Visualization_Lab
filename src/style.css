@@ -641,3 +641,77 @@ input[type="date"]:hover::-webkit-calendar-picker-indicator {
     border: 1px solid var(--border-bright);
     box-shadow: 0 6px 18px var(--shadow-emphasis);
 }
+
+/* Number input styling for mask bounds */
+input[type="number"] {
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: textfield;
+    background: var(--gradient-bg);
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    color: var(--text-primary);
+    padding: 6px 10px;
+    font-size: 12.5px;
+    font-weight: 600;
+    font-family: var(--font-geist-sans);
+    letter-spacing: 0.25px;
+    min-height: 32px;
+    box-shadow: inset 0 1px 0 var(--inset-light);
+    transition: border-color 120ms ease, box-shadow 120ms ease,
+        background 120ms ease;
+}
+
+input[type="number"]:focus {
+    outline: none;
+    border-color: var(--border-bright);
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.14),
+        inset 0 1px 0 var(--inset-light);
+    background: var(--gradient-bg-focus);
+}
+
+input[type="number"]:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+/* Checkbox styling */
+input[type="checkbox"] {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 14px;
+    height: 14px;
+    border: 1.5px solid var(--border-medium);
+    border-radius: 3px;
+    background: var(--bg-subtle);
+    cursor: pointer;
+    transition: all 120ms ease;
+    position: relative;
+}
+
+input[type="checkbox"]:checked {
+    background: var(--gradient-accent);
+    border-color: var(--accent-blue);
+}
+
+input[type="checkbox"]:checked::after {
+    content: "";
+    position: absolute;
+    left: 3px;
+    top: 0px;
+    width: 4px;
+    height: 8px;
+    border: solid white;
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+}
+
+input[type="checkbox"]:hover {
+    border-color: var(--border-bright);
+}

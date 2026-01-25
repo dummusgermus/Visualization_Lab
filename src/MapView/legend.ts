@@ -41,7 +41,8 @@ export function renderMapLegend(
     max: number,
     metadata?: Metadata,
     selectedUnit?: string,
-    isDifference?: boolean
+    isDifference?: boolean,
+    offsetY = 0,
 ): string {
     const variableMeta = metadata?.variable_metadata[variable];
     const name = variableMeta?.name || variable;
@@ -70,8 +71,11 @@ export function renderMapLegend(
         convertedMin,
     ];
 
+    const offsetStyle = offsetY
+        ? `style="transform: translateY(calc(-50% - ${offsetY}px));"`
+        : "";
     return `
-      <div class="map-legend">
+      <div class="map-legend" ${offsetStyle}>
         <div class="legend-title">${name}</div>
         <div class="legend-container">
         <canvas id="legend-gradient-canvas" width="20" height="200" style="width: 20px; height: 200px; border-radius: 4px;"></canvas>
@@ -125,7 +129,11 @@ export function updateLegendIndicator(
     renderGradient(ctx, width, height, currentPaletteColors);
 
     // Calculate position on legend (max at top, min at bottom)
-    const normalized = (value - min) / (max - min);
+    const range = max - min;
+    const normalized =
+        !Number.isFinite(range) || range <= 0 || !Number.isFinite(value)
+            ? 0.5
+            : Math.min(1, Math.max(0, (value - min) / range));
     const y = Math.round(height * (1 - normalized));
 
     // Draw indicator line

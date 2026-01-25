@@ -102,6 +102,18 @@ export function updateState(
     if (newState.colorPalette) {
         updates.palette = normalizeColorPalette(newState.colorPalette);
     }
+    if (newState.selectedUnit) {
+        updates.selectedUnit = newState.selectedUnit;
+    }
+    if (newState.masks) {
+        updates.masks = newState.masks.map((mask: any) => ({
+            variable: mask.variable,
+            unit: mask.unit,
+            lowerBound: mask.lowerBound,
+            upperBound: mask.upperBound,
+            statistic: mask.statistic,
+        }));
+    }
 
     if (newState.canvasView) {
         updates.canvasView = newState.canvasView.toLowerCase();

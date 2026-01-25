@@ -10,10 +10,13 @@ from llm_chat import ChatMessage, ChatResponse
 
 FUNCTION_REGISTRY: Dict[str, callable] = {
     "update_variable": ui_state_updater.update_variable,
+    "update_unit": ui_state_updater.update_unit,
+    "update_color_palette": ui_state_updater.update_color_palette,
+    "update_masks": ui_state_updater.update_masks,
     "switch_to_compare_mode": ui_state_updater.switch_to_compare_mode,
     "switch_to_explore_mode": ui_state_updater.switch_to_explore_mode,
     "switch_to_chart_view": ui_state_updater.switch_to_chart_view,
-    "update_color_palette": ui_state_updater.update_color_palette,
+    "switch_to_ensemble_mode": ui_state_updater.switch_to_ensemble_mode,
 }
 
 
@@ -162,12 +165,14 @@ def _build_system_prompt(context: Optional[dict] = None) -> str:
         "",
         "A request counts as a DATA/VIEW CHANGE if it asks to change ANY of:",
         "- variable (e.g., tas -> pr, tasmax, etc.)",
+        "- unit (e.g., K -> °C/°F for temperature)",
         "- date/year/time range",
         "- scenario (historical/ssp245/ssp370/ssp585)",
         "- model selection",
         "- switching Explore vs Compare vs Chart view",
         "- location (city/coordinates/point) or 'at/in <place>'",
         "- palette (viridis/thermal/magma/cividis)",
+        "- applying value masks (e.g., highlight only values for tas between 290K and 300K)",
         "",
         "If the request can be answered without changing any of those, explain only using the context (the current state of the application) (no tools).",
         "If youre explaining pay attention to the variable, model, scenario, date, location and values such as min/max/average shown.",
@@ -177,10 +182,13 @@ def _build_system_prompt(context: Optional[dict] = None) -> str:
         "Use exactly ONE view switch tool per request:",
         "- If a specific LOCATION is mentioned -> switch_to_chart_view",
         "- If a TIME RANGE is requested (from X to Y) -> switch_to_chart_view(chart_mode='range')",
+        "- If multiple models or scenarios are requested (e.g., 'compare all scenarios', 'average of models') -> switch_to_chart_view",
         "- If comparing exactly TWO scenarios/models/dates side-by-side on the MAP -> switch_to_compare_mode",
+        "- If a SINGLE model/scenario/date is requested (no location) -> switch_to_explore_mode",
         "- Otherwise use switch_to_explore_mode for a single map view",
         "",
-        "You may additionally call update_variable and/or update_color_palette together with the one view switch.",
+        "You may additionally call update_variable and/or update_color_palette and/or update_unit together with the one view switch.",
+        "Do not ignore the users request to change variable or palette or unit if mentioned. Instead execute each of these functions as needed.",
         "Never call two different switch_to_* tools in the same request.",
         "",
         "== DATE & SCENARIO RULES (when setting/choosing dates) ==",
@@ -248,14 +256,14 @@ class OllamaClient:
             "role": "user",
             "content": message
         })
-
+        print(context)
         # Make request to Ollama
         try:
             response = requests.post(
                 f"{self.base_url}/api/chat",
                 json={
                     "model": self.model,
-                    "tools": _get_state_control_functions(),
+                    "tools": _get_state_control_functions(context),
                     "messages": messages,
                     "stream": False
                 },
@@ -347,9 +355,11 @@ def process_chat_message(
 ) -> ChatResponse:
     """Process a chat message and return a response."""
     client = get_llm_client()
+    #print(call_gpt_with_parallel_tool_calling(client, model=client.model, messages=message, available_tools=_get_state_control_functions))
     return client.chat(message, context, history)
 
-def _get_state_control_functions():
+def _get_state_control_functions(context: Optional[dict] = None) -> List[dict]:
+    current_variable = context.get("variable") if context else None
     """Define available functions for state manipulation."""
     return [
         {
@@ -385,6 +395,24 @@ def _get_state_control_functions():
                         }
                     },
                     "required": ["variable"]
+                }
+            }
+        },
+        {
+            "type":"funtion",
+            "function":{
+                "name":"update_unit",
+                "description":"Change the unit of the climate variable being displayed",
+                "parameters":{
+                    "type":"object",
+                    "properties":{
+                        "selectedUnit":{
+                            "type":"string",
+                            "enum": config.VARIABLE_UNIT_MAP.get(current_variable, []),
+                            "description":"The unit to display"
+                        }
+                    },
+                    "required":["selectedUnit"] 
                 }
             }
         },
@@ -462,6 +490,74 @@ def _get_state_control_functions():
                         }
                     },
                 }
+            }
+        }, {
+            "type": "function",
+            "function": {
+                "name": "switch_to_ensemble_mode",
+                "description": "Switch to ensemble mode to view a SINGLE model/scenario/date combination on the MAP. Whenever possible use this view. DO NOT use if location is mentioned. IMPORTANT: When date is 2015 or later, scenario MUST be ssp245/ssp370/ssp585. When date is before 2015, scenario MUST be historical. Date format is YYYY-MM-DD (e.g., 2020-01-01 NOT 20-20-01).",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "model": {
+                            "type": "string",
+                            "enum": config.VALID_MODELS,
+                            "description": "The model to use"
+                        },
+                        "scenario": {
+                            "type": "string",
+                            "enum": list(config.SCENARIO_METADATA.keys()),
+                            "description": "The scenario to use"
+                        },
+                        "date": {
+                            "type": "string",
+                            "description": "Date in YYYY-MM-DD format. Examples: 2020-01-01 (year 2020), 2050-01-01 (year 2050), 1995-01-01 (year 1995). ALWAYS use 4-digit year, 2-digit month, 2-digit day with hyphens. Year 2015+ requires ssp245/ssp370/ssp585 scenario, before 2015 requires historical scenario."
+                        },
+                       
+                    },
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "update_masks",
+                "description": "Update the geographical masks applied to the visualization. Use this to highlight or focus on specific value ranges. Only those will be highlighted, others will be greyed out.",
+                "parameters": {
+                    "type": "object",
+                    "properties": { "masks": {
+                            "type": "array",
+                            "description": "List of masks to apply to the data for filtering values.",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "lowerBound": {
+                                        "type": ["number", "null"],
+                                        "description": "The lower bound value for the mask filter. Use null for no lower bound."
+                                    },
+                                    "upperBound": {
+                                        "type": ["number", "null"],
+                                        "description": "The upper bound value for the mask filter. Use null for no upper bound."
+                                    },
+                                    "statistic": {
+                                        "type": "string",
+                                        "description": "The ensemble statistic type for this mask (only used in ensemble mode). Examples: mean, median, min, max, std."
+                                    },
+                                    "variable": {
+                                        "type": "string",
+                                        "enum": list(config.VARIABLE_METADATA.keys()),
+                                        "description": "The climate variable this mask applies to."
+                                    },
+                                    "unit": {
+                                        "type": config.VARIABLE_UNIT_MAP.get(current_variable, []),
+                                        "description": "The unit of measurement for the mask values."
+                                    }
+                                },
+                                "required": ["lowerBound", "upperBound", "variable", "unit"]
+                            }
+                        },},
+                    "required": ["masks"]
+                    }
             }
         },
         {

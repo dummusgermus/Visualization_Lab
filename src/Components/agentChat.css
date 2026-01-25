@@ -20,7 +20,8 @@
     width: 100%;
     box-sizing: border-box;
     overflow-y: auto;
-    max-height: 400px;
+    height: calc(100vh - 350px);
+    max-height: calc(100vh - 350px);
 }
 
 .chat-bubble {

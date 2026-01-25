@@ -1,7 +1,6 @@
 import * as d3 from "d3";
 import {
     attachChatHandlers,
-    type ChatContextData,
     type ChatMessage,
     renderChatSection,
 } from "./Components/agentChat";
@@ -71,7 +70,7 @@ type PanelTab = "Manual" | "Chat";
 type CanvasView = "map" | "chart";
 type CompareMode = "Scenarios" | "Models" | "Dates";
 type ChartMode = "single" | "range";
-type ChartLocation = "World" | "Draw" | "Point" | "Search";
+export type ChartLocation = "World" | "Draw" | "Point" | "Search";
 type LocationSearchResult = {
     displayName: string;
     lat: number;
@@ -96,7 +95,13 @@ type ChartDropdownState = {
     modelsOpen: boolean;
 };
 
-type EnsembleStatistic = "mean" | "std" | "median" | "iqr" | "percentile" | "extremes";
+export type EnsembleStatistic =
+    | "mean"
+    | "std"
+    | "median"
+    | "iqr"
+    | "percentile"
+    | "extremes";
 
 type ChartLoadingProgress = {
     total: number;
@@ -1222,6 +1227,7 @@ export type AppState = {
         variable?: string; // Variable for this mask (used in explore mode)
         unit?: string; // Unit for this mask (used in explore mode)
     }>;
+    chartRequestId: number;
 };
 
 //TODO set 0 from available models to active model and so on
@@ -1317,6 +1323,7 @@ const state: AppState = {
     metaData: undefined,
     compareInfoOpen: false,
     maskVariableData: new Map<string, ClimateData>(),
+    chartRequestId: 0,
 };
 
 let mapCanvas: HTMLCanvasElement | null = null;
@@ -2674,9 +2681,8 @@ function updateMapMarkerNameOnly(placeName: string) {
     }
 
     if (state.mapRangeOpen && state.mapMarker) {
-        const titleElement = appRoot.querySelector<HTMLDivElement>(
-            ".map-range-title",
-        );
+        const titleElement =
+            appRoot.querySelector<HTMLDivElement>(".map-range-title");
         if (titleElement) {
             const { variable } = getMapRangeVariable();
             const variableLabel = getVariableLabel(variable, state.metaData);
@@ -2826,11 +2832,7 @@ function updateMapRangePreview(samples: ChartSample[]) {
     const { variable, unit } = getMapRangeVariable();
     state.mapRangeSamples = samples;
     try {
-        state.mapRangeSeries = buildChartRangeSeries(
-            samples,
-            variable,
-            unit,
-        );
+        state.mapRangeSeries = buildChartRangeSeries(samples, variable, unit);
     } catch {
         return;
     }
@@ -2840,7 +2842,8 @@ function updateMapRangePreview(samples: ChartSample[]) {
         return;
     }
 
-    const rangePanel = appRoot.querySelector<HTMLDivElement>("#map-range-overlay");
+    const rangePanel =
+        appRoot.querySelector<HTMLDivElement>("#map-range-overlay");
     if (rangePanel) {
         const bodyElement =
             rangePanel.querySelector<HTMLDivElement>(".map-range-body");
@@ -2856,7 +2859,8 @@ function updateMapRangePreview(samples: ChartSample[]) {
 async function loadMapRangeData() {
     if (state.canvasView !== "map") return;
     const hasPoint = state.mapMarker !== null;
-    const hasPolygon = state.mapPolygon !== null && state.mapPolygon.length >= 3;
+    const hasPolygon =
+        state.mapPolygon !== null && state.mapPolygon.length >= 3;
 
     if (!hasPoint || hasPolygon || !state.mapMarker) {
         state.mapRangeLoading = false;
@@ -2893,7 +2897,9 @@ async function loadMapRangeData() {
                   new Set(metaData.scenarios.map(normalizeScenarioLabel)),
               )
             : scenarios;
-        const modelOptions = metaData?.models?.length ? metaData.models : models;
+        const modelOptions = metaData?.models?.length
+            ? metaData.models
+            : models;
 
         const activeScenarios = (
             state.chartScenarios.length ? state.chartScenarios : scenarioOptions
@@ -2959,7 +2965,9 @@ async function loadMapRangeData() {
     } catch (error) {
         if (requestId !== mapRangeRequestId) return;
         state.mapRangeError =
-            error instanceof Error ? error.message : "Failed to load range data.";
+            error instanceof Error
+                ? error.message
+                : "Failed to load range data.";
         state.mapRangeSamples = [];
         state.mapRangeSeries = null;
         state.mapRangeLoadingProgress = { total: 0, done: 0 };
@@ -3943,16 +3951,16 @@ async function loadCompareData(
 function percentile(sortedValues: number[], p: number): number {
     if (sortedValues.length === 0) return NaN;
     if (sortedValues.length === 1) return sortedValues[0];
-    
+
     const index = (p / 100) * (sortedValues.length - 1);
     const lower = Math.floor(index);
     const upper = Math.ceil(index);
     const weight = index - lower;
-    
+
     if (lower === upper) {
         return sortedValues[lower];
     }
-    
+
     return sortedValues[lower] * (1 - weight) + sortedValues[upper] * weight;
 }
 
@@ -3964,9 +3972,7 @@ async function loadEnsembleData(
             ? state.ensembleScenarios
             : scenarios.filter((s) => s !== "Historical");
     const activeModels =
-        state.ensembleModels.length > 0
-            ? state.ensembleModels
-            : models;
+        state.ensembleModels.length > 0 ? state.ensembleModels : models;
 
     if (activeScenarios.length === 0 || activeModels.length === 0) {
         throw new Error("Please select at least one scenario and one model.");
@@ -3990,7 +3996,11 @@ async function loadEnsembleData(
         const scenario = activeScenarios[i];
         for (let j = 0; j < activeModels.length; j++) {
             const model = activeModels[j];
-            const progress = 10 + Math.round((i * activeModels.length + j) / totalRequests * 80);
+            const progress =
+                10 +
+                Math.round(
+                    ((i * activeModels.length + j) / totalRequests) * 80,
+                );
             onProgress?.(progress);
 
             const request = createDataRequest({
@@ -4019,7 +4029,9 @@ async function loadEnsembleData(
     }
 
     if (allDataArrays.length === 0) {
-        throw new Error("No valid data could be loaded for the selected scenarios and models.");
+        throw new Error(
+            "No valid data could be loaded for the selected scenarios and models.",
+        );
     }
 
     onProgress?.(90);
@@ -4086,13 +4098,16 @@ async function loadEnsembleData(
         }
 
         // Compute all needed statistics for this pixel
-        const sorted = neededStats.has("median") || neededStats.has("iqr") || 
-                       neededStats.has("percentile") 
-            ? [...values].sort((a, b) => a - b)
-            : null;
-        const mean = neededStats.has("mean") || neededStats.has("std")
-            ? values.reduce((a, b) => a + b, 0) / values.length
-            : 0;
+        const sorted =
+            neededStats.has("median") ||
+            neededStats.has("iqr") ||
+            neededStats.has("percentile")
+                ? [...values].sort((a, b) => a - b)
+                : null;
+        const mean =
+            neededStats.has("mean") || neededStats.has("std")
+                ? values.reduce((a, b) => a + b, 0) / values.length
+                : 0;
 
         for (const stat of neededStats) {
             let result: number;
@@ -4102,8 +4117,10 @@ async function loadEnsembleData(
                 result = percentile(sorted!, 50);
             } else if (stat === "std") {
                 const variance =
-                    values.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) /
-                    values.length;
+                    values.reduce(
+                        (sum, val) => sum + Math.pow(val - mean, 2),
+                        0,
+                    ) / values.length;
                 result = Math.sqrt(variance);
             } else if (stat === "iqr") {
                 const q75 = percentile(sorted!, 75);
@@ -4138,7 +4155,9 @@ async function loadEnsembleData(
     state.ensembleStatistics = statsArrays;
 
     if (!isFinite(min) || !isFinite(max)) {
-        throw new Error("Ensemble computation produced no valid numeric values.");
+        throw new Error(
+            "Ensemble computation produced no valid numeric values.",
+        );
     }
 
     const mean = count > 0 ? sum / count : NaN;
@@ -4160,17 +4179,22 @@ async function loadEnsembleData(
     // Mean is absolute, all others (std, median, iqr, percentile, extremes) are differences
     const isDifferenceStatistic = state.ensembleStatistic !== "mean";
     const metadata = isDifferenceStatistic
-        ? { 
-            ...(templateData.metadata || {}), 
-            comparison: { 
-                labelA: "Ensemble", 
-                labelB: state.ensembleStatistic === "std" ? "Std Dev"
-                    : state.ensembleStatistic === "median" ? "Median"
-                    : state.ensembleStatistic === "iqr" ? "IQR"
-                    : state.ensembleStatistic === "percentile" ? "Percentile Band"
-                    : "Extremes"
-            } 
-        }
+        ? {
+              ...(templateData.metadata || {}),
+              comparison: {
+                  labelA: "Ensemble",
+                  labelB:
+                      state.ensembleStatistic === "std"
+                          ? "Std Dev"
+                          : state.ensembleStatistic === "median"
+                            ? "Median"
+                            : state.ensembleStatistic === "iqr"
+                              ? "IQR"
+                              : state.ensembleStatistic === "percentile"
+                                ? "Percentile Band"
+                                : "Extremes",
+              },
+          }
         : templateData.metadata;
 
     const ensembleData: ClimateData = {
@@ -4407,7 +4431,9 @@ function attachBoxplotHoverListeners() {
         return;
     }
 
-    const hoverOverlay = svg.querySelector(".boxplot-hover-overlay") as SVGElement;
+    const hoverOverlay = svg.querySelector(
+        ".boxplot-hover-overlay",
+    ) as SVGElement;
     if (!hoverOverlay) {
         return;
     }
@@ -4437,7 +4463,8 @@ function attachBoxplotHoverListeners() {
             // Show only indicators for this boxplot
             modelIndicators.forEach((indicator) => {
                 const indicatorGroup = indicator as SVGElement;
-                const indicatorIdx = indicatorGroup.getAttribute("data-boxplot-idx");
+                const indicatorIdx =
+                    indicatorGroup.getAttribute("data-boxplot-idx");
                 if (indicatorIdx === boxplotIdx) {
                     indicatorGroup.style.opacity = "1";
                 } else {
@@ -4459,7 +4486,6 @@ function attachBoxplotHoverListeners() {
 
 async function loadChartData() {
     if (state.canvasView !== "chart") return;
-
     const updateChartPreview = (samples: ChartSample[]) => {
         state.chartSamples = samples;
         if (state.chartMode === "single") {
@@ -5429,68 +5455,68 @@ async function loadClimateData() {
                 : state.mode === "Ensemble"
                   ? await loadEnsembleData(setLoadingProgress)
                   : await (async () => {
-                      setLoadingProgress(40);
-                      const clippedDate = clipDateToScenarioRange(
-                          state.date,
-                          activeScenarioForRange,
-                      );
-                      if (clippedDate !== state.date) {
-                          state.date = clippedDate;
-                      }
+                        setLoadingProgress(40);
+                        const clippedDate = clipDateToScenarioRange(
+                            state.date,
+                            activeScenarioForRange,
+                        );
+                        if (clippedDate !== state.date) {
+                            state.date = clippedDate;
+                        }
 
-                      const request = createDataRequest({
-                          variable: state.variable,
-                          date: clippedDate,
-                          model: state.model,
-                          scenario: state.scenario,
-                          resolution: state.resolution,
-                      });
+                        const request = createDataRequest({
+                            variable: state.variable,
+                            date: clippedDate,
+                            model: state.model,
+                            scenario: state.scenario,
+                            resolution: state.resolution,
+                        });
 
-                      setLoadingProgress(55);
-                      let data = await fetchClimateData(request);
-                      setLoadingProgress(80);
-                      let arrayData = dataToArray(data);
-                      if (!arrayData) {
-                          throw new Error(
-                              "No data returned for the selected parameters.",
-                          );
-                      }
+                        setLoadingProgress(55);
+                        let data = await fetchClimateData(request);
+                        setLoadingProgress(80);
+                        let arrayData = dataToArray(data);
+                        if (!arrayData) {
+                            throw new Error(
+                                "No data returned for the selected parameters.",
+                            );
+                        }
 
-                      // Cap relative humidity to 100% in Explore mode to avoid invalid values
-                      if (state.variable === "hurs") {
-                          const clamped = new Float32Array(arrayData.length);
-                          let min = Infinity;
-                          let max = -Infinity;
-                          let sum = 0;
-                          let count = 0;
-                          for (let i = 0; i < arrayData.length; i++) {
-                              const val = arrayData[i];
-                              if (!isFinite(val)) {
-                                  clamped[i] = NaN;
-                                  continue;
-                              }
-                              const capped = Math.min(val, 100);
-                              clamped[i] = capped;
-                              min = Math.min(min, capped);
-                              max = Math.max(max, capped);
-                              sum += capped;
-                              count += 1;
-                          }
-                          const mean = count > 0 ? sum / count : NaN;
-                          data = {
-                              ...data,
-                              data: clamped,
-                              data_encoding: "none",
-                          };
-                          arrayData = clamped;
-                          return { data, min, max, mean };
-                      }
+                        // Cap relative humidity to 100% in Explore mode to avoid invalid values
+                        if (state.variable === "hurs") {
+                            const clamped = new Float32Array(arrayData.length);
+                            let min = Infinity;
+                            let max = -Infinity;
+                            let sum = 0;
+                            let count = 0;
+                            for (let i = 0; i < arrayData.length; i++) {
+                                const val = arrayData[i];
+                                if (!isFinite(val)) {
+                                    clamped[i] = NaN;
+                                    continue;
+                                }
+                                const capped = Math.min(val, 100);
+                                clamped[i] = capped;
+                                min = Math.min(min, capped);
+                                max = Math.max(max, capped);
+                                sum += capped;
+                                count += 1;
+                            }
+                            const mean = count > 0 ? sum / count : NaN;
+                            data = {
+                                ...data,
+                                data: clamped,
+                                data_encoding: "none",
+                            };
+                            arrayData = clamped;
+                            return { data, min, max, mean };
+                        }
 
-                      const { min, max } = calculateMinMax(arrayData);
-                      const mean = averageArray(arrayData, state.variable);
-                      setLoadingProgress(95);
-                      return { data, min, max, mean };
-                  })();
+                        const { min, max } = calculateMinMax(arrayData);
+                        const mean = averageArray(arrayData, state.variable);
+                        setLoadingProgress(95);
+                        return { data, min, max, mean };
+                    })();
 
         state.currentData = result.data;
         state.dataMin = result.min;
@@ -5503,7 +5529,7 @@ async function loadClimateData() {
                 state.date,
                 activeScenarioForRange,
             );
-            
+
             // Collect unique variables from masks (excluding the current variable)
             const maskVariables = new Set<string>();
             for (const mask of state.masks) {
@@ -5511,7 +5537,7 @@ async function loadClimateData() {
                     maskVariables.add(mask.variable);
                 }
             }
-            
+
             // Load data for each mask variable
             state.maskVariableData.clear();
             for (const maskVar of maskVariables) {
@@ -5523,9 +5549,9 @@ async function loadClimateData() {
                         scenario: state.scenario,
                         resolution: state.resolution,
                     });
-                    
+
                     const maskData = await fetchClimateData(maskRequest);
-                    
+
                     // Cap relative humidity to 100% if needed
                     if (maskVar === "hurs") {
                         const arrayData = dataToArray(maskData);
@@ -5551,7 +5577,10 @@ async function loadClimateData() {
                         state.maskVariableData.set(maskVar, maskData);
                     }
                 } catch (error) {
-                    console.warn(`Failed to load data for mask variable ${maskVar}:`, error);
+                    console.warn(
+                        `Failed to load data for mask variable ${maskVar}:`,
+                        error,
+                    );
                     // Continue loading other variables even if one fails
                 }
             }
@@ -5677,8 +5706,9 @@ function render() {
                       state.mode === "Ensemble"
                           ? state.ensembleUnit
                           : state.selectedUnit,
-                      state.mode === "Compare" || 
-                      (state.mode === "Ensemble" && state.ensembleStatistic !== "mean"),
+                      state.mode === "Compare" ||
+                          (state.mode === "Ensemble" &&
+                              state.ensembleStatistic !== "mean"),
                       state.mapRangeOpen ? 70 : 0,
                   )
                 : ""
@@ -5933,7 +5963,9 @@ function render() {
                     state.masks,
                     state.mode === "Ensemble" ? state.ensembleStatistics : null,
                     state.mode === "Ensemble",
-                    state.mode === "Explore" ? state.maskVariableData : undefined,
+                    state.mode === "Explore"
+                        ? state.maskVariableData
+                        : undefined,
                 );
 
                 // Draw the gradient on the legend canvas
@@ -6116,7 +6148,7 @@ function renderChartSvg(boxes: ChartBox[]): string {
             const lineStartX = boxplotRight;
             const lineEndX = boxplotRight + 6; // Horizontal line to show position
             const labelStartX = lineEndX + 6; // Start of label text
-            
+
             const modelIndicators = box.samples
                 .map((sample) => {
                     const y = yScale(sample.value) + margin.top;
@@ -6130,10 +6162,18 @@ function renderChartSvg(boxes: ChartBox[]): string {
 
             // Adjust label positions to avoid overlaps
             const minLabelSpacing = 12; // Minimum vertical spacing between labels
-            const adjustedIndicators: Array<{ model: string; value: number; y: number; adjustedY: number }> = [];
+            const adjustedIndicators: Array<{
+                model: string;
+                value: number;
+                y: number;
+                adjustedY: number;
+            }> = [];
             modelIndicators.forEach((indicator, i) => {
                 if (i === 0) {
-                    adjustedIndicators.push({ ...indicator, adjustedY: indicator.y });
+                    adjustedIndicators.push({
+                        ...indicator,
+                        adjustedY: indicator.y,
+                    });
                 } else {
                     const prevY = adjustedIndicators[i - 1].adjustedY;
                     const minY = prevY + minLabelSpacing;
@@ -6632,15 +6672,23 @@ function renderSelect(
           ${options
               .map((opt) => {
                   // Format statistic labels for better display
-                  const displayLabel = (dataKey === "ensembleStatistic" || dataKey === "maskStatistic")
-                      ? opt === "mean" ? "Mean"
-                          : opt === "median" ? "Median"
-                          : opt === "std" ? "Std"
-                          : opt === "iqr" ? "IQR"
-                          : opt === "percentile" ? "Percentile"
-                          : opt === "extremes" ? "Extremes"
-                          : opt
-                      : opt;
+                  const displayLabel =
+                      dataKey === "ensembleStatistic" ||
+                      dataKey === "maskStatistic"
+                          ? opt === "mean"
+                              ? "Mean"
+                              : opt === "median"
+                                ? "Median"
+                                : opt === "std"
+                                  ? "Std"
+                                  : opt === "iqr"
+                                    ? "IQR"
+                                    : opt === "percentile"
+                                      ? "Percentile"
+                                      : opt === "extremes"
+                                        ? "Extremes"
+                                        : opt
+                          : opt;
                   return `
                 <div class="custom-select-option ${
                     opt === current ? "selected" : ""
@@ -6955,17 +7003,35 @@ function renderManualSection(params: {
                                   })}">
                                     ${renderSelect(
                                         "maskStatistic",
-                                        ["mean", "std", "median", "iqr", "percentile", "extremes"],
+                                        [
+                                            "mean",
+                                            "std",
+                                            "median",
+                                            "iqr",
+                                            "percentile",
+                                            "extremes",
+                                        ],
                                         mask.statistic || "mean",
                                         {
                                             dataKey: "maskStatistic",
-                                            selectedLabel: mask.statistic === "mean" ? "Mean"
-                                                : mask.statistic === "std" ? "Std"
-                                                : mask.statistic === "median" ? "Median"
-                                                : mask.statistic === "iqr" ? "IQR"
-                                                : mask.statistic === "percentile" ? "Percentile"
-                                                : mask.statistic === "extremes" ? "Extremes"
-                                                : "Mean",
+                                            selectedLabel:
+                                                mask.statistic === "mean"
+                                                    ? "Mean"
+                                                    : mask.statistic === "std"
+                                                      ? "Std"
+                                                      : mask.statistic ===
+                                                          "median"
+                                                        ? "Median"
+                                                        : mask.statistic ===
+                                                            "iqr"
+                                                          ? "IQR"
+                                                          : mask.statistic ===
+                                                              "percentile"
+                                                            ? "Percentile"
+                                                            : mask.statistic ===
+                                                                "extremes"
+                                                              ? "Extremes"
+                                                              : "Mean",
                                         },
                                     ).replace(
                                         'class="custom-select-wrapper"',
@@ -6995,8 +7061,13 @@ function renderManualSection(params: {
                                     )}
                                     ${renderSelect(
                                         "maskUnit",
-                                        getUnitOptions(mask.variable || state.variable).map(opt => opt.label),
-                                        mask.unit || getDefaultUnitOption(mask.variable || state.variable).label,
+                                        getUnitOptions(
+                                            mask.variable || state.variable,
+                                        ).map((opt) => opt.label),
+                                        mask.unit ||
+                                            getDefaultUnitOption(
+                                                mask.variable || state.variable,
+                                            ).label,
                                         {
                                             dataKey: "maskUnit",
                                         },
@@ -7006,7 +7077,7 @@ function renderManualSection(params: {
                                     )}
                                   </div>
                                   `
-                                  : ""
+                                    : ""
                           }
                           <div style="${styleAttr({
                               display: "flex",
@@ -7404,9 +7475,7 @@ function renderManualSection(params: {
                     flexDirection: "column",
                     gap: 8,
                 })}">
-                  <div style="${styleAttr(
-                      styles.sectionTitle,
-                  )}">Mask</div>
+                  <div style="${styleAttr(styles.sectionTitle)}">Mask</div>
                   ${
                       state.masks.length > 0
                           ? `
@@ -7427,25 +7496,46 @@ function renderManualSection(params: {
                                     state.mode === "Ensemble"
                                         ? renderSelect(
                                               "maskStatistic",
-                                              ["mean", "std", "median", "iqr", "percentile", "extremes"],
+                                              [
+                                                  "mean",
+                                                  "std",
+                                                  "median",
+                                                  "iqr",
+                                                  "percentile",
+                                                  "extremes",
+                                              ],
                                               mask.statistic || "mean",
                                               {
                                                   dataKey: "maskStatistic",
-                                                  selectedLabel: mask.statistic === "mean" ? "Mean"
-                                                      : mask.statistic === "std" ? "Std"
-                                                      : mask.statistic === "median" ? "Median"
-                                                      : mask.statistic === "iqr" ? "IQR"
-                                                      : mask.statistic === "percentile" ? "Percentile"
-                                                      : mask.statistic === "extremes" ? "Extremes"
-                                                      : "Mean",
+                                                  selectedLabel:
+                                                      mask.statistic === "mean"
+                                                          ? "Mean"
+                                                          : mask.statistic ===
+                                                              "std"
+                                                            ? "Std"
+                                                            : mask.statistic ===
+                                                                "median"
+                                                              ? "Median"
+                                                              : mask.statistic ===
+                                                                  "iqr"
+                                                                ? "IQR"
+                                                                : mask.statistic ===
+                                                                    "percentile"
+                                                                  ? "Percentile"
+                                                                  : mask.statistic ===
+                                                                      "extremes"
+                                                                    ? "Extremes"
+                                                                    : "Mean",
                                               },
-                                          ).replace(
-                                              'data-key="maskStatistic"',
-                                              `data-key="maskStatistic" data-mask-index="${index}"`,
-                                          ).replace(
-                                              'class="custom-select-wrapper"',
-                                              `class="custom-select-wrapper" data-mask-index="${index}"`,
                                           )
+                                              .replace(
+                                                  'data-key="maskStatistic"',
+                                                  `data-key="maskStatistic" data-mask-index="${index}"`,
+                                              )
+                                              .replace(
+                                                  'class="custom-select-wrapper"',
+                                                  `class="custom-select-wrapper" data-mask-index="${index}"`,
+                                              )
                                         : state.mode === "Explore"
                                           ? `
                                             ${renderSelect(
@@ -7462,8 +7552,15 @@ function renderManualSection(params: {
                                             )}
                                             ${renderSelect(
                                                 "maskUnit",
-                                                getUnitOptions(mask.variable || state.variable).map(opt => opt.label),
-                                                mask.unit || getDefaultUnitOption(mask.variable || state.variable).label,
+                                                getUnitOptions(
+                                                    mask.variable ||
+                                                        state.variable,
+                                                ).map((opt) => opt.label),
+                                                mask.unit ||
+                                                    getDefaultUnitOption(
+                                                        mask.variable ||
+                                                            state.variable,
+                                                    ).label,
                                                 {
                                                     dataKey: "maskUnit",
                                                 },
@@ -7472,7 +7569,7 @@ function renderManualSection(params: {
                                                 `class="custom-select-wrapper" data-mask-index="${index}" style="width: 120px;"`,
                                             )}
                                           `
-                                        : ""
+                                          : ""
                                 }
                                 <input
                                   type="number"
@@ -7494,7 +7591,8 @@ function renderManualSection(params: {
                                       fontFamily: "var(--font-geist-sans)",
                                       letterSpacing: 0.25,
                                       minHeight: 32,
-                                      boxShadow: "inset 0 1px 0 var(--inset-light)",
+                                      boxShadow:
+                                          "inset 0 1px 0 var(--inset-light)",
                                   })}"
                                 />
                                 <span style="${styleAttr({
@@ -7523,7 +7621,8 @@ function renderManualSection(params: {
                                       fontFamily: "var(--font-geist-sans)",
                                       letterSpacing: 0.25,
                                       minHeight: 32,
-                                      boxShadow: "inset 0 1px 0 var(--inset-light)",
+                                      boxShadow:
+                                          "inset 0 1px 0 var(--inset-light)",
                                   })}"
                                 />
                                 <button
@@ -7670,12 +7769,19 @@ function renderManualSection(params: {
                       state.ensembleStatistic,
                       {
                           dataKey: "ensembleStatistic",
-                          selectedLabel: state.ensembleStatistic === "mean" ? "Mean"
-                              : state.ensembleStatistic === "median" ? "Median"
-                              : state.ensembleStatistic === "std" ? "Std Deviation"
-                              : state.ensembleStatistic === "iqr" ? "IQR (Interquartile Range)"
-                              : state.ensembleStatistic === "percentile" ? "Percentile Band (90th-10th)"
-                              : "Extremes (Max-Min)",
+                          selectedLabel:
+                              state.ensembleStatistic === "mean"
+                                  ? "Mean"
+                                  : state.ensembleStatistic === "median"
+                                    ? "Median"
+                                    : state.ensembleStatistic === "std"
+                                      ? "Std Deviation"
+                                      : state.ensembleStatistic === "iqr"
+                                        ? "IQR (Interquartile Range)"
+                                        : state.ensembleStatistic ===
+                                            "percentile"
+                                          ? "Percentile Band (90th-10th)"
+                                          : "Extremes (Max-Min)",
                       },
                   ),
               )}
@@ -7824,17 +7930,35 @@ function renderManualSection(params: {
                                   })}">
                                     ${renderSelect(
                                         "maskStatistic",
-                                        ["mean", "std", "median", "iqr", "percentile", "extremes"],
+                                        [
+                                            "mean",
+                                            "std",
+                                            "median",
+                                            "iqr",
+                                            "percentile",
+                                            "extremes",
+                                        ],
                                         mask.statistic || "mean",
                                         {
                                             dataKey: "maskStatistic",
-                                            selectedLabel: mask.statistic === "mean" ? "Mean"
-                                                : mask.statistic === "std" ? "Std"
-                                                : mask.statistic === "median" ? "Median"
-                                                : mask.statistic === "iqr" ? "IQR"
-                                                : mask.statistic === "percentile" ? "Percentile"
-                                                : mask.statistic === "extremes" ? "Extremes"
-                                                : "Mean",
+                                            selectedLabel:
+                                                mask.statistic === "mean"
+                                                    ? "Mean"
+                                                    : mask.statistic === "std"
+                                                      ? "Std"
+                                                      : mask.statistic ===
+                                                          "median"
+                                                        ? "Median"
+                                                        : mask.statistic ===
+                                                            "iqr"
+                                                          ? "IQR"
+                                                          : mask.statistic ===
+                                                              "percentile"
+                                                            ? "Percentile"
+                                                            : mask.statistic ===
+                                                                "extremes"
+                                                              ? "Extremes"
+                                                              : "Mean",
                                         },
                                     ).replace(
                                         'class="custom-select-wrapper"',
@@ -7864,8 +7988,13 @@ function renderManualSection(params: {
                                     )}
                                     ${renderSelect(
                                         "maskUnit",
-                                        getUnitOptions(mask.variable || state.variable).map(opt => opt.label),
-                                        mask.unit || getDefaultUnitOption(mask.variable || state.variable).label,
+                                        getUnitOptions(
+                                            mask.variable || state.variable,
+                                        ).map((opt) => opt.label),
+                                        mask.unit ||
+                                            getDefaultUnitOption(
+                                                mask.variable || state.variable,
+                                            ).label,
                                         {
                                             dataKey: "maskUnit",
                                         },
@@ -7875,7 +8004,7 @@ function renderManualSection(params: {
                                     )}
                                   </div>
                                   `
-                                  : ""
+                                    : ""
                           }
                           <div style="${styleAttr({
                               display: "flex",
@@ -8715,7 +8844,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
     maskBoundInputs.forEach((input) => {
         // Mark this input so other handlers can skip it
         (input as any).__isMaskInput = true;
-        
+
         // Only commit changes on blur or Enter key, not on every input
         const commitMaskChange = (e?: Event) => {
             if (e) {
@@ -8727,7 +8856,11 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             const indexStr = input.dataset.maskIndex;
             if (!bound || indexStr === undefined) return;
             const index = Number.parseInt(indexStr, 10);
-            if (Number.isNaN(index) || index < 0 || index >= state.masks.length) {
+            if (
+                Number.isNaN(index) ||
+                index < 0 ||
+                index >= state.masks.length
+            ) {
                 return;
             }
 
@@ -8765,18 +8898,26 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         };
 
         // Use capture phase and stopImmediatePropagation to ensure this runs first
-        input.addEventListener("blur", (e) => {
-            commitMaskChange(e);
-        }, { capture: true }); 
-        input.addEventListener("keydown", (e) => {
-            if (e.key === "Enter") {
-                e.preventDefault();
-                e.stopPropagation();
-                e.stopImmediatePropagation();
+        input.addEventListener(
+            "blur",
+            (e) => {
                 commitMaskChange(e);
-                input.blur(); // Trigger blur to close any dropdowns
-            }
-        }, { capture: true });
+            },
+            { capture: true },
+        );
+        input.addEventListener(
+            "keydown",
+            (e) => {
+                if (e.key === "Enter") {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    e.stopImmediatePropagation();
+                    commitMaskChange(e);
+                    input.blur(); // Trigger blur to close any dropdowns
+                }
+            },
+            { capture: true },
+        );
     });
 
     attachSidebarHandlers({
@@ -9192,7 +9333,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
 
                 // Get mask index from wrapper if it's a mask statistic selector
                 const maskIndex = wrapper.dataset.maskIndex;
-                
+
                 // Trigger the change handler
                 handleSelectChange(dataKey, value, maskIndex);
 
@@ -9284,7 +9425,11 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
     });
 
     // Handle select change (reusable function)
-    const handleSelectChange = async (key: string, val: string, maskIndex?: string) => {
+    const handleSelectChange = async (
+        key: string,
+        val: string,
+        maskIndex?: string,
+    ) => {
         if (!key) return;
         let triggerMapReload = false;
         let triggerChartReload = false;
@@ -9337,7 +9482,9 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                                 state.masks,
                                 null,
                                 false,
-                                state.mode === "Explore" ? state.maskVariableData : undefined,
+                                state.mode === "Explore"
+                                    ? state.maskVariableData
+                                    : undefined,
                             );
                             const palette =
                                 paletteOptions.find(
@@ -9348,7 +9495,10 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                                 palette.colors,
                             );
                         } catch (e) {
-                            console.error("Map redraw (unit change) failed:", e);
+                            console.error(
+                                "Map redraw (unit change) failed:",
+                                e,
+                            );
                         }
                     }
                 }
@@ -9406,7 +9556,9 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                             state.masks,
                             null,
                             false,
-                            state.mode === "Explore" ? state.maskVariableData : undefined,
+                            state.mode === "Explore"
+                                ? state.maskVariableData
+                                : undefined,
                         );
 
                         // Redraw gradient with new palette
@@ -10079,10 +10231,9 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             }
 
             if (key === "ensembleModels") {
-                const available =
-                    state.metaData?.models?.length
-                        ? state.metaData.models
-                        : models;
+                const available = state.metaData?.models?.length
+                    ? state.metaData.models
+                    : models;
                 const set = new Set(state.ensembleModels);
 
                 if (set.has(value)) {
@@ -10091,13 +10242,18 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                     set.add(value);
                 }
 
-                state.ensembleModels = set.size ? Array.from(set) : [...available];
+                state.ensembleModels = set.size
+                    ? Array.from(set)
+                    : [...available];
             }
 
             render();
             if (state.canvasView === "chart") {
                 loadChartData();
-            } else if (state.canvasView === "map" && state.mode === "Ensemble") {
+            } else if (
+                state.canvasView === "map" &&
+                state.mode === "Ensemble"
+            ) {
                 loadClimateData();
             }
         }),
@@ -10407,7 +10563,11 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             const indexStr = btn.dataset.maskIndex;
             if (indexStr === undefined) return;
             const index = Number.parseInt(indexStr, 10);
-            if (!Number.isNaN(index) && index >= 0 && index < state.masks.length) {
+            if (
+                !Number.isNaN(index) &&
+                index >= 0 &&
+                index < state.masks.length
+            ) {
                 state.masks.splice(index, 1);
                 render();
                 // Don't reload map automatically - user will click Apply button if needed
@@ -10531,33 +10691,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         },
     });
 
-    // Attach chat handlers
-    const chatContextData: ChatContextData = {
-        mode: state.mode,
-        canvasView: state.canvasView,
-        selectedVariable: state.variable,
-        selectedModel: state.model,
-        selectedScenario: state.scenario,
-        selectedDate: state.date,
-        compareMode: state.compareMode,
-        chartMode: state.chartMode,
-        selectedScenario1: state.compareScenarioA,
-        selectedScenario2: state.compareScenarioB,
-        selectedModel1: state.compareModelA,
-        selectedModel2: state.compareModelB,
-        selectedDate1: state.compareDateStart,
-        selectedDate2: state.compareDateEnd,
-        currentDataStats:
-            state.dataMin !== null && state.dataMax !== null
-                ? {
-                      min: state.dataMin,
-                      max: state.dataMax,
-                      mean: state.dataMean ?? undefined,
-                  }
-                : undefined,
-    };
-
-    attachChatHandlers(root, state, chatContextData);
+    attachChatHandlers(root, state);
 }
 
 async function init() {

@@ -13,6 +13,19 @@ VALID_VARIABLES = [
     "tasmin",    # Daily Minimum Near-Surface Air Temperature (K)
 ]
 
+VARIABLE_UNIT_MAP = {
+    "hurs": "%",
+    "huss": "%",
+    "pr": ["g m-2 s-1", "kg m-2 s-1"],
+    "rlds": ["W/m²", "kW/m²"],
+    "rsds": ["W/m²", "kW/m²"],
+    "sfcWind": ["m s-1", "km h-1", "mph"],
+    "tas": ["K", "°C", "°F"],
+    "tasmax": ["K", "°C", "°F"],
+    "tasmin": ["K", "°C", "°F"],
+}
+
+
 VALID_CHART_MODES = [
     "single",
     "range",

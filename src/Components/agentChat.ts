@@ -1,3 +1,4 @@
+import type { AppState } from "../main";
 import {
     buildChatContext,
     sendChatMessage,
@@ -16,28 +17,6 @@ export type ChatMessage = {
 export type ChatState = {
     chatInput: string;
     chatMessages: ChatMessage[];
-};
-
-export type ChatContextData = {
-    mode: string;
-    canvasView: string;
-    selectedVariable: string;
-    selectedModel: string;
-    selectedScenario: string;
-    selectedDate: string;
-    compareMode?: string;
-    chartMode?: string;
-    selectedScenario1?: string;
-    selectedScenario2?: string;
-    selectedModel1?: string;
-    selectedModel2?: string;
-    selectedDate1?: string;
-    selectedDate2?: string;
-    currentDataStats?: {
-        min: number;
-        max: number;
-        mean?: number;
-    };
 };
 
 /**
@@ -199,8 +178,7 @@ export function renderChatSection(
  */
 export function attachChatHandlers(
     root: HTMLElement,
-    state: ChatState,
-    contextData: ChatContextData,
+    appStateContext: AppState,
 ): void {
     const chatInput = root.querySelector<HTMLInputElement>(
         '[data-action="chat-input"]',
@@ -210,16 +188,16 @@ export function attachChatHandlers(
     );
 
     chatInput?.addEventListener("input", (e: Event) => {
-        state.chatInput = (e.target as HTMLInputElement).value;
+        appStateContext.chatInput = (e.target as HTMLInputElement).value;
     });
 
     chatInput?.addEventListener("keydown", (e: KeyboardEvent) => {
-        if (e.key === "ArrowUp" && state.chatMessages.length > 0) {
-            const lastUserMessage = [...state.chatMessages]
+        if (e.key === "ArrowUp" && appStateContext.chatMessages.length > 0) {
+            const lastUserMessage = [...appStateContext.chatMessages]
                 .reverse()
                 .find((msg) => msg.sender === "user");
             if (lastUserMessage) {
-                state.chatInput = lastUserMessage.text;
+                appStateContext.chatInput = lastUserMessage.text;
                 if (chatInput) chatInput.value = lastUserMessage.text;
                 // Move cursor to end
                 setTimeout(() => {
@@ -231,12 +209,12 @@ export function attachChatHandlers(
             }
         }
         if (e.key === "Enter") {
-            sendChat(root, state, contextData);
+            sendChat(root, appStateContext);
         }
     });
 
     chatSend?.addEventListener("click", () => {
-        sendChat(root, state, contextData);
+        sendChat(root, appStateContext);
     });
 }
 
@@ -245,17 +223,18 @@ export function attachChatHandlers(
  */
 async function sendChat(
     root: HTMLElement,
-    state: ChatState,
-    contextData: ChatContextData,
+    appStateContext: AppState,
 ): Promise<void> {
-    const text = state.chatInput.trim();
+    const text = appStateContext.chatInput.trim();
     if (!text) return;
 
     // Add user message
     const userMessage: ChatMessage = { id: Date.now(), sender: "user", text };
-    state.chatMessages = [...state.chatMessages, userMessage];
-    state.chatInput = "";
-
+    appStateContext.chatMessages = [
+        ...appStateContext.chatMessages,
+        userMessage,
+    ];
+    appStateContext.chatInput = "";
     // Update input field and append user message
     const chatInput = root.querySelector<HTMLInputElement>(
         '[data-action="chat-input"]',
@@ -267,31 +246,15 @@ async function sendChat(
     toggleLoadingIndicator(root, true);
 
     // Build chat history for context (limit to last 10 messages to avoid payload issues)
-    const history: ChatClientMessage[] = state.chatMessages
-        .slice(Math.max(0, state.chatMessages.length - 11), -1) // Last 10 messages, excluding current
+    const history: ChatClientMessage[] = appStateContext.chatMessages
+        .slice(Math.max(0, appStateContext.chatMessages.length - 11), -1) // Last 10 messages, excluding current
         .map((msg) => ({
             role: msg.sender === "user" ? "user" : "assistant",
             content: msg.text,
         }));
 
     // Build current application context
-    const context = buildChatContext({
-        mode: contextData.mode,
-        canvasView: contextData.canvasView,
-        selectedVariable: contextData.selectedVariable,
-        selectedModel: contextData.selectedModel,
-        selectedScenario: contextData.selectedScenario,
-        selectedDate: contextData.selectedDate,
-        compareMode: contextData.compareMode,
-        chartMode: contextData.chartMode,
-        selectedScenario1: contextData.selectedScenario1,
-        selectedScenario2: contextData.selectedScenario2,
-        selectedModel1: contextData.selectedModel1,
-        selectedModel2: contextData.selectedModel2,
-        selectedDate1: contextData.selectedDate1,
-        selectedDate2: contextData.selectedDate2,
-        currentDataStats: contextData.currentDataStats,
-    });
+    const context = buildChatContext(appStateContext);
 
     try {
         // Send request to chat API
@@ -309,7 +272,7 @@ async function sendChat(
             new_state: response.new_state,
         };
         console.log("New state from agent:", reply.new_state);
-        state.chatMessages = [...state.chatMessages, reply];
+        appStateContext.chatMessages = [...appStateContext.chatMessages, reply];
         if (reply.new_state) {
             // Update application state with backend changes
             updateState(reply.new_state);
@@ -326,7 +289,10 @@ async function sendChat(
                 error instanceof Error ? error.message : "Unbekannter Fehler"
             }`,
         };
-        state.chatMessages = [...state.chatMessages, errorReply];
+        appStateContext.chatMessages = [
+            ...appStateContext.chatMessages,
+            errorReply,
+        ];
 
         // Hide loading and append error
         toggleLoadingIndicator(root, false);

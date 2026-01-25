@@ -14,9 +14,36 @@ def update_variable(**kwargs) -> dict:
     
     if variable not in config.VALID_VARIABLES:
         raise ValueError(f"Invalid variable: {variable}")
+
+    unit = kwargs.get('unit')
+    if unit not in config.VARIABLE_UNIT_MAP.get(variable, []):
+        return {
+            "variable": variable,
+            "selectedUnit": config.VARIABLE_UNIT_MAP.get(variable)[0]  # Default to first unit if invalid
+        }
     
     return {
         "variable": variable
+    }
+
+def update_unit(**kwargs) -> dict:
+    """Update unit from keyword arguments."""
+    unit = kwargs.get('selectedUnit')
+    if not unit or unit in ('None', 'null', None):
+        raise ValueError("Unit is required")
+    
+    return {
+        "selectedUnit": unit
+    }
+
+def update_masks(**kwargs) -> dict:
+    """Update value masks from keyword arguments."""
+    masks_str = kwargs.get('masks')
+    if not masks_str or masks_str in ('None', 'null', None):
+        raise ValueError("Masks are required")
+    
+    return {
+        "masks": masks_str
     }
 
 def update_color_palette(**kwargs) -> dict:
@@ -27,6 +54,22 @@ def update_color_palette(**kwargs) -> dict:
     
     return {
         "colorPalette": color_palette
+    }
+
+def update_unit(**kwargs) -> dict:
+    """Update unit from keyword arguments."""
+    unit = kwargs.get('selectedUnit')
+    if not unit or unit in ('None', 'null', None):
+        raise ValueError("Unit is required")
+    
+    return {
+        "selectedUnit": unit
+    }
+
+def switch_to_ensemble_mode(**kwargs) -> dict:
+    """Switch to ensemble mode from keyword arguments."""
+    return {
+        "mode": "Ensemble"
     }
 
 class CompareMode(Enum):

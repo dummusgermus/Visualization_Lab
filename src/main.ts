@@ -57,6 +57,7 @@ import {
 } from "./Utils/mockChartData";
 import { registerStateUpdateCallback } from "./Utils/stateUpdate";
 import {
+    convertMinMax,
     convertValue,
     getDefaultUnitOption,
     getUnitOptions,
@@ -1203,6 +1204,7 @@ export type AppState = {
     ensembleVariable: string;
     ensembleUnit: string;
     ensembleStatistics: Map<EnsembleStatistic, Float32Array> | null; // Cached statistics for mask filtering
+    ensembleStatisticRanges: Map<EnsembleStatistic, { min: number; max: number }>;
     isLoading: boolean;
     loadingProgress: number;
     dataError: string | null;
@@ -1210,6 +1212,7 @@ export type AppState = {
     apiAvailable: boolean | null;
     metaData?: Metadata;
     maskVariableData: Map<string, ClimateData>; // Cache for data of different variables used in masks
+    maskVariableRanges: Map<string, { min: number; max: number }>; // Raw ranges for mask variables
     dataMin: number | null;
     dataMax: number | null;
     dataMean: number | null;
@@ -1311,6 +1314,10 @@ const state: AppState = {
     ensembleVariable: variables[0],
     ensembleUnit: getDefaultUnitOption(variables[0]).label,
     ensembleStatistics: null,
+    ensembleStatisticRanges: new Map<
+        EnsembleStatistic,
+        { min: number; max: number }
+    >(),
     isLoading: false,
     loadingProgress: 0,
     dataError: null,
@@ -1323,6 +1330,7 @@ const state: AppState = {
     metaData: undefined,
     compareInfoOpen: false,
     maskVariableData: new Map<string, ClimateData>(),
+    maskVariableRanges: new Map<string, { min: number; max: number }>(),
     chartRequestId: 0,
 };
 
@@ -1405,8 +1413,48 @@ function getVariableLabel(variable: string, meta?: Metadata): string {
     );
 }
 
-function getMapRangeVariable(): { variable: string; unit: string } {
+function getActiveMapVariable(): { variable: string; unit: string } {
+    if (state.mode === "Ensemble") {
+        return { variable: state.ensembleVariable, unit: state.ensembleUnit };
+    }
     return { variable: state.variable, unit: state.selectedUnit };
+}
+
+function getMapRangeVariable(): { variable: string; unit: string } {
+    return getActiveMapVariable();
+}
+
+function getEnsembleMaskRange(
+    stat: EnsembleStatistic,
+): { min: number | null; max: number | null } {
+    const range = state.ensembleStatisticRanges.get(stat);
+    let rawMin: number | null = null;
+    let rawMax: number | null = null;
+
+    if (range && Number.isFinite(range.min) && Number.isFinite(range.max)) {
+        rawMin = range.min;
+        rawMax = range.max;
+    } else if (
+        stat === state.ensembleStatistic &&
+        state.dataMin !== null &&
+        state.dataMax !== null
+    ) {
+        rawMin = state.dataMin;
+        rawMax = state.dataMax;
+    }
+
+    if (rawMin === null || rawMax === null) {
+        return { min: null, max: null };
+    }
+
+    const converted = convertMinMax(
+        rawMin,
+        rawMax,
+        state.ensembleVariable,
+        state.ensembleUnit,
+        { isDifference: stat !== "mean" },
+    );
+    return { min: converted.min, max: converted.max };
 }
 
 function describeCompareContext(state: AppState): {
@@ -1645,6 +1693,34 @@ function calculateMinMax(arrayData: Float32Array | Float64Array): {
     }
 
     return { min, max };
+}
+
+function formatMaskLimit(value: number | null): string {
+    if (value === null || !Number.isFinite(value)) return "";
+    return value.toFixed(2);
+}
+
+function getMaskRangeFor(
+    maskVar: string,
+    unitLabel: string,
+): { min: number; max: number } | null {
+    let rawMin: number | null = null;
+    let rawMax: number | null = null;
+
+    if (maskVar === state.variable) {
+        rawMin = state.dataMin;
+        rawMax = state.dataMax;
+    } else {
+        const range = state.maskVariableRanges.get(maskVar);
+        if (range) {
+            rawMin = range.min;
+            rawMax = range.max;
+        }
+    }
+
+    if (rawMin === null || rawMax === null) return null;
+    const converted = convertMinMax(rawMin, rawMax, maskVar, unitLabel);
+    return { min: converted.min, max: converted.max };
 }
 
 function averageArray(
@@ -2181,13 +2257,14 @@ function renderMapInfoBody(): string {
     }
 
     if (state.mapInfoLoading) {
+        const { unit } = getActiveMapVariable();
         const progressText =
             state.mapInfoLoadingProgress.total > 0
                 ? `${state.mapInfoLoadingProgress.done}/${state.mapInfoLoadingProgress.total} datasets loaded`
                 : "Preparing datasets";
         const preview =
             state.mapInfoBoxes && state.mapInfoBoxes.length
-                ? renderMiniChartSvg(state.mapInfoBoxes, state.selectedUnit)
+                ? renderMiniChartSvg(state.mapInfoBoxes, unit)
                 : `<div style="${styleAttr(
                       styles.chartEmpty,
                   )}">Loading boxplots...</div>`;
@@ -2212,7 +2289,7 @@ function renderMapInfoBody(): string {
         )}">Click a location to load boxplots.</div>`;
     }
 
-    return renderMiniChartSvg(state.mapInfoBoxes, state.selectedUnit);
+    return renderMiniChartSvg(state.mapInfoBoxes, getActiveMapVariable().unit);
 }
 
 function renderMapInfoWindow() {
@@ -2227,9 +2304,10 @@ function renderMapInfoWindow() {
           : marker
             ? `Pixel ${marker.pixel.x}, ${marker.pixel.y}`
             : "Selected location";
-    const variableLabel = getVariableLabel(state.variable, state.metaData);
+    const { variable, unit } = getActiveMapVariable();
+    const variableLabel = getVariableLabel(variable, state.metaData);
     const title = `${locationLabel} · ${variableLabel}`;
-    const subtitle = `${formatDisplayDate(state.date)} · ${state.selectedUnit}`;
+    const subtitle = `${formatDisplayDate(state.date)} · ${unit}`;
     return `
       <div id="map-info-panel" class="custom-select-info-panel map-info-panel" style="${styleAttr(
           styles.mapInfoPanel,
@@ -2670,10 +2748,8 @@ function updateMapMarkerNameOnly(placeName: string) {
             ".custom-select-info-panel-title",
         );
         if (titleElement) {
-            const variableLabel = getVariableLabel(
-                state.variable,
-                state.metaData,
-            );
+            const { variable } = getActiveMapVariable();
+            const variableLabel = getVariableLabel(variable, state.metaData);
             const locationLabel = placeName;
             const title = `${locationLabel} · ${variableLabel}`;
             titleElement.textContent = title;
@@ -2765,10 +2841,11 @@ function closeMapInfoWindow() {
 function updateMapInfoPreview(samples: ChartSample[]) {
     state.mapInfoSamples = samples;
     try {
+        const { variable, unit } = getActiveMapVariable();
         state.mapInfoBoxes = buildChartBoxes(
             samples,
-            state.variable,
-            state.selectedUnit,
+            variable,
+            unit,
         );
     } catch {
         return;
@@ -2980,6 +3057,7 @@ async function loadMapRangeData() {
 
 async function loadMapInfoData() {
     if (state.canvasView !== "map") return;
+    const { variable: mapVariable } = getActiveMapVariable();
     // Check if we have either a marker (point) or a polygon
     const hasPoint = state.mapMarker !== null;
     const hasPolygon =
@@ -3057,7 +3135,7 @@ async function loadMapInfoData() {
 
                 const pixelPromises = modelOptions.map((model) =>
                     fetchPixelData({
-                        variable: state.variable,
+                        variable: mapVariable,
                         model,
                         x0: x,
                         x1: x,
@@ -3074,7 +3152,7 @@ async function loadMapInfoData() {
                             error,
                         );
                         const request = createDataRequest({
-                            variable: state.variable,
+                            variable: mapVariable,
                             date: dateForScenario,
                             model,
                             scenario,
@@ -3089,7 +3167,7 @@ async function loadMapInfoData() {
                             }
                             const avg = valueAtPoint(
                                 arr,
-                                state.variable,
+                                mapVariable,
                                 data.shape,
                                 {
                                     lat: state.mapMarker!.lat,
@@ -3130,8 +3208,8 @@ async function loadMapInfoData() {
                             const pixelData = data as any;
                             const value = pixelData.values[0];
                             if (value !== null && isFinite(value)) {
-                                const rawValue =
-                                    state.variable === "hurs"
+                            const rawValue =
+                                mapVariable === "hurs"
                                         ? Math.min(value, 100)
                                         : value;
                                 samples.push({
@@ -3169,7 +3247,7 @@ async function loadMapInfoData() {
 
                 try {
                     const aggregateData = await fetchAggregateOnDemand({
-                        variable: state.variable,
+                        variable: mapVariable,
                         models: modelOptions,
                         x0,
                         x1,
@@ -3188,8 +3266,8 @@ async function loadMapInfoData() {
                         if (modelData) {
                             const value = modelData.values[0];
                             if (value !== null && isFinite(value)) {
-                                const rawValue =
-                                    state.variable === "hurs"
+                            const rawValue =
+                                mapVariable === "hurs"
                                         ? Math.min(value, 100)
                                         : value;
                                 samples.push({
@@ -3218,7 +3296,7 @@ async function loadMapInfoData() {
                     for (const model of modelOptions) {
                         if (requestId !== mapInfoRequestId) return;
                         const request = createDataRequest({
-                            variable: state.variable,
+                            variable: mapVariable,
                             date: dateForScenario,
                             model,
                             scenario,
@@ -3230,7 +3308,7 @@ async function loadMapInfoData() {
                             if (arr) {
                                 const avg = averageArrayInPolygon(
                                     arr,
-                                    state.variable,
+                                    mapVariable,
                                     data.shape,
                                     state.mapPolygon,
                                 );
@@ -4068,8 +4146,10 @@ async function loadEnsembleData(
 
     // Create arrays for all needed statistics
     const statsArrays = new Map<EnsembleStatistic, Float32Array>();
+    const statsRanges = new Map<EnsembleStatistic, { min: number; max: number }>();
     for (const stat of neededStats) {
         statsArrays.set(stat, new Float32Array(length));
+        statsRanges.set(stat, { min: Infinity, max: -Infinity });
     }
 
     // Compute statistics pixel by pixel
@@ -4137,6 +4217,11 @@ async function loadEnsembleData(
             }
 
             statsArrays.get(stat)![i] = result;
+            if (isFinite(result)) {
+                const range = statsRanges.get(stat)!;
+                range.min = Math.min(range.min, result);
+                range.max = Math.max(range.max, result);
+            }
         }
 
         // Use the displayed statistic for resultArray
@@ -4153,6 +4238,21 @@ async function loadEnsembleData(
 
     // Store all computed statistics in state
     state.ensembleStatistics = statsArrays;
+    state.ensembleStatisticRanges = statsRanges;
+
+    // Sync unedited ensemble mask bounds to newly computed ranges
+    if (state.masks.length > 0) {
+        for (const mask of state.masks) {
+            if (!mask.statistic) continue;
+            const range = getEnsembleMaskRange(mask.statistic);
+            if (!mask.lowerEdited) {
+                mask.lowerBound = range.min;
+            }
+            if (!mask.upperEdited) {
+                mask.upperBound = range.max;
+            }
+        }
+    }
 
     if (!isFinite(min) || !isFinite(max)) {
         throw new Error(
@@ -5540,6 +5640,7 @@ async function loadClimateData() {
 
             // Load data for each mask variable
             state.maskVariableData.clear();
+            state.maskVariableRanges.clear();
             for (const maskVar of maskVariables) {
                 try {
                     const maskRequest = createDataRequest({
@@ -5551,20 +5652,23 @@ async function loadClimateData() {
                     });
 
                     const maskData = await fetchClimateData(maskRequest);
+                    let maskArrayData = dataToArray(maskData);
 
                     // Cap relative humidity to 100% if needed
                     if (maskVar === "hurs") {
-                        const arrayData = dataToArray(maskData);
-                        if (arrayData) {
-                            const clamped = new Float32Array(arrayData.length);
-                            for (let i = 0; i < arrayData.length; i++) {
-                                const val = arrayData[i];
+                        if (maskArrayData) {
+                            const clamped = new Float32Array(
+                                maskArrayData.length,
+                            );
+                            for (let i = 0; i < maskArrayData.length; i++) {
+                                const val = maskArrayData[i];
                                 if (!isFinite(val)) {
                                     clamped[i] = NaN;
                                 } else {
                                     clamped[i] = Math.min(val, 100);
                                 }
                             }
+                            maskArrayData = clamped;
                             state.maskVariableData.set(maskVar, {
                                 ...maskData,
                                 data: clamped,
@@ -5575,6 +5679,11 @@ async function loadClimateData() {
                         }
                     } else {
                         state.maskVariableData.set(maskVar, maskData);
+                    }
+
+                    if (maskArrayData) {
+                        const { min, max } = calculateMinMax(maskArrayData);
+                        state.maskVariableRanges.set(maskVar, { min, max });
                     }
                 } catch (error) {
                     console.warn(
@@ -6990,8 +7099,35 @@ function renderManualSection(params: {
                           gap: 8,
                       })}">
                         ${state.masks
-                            .map(
-                                (mask, index) => `
+                            .map((mask, index) => {
+                                const maskVar =
+                                    mask.variable || state.variable;
+                                const maskUnit =
+                                    mask.unit ||
+                                    getDefaultUnitOption(maskVar).label;
+                                const maskRange =
+                                    state.mode === "Explore"
+                                        ? getMaskRangeFor(maskVar, maskUnit)
+                                        : null;
+                                const ensembleRange =
+                                    state.mode === "Ensemble"
+                                        ? getEnsembleMaskRange(
+                                              mask.statistic || "mean",
+                                          )
+                                        : null;
+                                const lowerPlaceholder =
+                                    ensembleRange?.min ??
+                                    maskRange?.min ??
+                                    (maskVar === state.variable
+                                        ? state.dataMin
+                                        : null);
+                                const upperPlaceholder =
+                                    ensembleRange?.max ??
+                                    maskRange?.max ??
+                                    (maskVar === state.variable
+                                        ? state.dataMax
+                                        : null);
+                                return `
                           ${
                               state.mode === "Ensemble"
                                   ? `
@@ -7091,7 +7227,7 @@ function renderManualSection(params: {
                               data-action="update-mask-bound"
                               data-mask-index="${index}"
                               data-bound="lower"
-                              placeholder="${state.dataMin !== null ? state.dataMin.toFixed(2) : ""}"
+                              placeholder="${formatMaskLimit(lowerPlaceholder)}"
                               style="${styleAttr({
                                   width: "90px",
                                   background: "var(--gradient-bg)",
@@ -7120,7 +7256,7 @@ function renderManualSection(params: {
                               data-action="update-mask-bound"
                               data-mask-index="${index}"
                               data-bound="upper"
-                              placeholder="${state.dataMax !== null ? state.dataMax.toFixed(2) : ""}"
+                              placeholder="${formatMaskLimit(upperPlaceholder)}"
                               style="${styleAttr({
                                   width: "90px",
                                   background: "var(--gradient-bg)",
@@ -7163,8 +7299,8 @@ function renderManualSection(params: {
                               −
                             </button>
                           </div>
-                        `,
-                            )
+                        `;
+                            })
                             .join("")}
                         <button
                           type="button"
@@ -7485,8 +7621,38 @@ function renderManualSection(params: {
                               gap: 8,
                           })}">
                             ${state.masks
-                                .map(
-                                    (mask, index) => `
+                                .map((mask, index) => {
+                                    const maskVar =
+                                        mask.variable || state.variable;
+                                    const maskUnit =
+                                        mask.unit ||
+                                        getDefaultUnitOption(maskVar).label;
+                                    const maskRange =
+                                        state.mode === "Explore"
+                                            ? getMaskRangeFor(
+                                                  maskVar,
+                                                  maskUnit,
+                                              )
+                                            : null;
+                                    const ensembleRange =
+                                        state.mode === "Ensemble"
+                                            ? getEnsembleMaskRange(
+                                                  mask.statistic || "mean",
+                                              )
+                                            : null;
+                                    const lowerPlaceholder =
+                                        ensembleRange?.min ??
+                                        maskRange?.min ??
+                                        (maskVar === state.variable
+                                            ? state.dataMin
+                                            : null);
+                                    const upperPlaceholder =
+                                        ensembleRange?.max ??
+                                        maskRange?.max ??
+                                        (maskVar === state.variable
+                                            ? state.dataMax
+                                            : null);
+                                    return `
                               <div style="${styleAttr({
                                   display: "flex",
                                   alignItems: "center",
@@ -7578,7 +7744,7 @@ function renderManualSection(params: {
                                   data-action="update-mask-bound"
                                   data-mask-index="${index}"
                                   data-bound="lower"
-                                  placeholder="${state.dataMin !== null ? state.dataMin.toFixed(2) : ""}"
+                                  placeholder="${formatMaskLimit(lowerPlaceholder)}"
                                   style="${styleAttr({
                                       width: "90px",
                                       background: "var(--gradient-bg)",
@@ -7608,7 +7774,7 @@ function renderManualSection(params: {
                                   data-action="update-mask-bound"
                                   data-mask-index="${index}"
                                   data-bound="upper"
-                                  placeholder="${state.dataMax !== null ? state.dataMax.toFixed(2) : ""}"
+                                  placeholder="${formatMaskLimit(upperPlaceholder)}"
                                   style="${styleAttr({
                                       width: "90px",
                                       background: "var(--gradient-bg)",
@@ -7652,8 +7818,8 @@ function renderManualSection(params: {
                                   −
                                 </button>
                               </div>
-                            `,
-                                )
+                            `;
+                                })
                                 .join("")}
                             <button
                               type="button"
@@ -7917,8 +8083,35 @@ function renderManualSection(params: {
                           gap: 8,
                       })}">
                         ${state.masks
-                            .map(
-                                (mask, index) => `
+                            .map((mask, index) => {
+                                const maskVar =
+                                    mask.variable || state.variable;
+                                const maskUnit =
+                                    mask.unit ||
+                                    getDefaultUnitOption(maskVar).label;
+                                const maskRange =
+                                    state.mode === "Explore"
+                                        ? getMaskRangeFor(maskVar, maskUnit)
+                                        : null;
+                                const ensembleRange =
+                                    state.mode === "Ensemble"
+                                        ? getEnsembleMaskRange(
+                                              mask.statistic || "mean",
+                                          )
+                                        : null;
+                                const lowerPlaceholder =
+                                    ensembleRange?.min ??
+                                    maskRange?.min ??
+                                    (maskVar === state.variable
+                                        ? state.dataMin
+                                        : null);
+                                const upperPlaceholder =
+                                    ensembleRange?.max ??
+                                    maskRange?.max ??
+                                    (maskVar === state.variable
+                                        ? state.dataMax
+                                        : null);
+                                return `
                           ${
                               state.mode === "Ensemble"
                                   ? `
@@ -8018,7 +8211,7 @@ function renderManualSection(params: {
                               data-action="update-mask-bound"
                               data-mask-index="${index}"
                               data-bound="lower"
-                              placeholder="${state.dataMin !== null ? state.dataMin.toFixed(2) : ""}"
+                              placeholder="${formatMaskLimit(lowerPlaceholder)}"
                               style="${styleAttr({
                                   width: "90px",
                                   background: "var(--gradient-bg)",
@@ -8047,7 +8240,7 @@ function renderManualSection(params: {
                               data-action="update-mask-bound"
                               data-mask-index="${index}"
                               data-bound="upper"
-                              placeholder="${state.dataMax !== null ? state.dataMax.toFixed(2) : ""}"
+                              placeholder="${formatMaskLimit(upperPlaceholder)}"
                               style="${styleAttr({
                                   width: "90px",
                                   background: "var(--gradient-bg)",
@@ -8090,8 +8283,8 @@ function renderManualSection(params: {
                               −
                             </button>
                           </div>
-                        `,
-                            )
+                        `;
+                            })
                             .join("")}
                         <button
                           type="button"
@@ -9505,10 +9698,11 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                 if (state.mapMarker) {
                     if (state.mapInfoOpen) {
                         if (state.mapInfoSamples.length) {
+                            const { variable, unit } = getActiveMapVariable();
                             state.mapInfoBoxes = buildChartBoxes(
                                 state.mapInfoSamples,
-                                state.variable,
-                                state.selectedUnit,
+                                variable,
+                                unit,
                             );
                             render();
                         } else if (!state.mapInfoLoading) {
@@ -9684,6 +9878,19 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                         );
                     }
                 }
+                if (state.mapMarker && state.mapInfoOpen) {
+                    if (state.mapInfoSamples.length) {
+                        const { variable, unit } = getActiveMapVariable();
+                        state.mapInfoBoxes = buildChartBoxes(
+                            state.mapInfoSamples,
+                            variable,
+                            unit,
+                        );
+                        render();
+                    } else if (!state.mapInfoLoading) {
+                        void loadMapInfoData();
+                    }
+                }
                 if (state.mapRangeOpen) {
                     if (state.mapRangeSamples.length) {
                         const { variable, unit } = getMapRangeVariable();
@@ -9711,7 +9918,16 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                         index >= 0 &&
                         index < state.masks.length
                     ) {
-                        state.masks[index].statistic = val as EnsembleStatistic;
+                        const stat = val as EnsembleStatistic;
+                        const mask = state.masks[index];
+                        mask.statistic = stat;
+                        if (state.mode === "Ensemble") {
+                            const range = getEnsembleMaskRange(stat);
+                            mask.lowerBound = range.min;
+                            mask.upperBound = range.max;
+                            mask.lowerEdited = false;
+                            mask.upperEdited = false;
+                        }
                         render();
                         // Don't reload map automatically - user will click Apply button
                     }
@@ -10527,6 +10743,18 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
     addMaskBtns.forEach((btn) => {
         btn.addEventListener("click", () => {
             // Initialize new mask with current data min/max
+            let lowerBound = state.dataMin;
+            let upperBound = state.dataMax;
+            if (state.mode === "Explore") {
+                const range = getMaskRangeFor(
+                    state.variable,
+                    state.selectedUnit,
+                );
+                if (range) {
+                    lowerBound = range.min;
+                    upperBound = range.max;
+                }
+            }
             const newMask: {
                 lowerBound: number | null;
                 upperBound: number | null;
@@ -10536,8 +10764,8 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                 variable?: string;
                 unit?: string;
             } = {
-                lowerBound: state.dataMin,
-                upperBound: state.dataMax,
+                lowerBound,
+                upperBound,
                 lowerEdited: false,
                 upperEdited: false,
             };
@@ -10640,9 +10868,12 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             state.chartLocationName = state.mapMarker.name ?? null;
             state.chartPolygon = null;
         }
-        state.chartVariable = state.variable;
-        state.chartUnit = state.selectedUnit;
-        state.chartDate = state.date;
+        // Use the active variable/unit based on current mode (ensemble vs explore)
+        const { variable, unit } = getActiveMapVariable();
+        state.chartVariable = variable;
+        state.chartUnit = unit;
+        // Use the appropriate date based on mode
+        state.chartDate = state.mode === "Ensemble" ? state.ensembleDate : state.date;
         state.chartError = null;
         render();
         loadChartData();

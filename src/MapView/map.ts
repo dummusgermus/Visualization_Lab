@@ -423,6 +423,7 @@ function runRenderMapData(
     if (!setup) return;
     const { ctx, rect, viewWidth, viewHeight } = setup;
     const [height, width] = data.shape;
+    const expectedLen = width * height;
 
     ctx.clearRect(0, 0, rect.width, rect.height);
 
@@ -496,6 +497,32 @@ function runRenderMapData(
     // NEX-GDDP-CMIP6 dataset: latitude range is -60°S to 90°N (150° total, not 180°)
     const latStep = 150 / height;
 
+    const maskVariableArrays = new Map<string, Float32Array | Float64Array>();
+    if (!isEnsembleMode && masks && masks.length > 0 && maskVariableData) {
+        const uniqueMaskVars = new Set<string>();
+        for (const mask of masks) {
+            if (mask.variable && mask.variable !== variable) {
+                uniqueMaskVars.add(mask.variable);
+            }
+        }
+
+        uniqueMaskVars.forEach((maskVar) => {
+            const cachedVarData = maskVariableData.get(maskVar);
+            if (!cachedVarData) return;
+            try {
+                const varArrayData = dataToArray(cachedVarData);
+                if (varArrayData && varArrayData.length === expectedLen) {
+                    maskVariableArrays.set(maskVar, varArrayData);
+                }
+            } catch (err) {
+                console.warn(
+                    `Failed to decode mask data for variable ${maskVar}:`,
+                    err,
+                );
+            }
+        });
+    }
+
     // Render each data point with lat/lon projection
     for (let y = 0; y < height; y++) {
         for (let x = 0; x < width; x++) {
@@ -525,8 +552,10 @@ function runRenderMapData(
                     // Ensemble mode: intersection logic - must pass ALL masks
                     passesMask = true;
                     for (const mask of masks) {
-                        const lowerUnrestricted = !mask.lowerEdited;
-                        const upperUnrestricted = !mask.upperEdited;
+                        const lowerUnrestricted =
+                            !mask.lowerEdited || mask.lowerBound === null;
+                        const upperUnrestricted =
+                            !mask.upperEdited || mask.upperBound === null;
                         
                         // Get the statistic value for this mask
                         const maskStat = mask.statistic || "mean";
@@ -593,29 +622,16 @@ function runRenderMapData(
                         let passesThisVariable = false;
                         
                         // Get data for this variable
-                        let varData: Float32Array | Float64Array | null = null;
                         let varRawValue: number;
                         
                         if (maskVar === variable) {
                             // Use current data - get raw value before unit conversion
                             varRawValue = value; // 'value' is the raw value before unit conversion
-                        } else if (maskVariableData && maskVariableData.has(maskVar)) {
-                            // Get data from cache
-                            const cachedVarData = maskVariableData.get(maskVar)!;
-                            const varArrayData = dataToArray(cachedVarData);
-                            const expectedLen = width * height;
-                            if (
-                                varArrayData &&
-                                varArrayData.length === expectedLen
-                            ) {
-                                varData = varArrayData;
-                                const varIdx = (height - 1 - y) * width + x;
-                                varRawValue = varData[varIdx];
-                                if (!isFinite(varRawValue)) {
-                                    passesMask = false;
-                                    break;
-                                }
-                            } else {
+                        } else if (maskVariableArrays.has(maskVar)) {
+                            const varData = maskVariableArrays.get(maskVar)!;
+                            const varIdx = (height - 1 - y) * width + x;
+                            varRawValue = varData[varIdx];
+                            if (!isFinite(varRawValue)) {
                                 passesMask = false;
                                 break;
                             }

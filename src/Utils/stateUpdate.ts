@@ -61,10 +61,10 @@ export function updateState(
         updates.compareMode = newState.compareMode;
     }
     if (newState.scenario1) {
-        updates.compareScenarioA = newState.scenario1;
+        updates.compareScenarioA = normalizeScenarioLabel(newState.scenario1);
     }
     if (newState.scenario2) {
-        updates.compareScenarioB = newState.scenario2;
+        updates.compareScenarioB = normalizeScenarioLabel(newState.scenario2);
     }
     if (newState.model1) {
         updates.compareModelA = newState.model1;
@@ -121,7 +121,9 @@ export function updateState(
     }
     if (newState.mode === "Ensemble") {
         if (newState.selectedScenarios) {
-            updates.ensembleScenarios = newState.selectedScenarios;
+            updates.ensembleScenarios = newState.selectedScenarios.map(
+                normalizeScenarioLabel,
+            );
         }
         if (newState.selectedModels) {
             updates.ensembleModels = newState.selectedModels;

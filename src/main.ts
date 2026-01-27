@@ -483,6 +483,8 @@ const styles: Record<string, Style> = {
         alignItems: "flex-start",
         justifyContent: "space-between",
         gap: 8,
+        cursor: "grab",
+        touchAction: "none",
     },
     mapInfoTitleGroup: {
         display: "flex",
@@ -1351,6 +1353,18 @@ let mapInfoRequestId = 0;
 let mapInfoDelayTimer: number | null = null;
 let mapRangeRequestId = 0;
 let mapRangeDelayTimer: number | null = null;
+let mapInfoDragPosition: { left: number; top: number } | null = null;
+let mapInfoDragState: {
+    active: boolean;
+    pointerId: number | null;
+    offsetX: number;
+    offsetY: number;
+} = {
+    active: false,
+    pointerId: null,
+    offsetX: 0,
+    offsetY: 0,
+};
 const LOCATION_SEARCH_DEBOUNCE_MS = 500;
 
 function toKebab(input: string) {
@@ -2083,11 +2097,19 @@ function renderMapMarkerPosition() {
         const panelWidth = infoPanel.offsetWidth || 360;
         const panelHeight = infoPanel.offsetHeight || 240;
         const padding = 12;
+        const sidebarOffset = state.sidebarOpen ? SIDEBAR_WIDTH : 0;
+        const offsetParent = infoPanel.offsetParent as HTMLElement | null;
+        const parentRect = offsetParent?.getBoundingClientRect();
+        const originLeft = parentRect ? rect.left - parentRect.left : 0;
+        const originTop = parentRect ? rect.top - parentRect.top : 0;
 
         let left: number;
         let top: number;
 
-        if (state.mapMarker) {
+        if (mapInfoDragPosition) {
+            left = mapInfoDragPosition.left;
+            top = mapInfoDragPosition.top;
+        } else if (state.mapMarker) {
             // Position relative to marker
             const projected = projectLonLatToCanvas(
                 canvas,
@@ -2101,11 +2123,11 @@ function renderMapMarkerPosition() {
                 infoPanel.style.visibility = "hidden";
                 return;
             }
-            left = projected.x - panelWidth - 24;
+            left = originLeft + projected.x - panelWidth - 24;
             if (left < padding) {
-                left = projected.x + 24;
+                left = originLeft + projected.x + 24;
             }
-            top = projected.y - panelHeight / 2;
+            top = originTop + projected.y - panelHeight / 2;
         } else if (hasPolygon && state.mapPolygon) {
             // Find leftmost point and position window to the left of it
             let leftmostPoint = state.mapPolygon[0];
@@ -2121,15 +2143,15 @@ function renderMapMarkerPosition() {
                 leftmostPoint.lat,
             );
             if (leftmostProjected) {
-                left = leftmostProjected.x - panelWidth - 24;
+                left = originLeft + leftmostProjected.x - panelWidth - 24;
                 if (left < padding) {
-                    left = leftmostProjected.x + 24;
+                    left = originLeft + leftmostProjected.x + 24;
                 }
-                top = leftmostProjected.y - panelHeight / 2;
+                top = originTop + leftmostProjected.y - panelHeight / 2;
             } else {
                 // Fallback to center-right if projection fails
-                left = rect.width - panelWidth - padding - 24;
-                top = rect.height / 2 - panelHeight / 2;
+                left = originLeft + rect.width - panelWidth - padding - 24;
+                top = originTop + rect.height / 2 - panelHeight / 2;
             }
         } else {
             // Hide if neither marker nor polygon
@@ -2140,31 +2162,35 @@ function renderMapMarkerPosition() {
             return;
         }
 
-        left = Math.max(
-            padding,
-            Math.min(left, rect.width - panelWidth - padding),
-        );
-        top = Math.max(
-            padding,
-            Math.min(top, rect.height - panelHeight - padding),
-        );
+        const minLeft = originLeft + padding;
+        const maxLeft =
+            originLeft + rect.width - panelWidth - padding - sidebarOffset;
+        const minTop = originTop + padding;
+        const maxTop = originTop + rect.height - panelHeight - padding;
+        left = Math.max(minLeft, Math.min(left, maxLeft));
+        top = Math.max(minTop, Math.min(top, maxTop));
+        if (mapInfoDragPosition) {
+            mapInfoDragPosition = { left, top };
+        }
 
         // Only update position if it hasn't been set yet (to prevent glitching during data updates)
         const currentLeft = infoPanel.style.left;
         const currentTop = infoPanel.style.top;
-        if (
+        const shouldUpdatePosition =
+            mapInfoDragPosition !== null ||
+            mapInfoDragState.active ||
             !currentLeft ||
             currentLeft === "0px" ||
             !currentTop ||
-            currentTop === "0px"
-        ) {
+            currentTop === "0px";
+        if (shouldUpdatePosition) {
             infoPanel.style.left = `${left}px`;
             infoPanel.style.top = `${top}px`;
         }
 
         infoPanel.style.opacity = "1";
         infoPanel.style.transform = "translate(0, 0)";
-        infoPanel.style.pointerEvents = "none";
+        infoPanel.style.pointerEvents = "auto";
         infoPanel.style.visibility = "visible";
     } else if (infoPanel && !state.mapInfoOpen) {
         // Hide if not open
@@ -2312,7 +2338,9 @@ function renderMapInfoWindow() {
       <div id="map-info-panel" class="custom-select-info-panel map-info-panel" style="${styleAttr(
           styles.mapInfoPanel,
       )}">
-        <div style="${styleAttr(styles.mapInfoHeader)}">
+        <div class="map-info-header" style="${styleAttr(
+            styles.mapInfoHeader,
+        )}">
           <div style="${styleAttr(styles.mapInfoTitleGroup)}">
             <div class="custom-select-info-panel-title">${escapeHtml(
                 title,
@@ -10878,6 +10906,113 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         render();
         loadChartData();
     });
+
+    const mapInfoPanel = root.querySelector<HTMLDivElement>("#map-info-panel");
+    const mapInfoHeader = mapInfoPanel?.querySelector<HTMLElement>(
+        ".map-info-header",
+    );
+    if (mapInfoPanel && mapInfoHeader) {
+        mapInfoPanel.addEventListener("pointerdown", (e) => {
+            e.stopPropagation();
+        });
+
+        const onDragMove = (e: PointerEvent) => {
+            if (!mapInfoDragState.active) return;
+            if (
+                mapInfoDragState.pointerId !== null &&
+                e.pointerId !== mapInfoDragState.pointerId
+            ) {
+                return;
+            }
+            e.preventDefault();
+
+            const parent = mapInfoPanel.offsetParent as HTMLElement | null;
+            const parentRect = parent?.getBoundingClientRect();
+            const parentLeft = parentRect?.left ?? 0;
+            const parentTop = parentRect?.top ?? 0;
+            const canvasRect =
+                mapCanvas?.getBoundingClientRect() ??
+                parentRect ??
+                mapInfoPanel.getBoundingClientRect();
+            const originLeft = parentRect
+                ? canvasRect.left - parentRect.left
+                : 0;
+            const originTop = parentRect ? canvasRect.top - parentRect.top : 0;
+            const panelRect = mapInfoPanel.getBoundingClientRect();
+            const panelWidth = panelRect.width || mapInfoPanel.offsetWidth || 360;
+            const panelHeight =
+                panelRect.height || mapInfoPanel.offsetHeight || 240;
+            const padding = 12;
+            const sidebarOffset = state.sidebarOpen ? SIDEBAR_WIDTH : 0;
+
+            let left =
+                e.clientX - parentLeft - mapInfoDragState.offsetX;
+            let top = e.clientY - parentTop - mapInfoDragState.offsetY;
+
+            const minLeft = originLeft + padding;
+            const maxLeft =
+                originLeft +
+                canvasRect.width -
+                panelWidth -
+                padding -
+                sidebarOffset;
+            const minTop = originTop + padding;
+            const maxTop = originTop + canvasRect.height - panelHeight - padding;
+
+            if (maxLeft < minLeft) {
+                left = minLeft;
+            } else {
+                left = Math.max(minLeft, Math.min(left, maxLeft));
+            }
+
+            if (maxTop < minTop) {
+                top = minTop;
+            } else {
+                top = Math.max(minTop, Math.min(top, maxTop));
+            }
+
+            mapInfoPanel.style.left = `${left}px`;
+            mapInfoPanel.style.top = `${top}px`;
+            mapInfoDragPosition = { left, top };
+        };
+
+        const onDragEnd = (e: PointerEvent) => {
+            if (!mapInfoDragState.active) return;
+            if (
+                mapInfoDragState.pointerId !== null &&
+                e.pointerId !== mapInfoDragState.pointerId
+            ) {
+                return;
+            }
+            mapInfoDragState.active = false;
+            mapInfoDragState.pointerId = null;
+            mapInfoHeader.style.cursor = "grab";
+            mapInfoPanel.classList.remove("is-dragging");
+            mapInfoPanel.releasePointerCapture?.(e.pointerId);
+            document.body.style.userSelect = "";
+            window.removeEventListener("pointermove", onDragMove);
+            window.removeEventListener("pointerup", onDragEnd);
+        };
+
+        mapInfoHeader.addEventListener("pointerdown", (e) => {
+            if (e.button !== 0) return;
+            const target = e.target as HTMLElement | null;
+            if (target?.closest("button")) return;
+            e.preventDefault();
+            e.stopPropagation();
+            const panelRect = mapInfoPanel.getBoundingClientRect();
+            mapInfoDragState.active = true;
+            mapInfoDragState.pointerId = e.pointerId;
+            mapInfoDragState.offsetX = e.clientX - panelRect.left;
+            mapInfoDragState.offsetY = e.clientY - panelRect.top;
+            mapInfoHeader.style.cursor = "grabbing";
+            mapInfoPanel.classList.add("is-dragging");
+            mapInfoPanel.setPointerCapture?.(e.pointerId);
+            document.body.style.userSelect = "none";
+            window.addEventListener("pointermove", onDragMove);
+            window.addEventListener("pointerup", onDragEnd);
+        });
+    }
 
     const mapDrawToggleBtn = root.querySelector<HTMLButtonElement>(
         '[data-action="toggle-map-draw"]',

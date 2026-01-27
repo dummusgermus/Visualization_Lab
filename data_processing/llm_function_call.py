@@ -347,10 +347,8 @@ def get_llm_client():
     global _llm_client
     if _llm_client is None:
         # Always use Ollama
-        # base_url = os.environ.get("OLLAMA_URL", "http://ollama.warhol.informatik.rwth-aachen.de")
-        # model = os.environ.get("OLLAMA_MODEL", "llama3.3:70b")
-        base_url = os.environ.get("OLLAMA_URL", "http://192.168.159.85:11434")
-        model = os.environ.get("OLLAMA_MODEL", "glm-4.7-flash")
+        base_url = os.environ.get("OLLAMA_URL", "http://ollama.warhol.informatik.rwth-aachen.de")
+        model = os.environ.get("OLLAMA_MODEL", "llama3.3:70b")
         _llm_client = OllamaClient(base_url=base_url, model=model)
         print(f"Using Ollama at {base_url} with model {model}")
 

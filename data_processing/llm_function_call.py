@@ -182,6 +182,7 @@ def _build_system_prompt(context: Optional[dict] = None) -> str:
         "Use exactly ONE view switch tool per request:",
         "- If a specific LOCATION is mentioned -> switch_to_chart_view",
         "- If a TIME RANGE is requested (from X to Y) -> switch_to_chart_view(chart_mode='range')",
+        "- If multiple models or scenarios are requested in the map view (e.g., 'all models', 'all scenarios', 'average of models') or the user wants to compare statistics between any of these -> switch_to_ensemble_mode",
         "- If multiple models or scenarios are requested (e.g., 'compare all scenarios', 'average of models') -> switch_to_chart_view",
         "- If comparing exactly TWO scenarios/models/dates side-by-side on the MAP -> switch_to_compare_mode",
         "- If a SINGLE model/scenario/date is requested (no location) -> switch_to_explore_mode",
@@ -342,7 +343,7 @@ def get_llm_client():
     if _llm_client is None:
         # Always use Ollama
         base_url = os.environ.get("OLLAMA_URL", "http://ollama.warhol.informatik.rwth-aachen.de")
-        model = os.environ.get("OLLAMA_MODEL", "gpt-oss:120b")
+        model = os.environ.get("OLLAMA_MODEL", "llama3.3:70b")
         _llm_client = OllamaClient(base_url=base_url, model=model)
         print(f"Using Ollama at {base_url} with model {model}")
 
@@ -360,6 +361,7 @@ def process_chat_message(
 
 def _get_state_control_functions(context: Optional[dict] = None) -> List[dict]:
     current_variable = context.get("variable") if context else None
+    current_state = context if context else None
     """Define available functions for state manipulation."""
     return [
         {
@@ -495,26 +497,42 @@ def _get_state_control_functions(context: Optional[dict] = None) -> List[dict]:
             "type": "function",
             "function": {
                 "name": "switch_to_ensemble_mode",
-                "description": "Switch to ensemble mode to view a SINGLE model/scenario/date combination on the MAP. Whenever possible use this view. DO NOT use if location is mentioned. IMPORTANT: When date is 2015 or later, scenario MUST be ssp245/ssp370/ssp585. When date is before 2015, scenario MUST be historical. Date format is YYYY-MM-DD (e.g., 2020-01-01 NOT 20-20-01).",
+                "description": "Switch to ensemble mode to view  a combination of MULTIPLE models and/or scenarios on the MAP. Use this to see aggregated statistics (mean/median/min/max/std) across models and/or scenarios.",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "model": {
-                            "type": "string",
-                            "enum": config.VALID_MODELS,
-                            "description": "The model to use"
+                        "models": {
+                            "type": "array",
+                            "items": {
+                                "type": "string",
+                                "enum": config.VALID_MODELS
+                            },
+                            "description": "The models to use"
                         },
-                        "scenario": {
+                        "scenarios": {
+                            "type": "array",
+                            "items": {
+                                "type": "string",
+                                "enum": list(config.SCENARIO_METADATA.keys())
+                            },
+                            "description": "The scenarios to use"
+                        },
+                        "unit": {
                             "type": "string",
-                            "enum": list(config.SCENARIO_METADATA.keys()),
-                            "description": "The scenario to use"
+                            "enum": config.VARIABLE_UNIT_MAP.get(current_variable, []),
+                            "description": "The unit of measurement for the variable"
                         },
                         "date": {
                             "type": "string",
                             "description": "Date in YYYY-MM-DD format. Examples: 2020-01-01 (year 2020), 2050-01-01 (year 2050), 1995-01-01 (year 1995). ALWAYS use 4-digit year, 2-digit month, 2-digit day with hyphens. Year 2015+ requires ssp245/ssp370/ssp585 scenario, before 2015 requires historical scenario."
                         },
-                       
+                        "variable": {
+                            "type": "string",
+                            "enum": list(config.VARIABLE_METADATA.keys()),
+                            "description": "The climate variable to display"
+                        }
                     },
+                    "required": ["models", "scenarios", "date", "variable", "unit"]
                 }
             }
         },
@@ -531,6 +549,10 @@ def _get_state_control_functions(context: Optional[dict] = None) -> List[dict]:
                             "items": {
                                 "type": "object",
                                 "properties": {
+                                    "id": {
+                                        "type": "number",
+                                        "description": "Unique identifier for the mask. Use a corresponding ID from the context if you're updating an existing mask, otherwise assign a new unique ID."
+                                    },
                                     "lowerBound": {
                                         "type": ["number", "null"],
                                         "description": "The lower bound value for the mask filter. Use null for no lower bound."
@@ -539,21 +561,39 @@ def _get_state_control_functions(context: Optional[dict] = None) -> List[dict]:
                                         "type": ["number", "null"],
                                         "description": "The upper bound value for the mask filter. Use null for no upper bound."
                                     },
-                                    "statistic": {
-                                        "type": "string",
-                                        "description": "The ensemble statistic type for this mask (only used in ensemble mode). Examples: mean, median, min, max, std."
-                                    },
-                                    "variable": {
-                                        "type": "string",
-                                        "enum": list(config.VARIABLE_METADATA.keys()),
-                                        "description": "The climate variable this mask applies to."
-                                    },
+                                    **(
+                                        {
+                                            "statistic": {
+                                                "type": "string",
+                                                "description": "The ensemble statistic type for this mask (ONLY used in ensemble mode). Examples: mean, median, min, max, std.",
+                                            }
+                                        }
+                                        if current_state
+                                        and current_state.get("mode") == "Ensemble"
+                                        else {}
+                                    ),
+                                    **({
+                                            "variable": {
+                                            "type": "string",
+                                            "enum": list(config.VARIABLE_METADATA.keys()),
+                                            "description": "The climate variable this mask applies to. Always specify the variable when not in Ensemble mode."
+                                            } 
+                                        }
+                                        if current_state
+                                        and current_state.get("mode") != "Ensemble"
+                                        else {}
+                                    ),
                                     "unit": {
                                         "type": config.VARIABLE_UNIT_MAP.get(current_variable, []),
                                         "description": "The unit of measurement for the mask values."
                                     }
                                 },
-                                "required": ["lowerBound", "upperBound", "variable", "unit"]
+                                "required": (
+                                    ["id", "lowerBound", "upperBound", "statistic", "unit"]
+                                    if current_state
+                                    and current_state.get("mode") == "Ensemble"
+                                    else ["id", "lowerBound", "upperBound", "unit", "variable"]
+                                ),
                             }
                         },},
                     "required": ["masks"]

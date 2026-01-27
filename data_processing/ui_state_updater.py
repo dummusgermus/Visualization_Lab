@@ -38,12 +38,24 @@ def update_unit(**kwargs) -> dict:
 
 def update_masks(**kwargs) -> dict:
     """Update value masks from keyword arguments."""
+    current_state = kwargs.get('_current_state', {})
+    curr_masks = current_state.get('masks', [])
+
     masks_str = kwargs.get('masks')
     if not masks_str or masks_str in ('None', 'null', None):
         raise ValueError("Masks are required")
     
+    mask_index = {m.get("id"): i for i, m in enumerate(curr_masks)}
+    for mask in masks_str:
+        mask_id = mask.get("id")
+        if mask_id in mask_index:
+            curr_masks[mask_index[mask_id]] = mask
+        else:
+            curr_masks.append(mask)
+            mask_index[mask_id] = len(curr_masks) - 1
+
     return {
-        "masks": masks_str
+        "masks": curr_masks 
     }
 
 def update_color_palette(**kwargs) -> dict:
@@ -68,8 +80,56 @@ def update_unit(**kwargs) -> dict:
 
 def switch_to_ensemble_mode(**kwargs) -> dict:
     """Switch to ensemble mode from keyword arguments."""
+    current_state = kwargs.get('_current_state', {})
+    scenarios = kwargs.get('scenarios')
+    models = kwargs.get('models')
+    unit = kwargs.get('unit')
+    date = kwargs.get('date')
+    variable = kwargs.get('variable')
+
+    scenarios = None if scenarios in ('None', 'null', None) else scenarios
+    models = None if models in ('None', 'null', None) else models
+    date = None if date in ('None', 'null', None) else date
+    unit = None if unit in ('None', 'null', None) else unit
+    variable = None if variable in ('None', 'null', None) else variable
+
+    if not scenarios:
+        scenarios = current_state.get('selectedScenarios') or current_state.get('scenarios')
+    if not models:
+        models = current_state.get('selectedModels') or current_state.get('models')
+    if not date:
+        date = current_state.get('selectedDate') or current_state.get('date')
+    if not unit:
+        unit = current_state.get('selectedUnit') or current_state.get('unit')
+    if not variable:
+        variable = current_state.get('variable') or current_state.get('variable')
+    if not scenarios:
+        raise ValueError("At least one scenario is required for ensemble mode")
+    if not models:
+        raise ValueError("At least one model is required for ensemble mode")
+    if not date:
+        raise ValueError("Date is required for ensemble mode")
+    
+    print("Ensemble scenarios before normalization:", scenarios)
+    scenarios = [s.lower() for s in scenarios]
+    if parseDateToYear(date) < 2015:
+        scenarios = ['historical']
+    else:
+        scenarios = [s for s in scenarios if s.lower() != 'historical']
+    print("Ensemble scenarios after normalization:", scenarios)
+    print("Ensemble date:", date)
+    for scenario in scenarios:
+        validate_date_for_scenario(date, scenario)
+
+
     return {
-        "mode": "Ensemble"
+        "canvasView": "map",
+        "mode": "Ensemble",
+        "selectedScenarios": scenarios,
+        "selectedModels": models,
+        "selectedDate": date,
+        "selectedUnit": unit,
+        "variable": variable
     }
 
 class CompareMode(Enum):

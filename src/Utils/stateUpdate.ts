@@ -34,19 +34,23 @@ export function updateState(
     if (newState.mode) {
         updates.mode = newState.mode;
     }
-    if (newState.selectedModel) {
-        updates.model = newState.selectedModel;
-    } else if (newState.model) {
-        updates.model = newState.model;
-    }
-    if (newState.selectedScenario) {
-        updates.scenario = normalizeScenarioLabel(newState.selectedScenario);
-    }
-    if (newState.selectedDate) {
-        updates.date = newState.selectedDate;
-    }
-    if (newState.variable) {
-        updates.variable = newState.variable;
+    if (newState.mode === "Explore") {
+        if (newState.selectedModel) {
+            updates.model = newState.selectedModel;
+        } else if (newState.model) {
+            updates.model = newState.model;
+        }
+        if (newState.selectedScenario) {
+            updates.scenario = normalizeScenarioLabel(
+                newState.selectedScenario,
+            );
+        }
+        if (newState.selectedDate) {
+            updates.date = newState.selectedDate;
+        }
+        if (newState.variable) {
+            updates.variable = newState.variable;
+        }
     }
     if (newState.palette) {
         updates.palette = newState.palette;
@@ -95,9 +99,7 @@ export function updateState(
         updates.chartModels = newState.models;
     }
     if (newState.scenarios) {
-        updates.chartScenarios = newState.scenarios.map((s: string) =>
-            normalizeScenarioLabel(s),
-        );
+        updates.chartScenarios = newState.scenarios;
     }
     if (newState.colorPalette) {
         updates.palette = normalizeColorPalette(newState.colorPalette);
@@ -107,12 +109,32 @@ export function updateState(
     }
     if (newState.masks) {
         updates.masks = newState.masks.map((mask: any) => ({
+            id: mask.id,
             variable: mask.variable,
             unit: mask.unit,
-            lowerBound: mask.lowerBound,
-            upperBound: mask.upperBound,
+            lowerBound: mask.lowerBound ?? null,
+            upperBound: mask.upperBound ?? null,
+            lowerEdited: mask.lowerBound != null,
+            upperEdited: mask.upperBound != null,
             statistic: mask.statistic,
         }));
+    }
+    if (newState.mode === "Ensemble") {
+        if (newState.selectedScenarios) {
+            updates.ensembleScenarios = newState.selectedScenarios;
+        }
+        if (newState.selectedModels) {
+            updates.ensembleModels = newState.selectedModels;
+        }
+        if (newState.selectedDate) {
+            updates.ensembleDate = newState.selectedDate;
+        }
+        if (newState.selectedUnit) {
+            updates.ensembleUnit = newState.selectedUnit;
+        }
+        if (newState.variable) {
+            updates.ensembleVariable = newState.variable;
+        }
     }
 
     if (newState.canvasView) {

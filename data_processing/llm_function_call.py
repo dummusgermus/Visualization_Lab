@@ -171,7 +171,7 @@ def _build_system_prompt(context: Optional[dict] = None) -> str:
         "- model selection",
         "- switching Explore vs Compare vs Chart view",
         "- location (city/coordinates/point) or 'at/in <place>'",
-        "- palette (viridis/thermal/magma/cividis)",
+        "- color_palette (viridis/thermal/magma/cividis)",
         "- applying value masks (e.g., highlight only values for tas between 290K and 300K)",
         "== MASK RULES ==",
         "- Always use update_masks even if youre just updating or adding a single mask.",
@@ -379,13 +379,13 @@ def _get_state_control_functions(context: Optional[dict] = None) -> List[dict]:
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "palette": {
+                        "color_palette": {
                             "type": "string",
                             "enum": ["viridis", "thermal", "magma", "cividis"],
                             "description": "The color palette to use",
                         }
                     },
-                    "required": ["palette"]
+                    "required": ["color_palette"]
                 }
             }
         },
@@ -558,7 +558,7 @@ def _get_state_control_functions(context: Optional[dict] = None) -> List[dict]:
                                 "properties": {
                                     "id": {
                                         "type": "number",
-                                        "description": "Unique identifier for the mask. Use a corresponding ID from the context if you're updating an existing mask, otherwise assign a new unique ID."
+                                        "description": "ONLY use numbers. Unique identifier for the mask. Use a corresponding ID from the context if you're updating an existing mask, otherwise assign a new unique ID."
                                     },
                                     "lowerBound": {
                                         "type": ["number", "null"],
@@ -607,70 +607,63 @@ def _get_state_control_functions(context: Optional[dict] = None) -> List[dict]:
                     }
             }
         },
-        {
-            "type": "function",
-            "function": {
-                "name": "switch_to_chart_view",
-                "description": """Switch to CHART VIEW for time series and aggregations. Use this ONLY when:
-1. A specific LOCATION is mentioned (e.g., 'in Berlin', 'at Search location', 'in Aachen')
-2. User wants to compare/aggregate MULTIPLE models or scenarios (e.g., 'compare all scenarios', 'average of models')
-3. User wants to see trends OVER TIME (e.g., 'from 2020 to 2050', 'temperature change over decades')
-If no location is specified and no location is set in the current state, set it to "World".
-You CANNOT use historical with other scenarios in chart view. If historical is selected, it MUST be the ONLY scenario.
-Same applies to scenarios: if multiple scenarios are selected, historical CANNOT be one of them.
-DO NOT use for:
-- Simple map viewing (use switch_to_explore_mode)
-- Comparing only 2 specific items side-by-side on map (use switch_to_compare_mode)
-
-Chart modes:
-- 'single': Show data for a specific date with multiple models/scenarios
-- 'range': Show data over a time range (requires start_date and end_date)""",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "location": {
-                            "type": "string",
-                            "enum": config.VALID_CHART_LOCATIONS,
-                            "description": "Location for the chart (required if user mentions a location)"
-                        },
-                        "chart_mode": {
-                            "type": "string",
-                            "enum": config.VALID_CHART_MODES,
-                            "description": "Chart mode: 'single' for one date, 'range' for time period"
-                        },
-                        "date": {
-                            "type": "string",
-                            "description": "Date in YYYY-MM-DD format (for Single mode). Examples: 2020-01-01, 2050-01-01. Use 4-digit year!"
-                        },
-                        "start_date": {
-                            "type": "string",
-                            "description": "Start date in YYYY-MM-DD format (for Range mode). Examples: 2020-01-01, 1990-01-01. Use 4-digit year!"
-                        },
-                        "end_date": {
-                            "type": "string",
-                            "description": "End date in YYYY-MM-DD format (for Range mode). Examples: 2050-01-01, 2099-01-01. Use 4-digit year!"
-                        },
-                        "models": {
-                            "type": "array",
-                            "items": {
-                                "type": "string",
-                                "enum": config.VALID_MODELS
-                            },
-                            "description": "List of models to include in chart. Use all models if user wants to see aggregation/comparison."
-                        },
-                        "scenarios": {
-                            "type": "array",
-                            "items": {
-                                "type": "string",
-                                "enum": list(config.SCENARIO_METADATA.keys())
-                            },
-                            "description": "List of scenarios to include in chart. Historical can ONLY be selected by itself"
-                        }
-                    },
-                    "required": ["chart_mode","models","scenarios","location"]
-                }
-            }
-        }
+#         {
+#             "type": "function",
+#             "function": {
+#                 "name": "switch_to_chart_view",
+#                 "description": """Switch to CHART VIEW for time series and aggregations. Use this ONLY when:
+# DO NOT use for:
+# - Simple map viewing (use switch_to_explore_mode)
+# - Comparing only 2 specific items side-by-side on map (use switch_to_compare_mode)
+# Chart modes:
+# - 'single': Show data for a specific date with multiple models/scenarios
+# - 'range': Show data over a time range (requires start_date and end_date)""",
+#                 "parameters": {
+#                     "type": "object",
+#                     "properties": {
+#                         "location": {
+#                             "type": "string",
+#                             "enum": config.VALID_CHART_LOCATIONS,
+#                             "description": "Location for the chart (required if user mentions a location)"
+#                         },
+#                         "chart_mode": {
+#                             "type": "string",
+#                             "enum": config.VALID_CHART_MODES,
+#                             "description": "Chart mode: 'single' for one date, 'range' for time period"
+#                         },
+#                         "date": {
+#                             "type": "string",
+#                             "description": "Date in YYYY-MM-DD format (for Single mode). Examples: 2020-01-01, 2050-01-01. Use 4-digit year!"
+#                         },
+#                         "start_date": {
+#                             "type": "string",
+#                             "description": "Start date in YYYY-MM-DD format (for Range mode). Examples: 2020-01-01, 1990-01-01. Use 4-digit year!"
+#                         },
+#                         "end_date": {
+#                             "type": "string",
+#                             "description": "End date in YYYY-MM-DD format (for Range mode). Examples: 2050-01-01, 2099-01-01. Use 4-digit year!"
+#                         },
+#                         "models": {
+#                             "type": "array",
+#                             "items": {
+#                                 "type": "string",
+#                                 "enum": config.VALID_MODELS
+#                             },
+#                             "description": "List of models to include in chart. Use all models if user wants to see aggregation/comparison."
+#                         },
+#                         "scenarios": {
+#                             "type": "array",
+#                             "items": {
+#                                 "type": "string",
+#                                 "enum": list(config.SCENARIO_METADATA.keys())
+#                             },
+#                             "description": "List of scenarios to include in chart. Historical can ONLY be selected by itself"
+#                         }
+#                     },
+#                     "required": ["chart_mode","models","scenarios","location"]
+#               }
+#           }
+#       }
     ]
 
 

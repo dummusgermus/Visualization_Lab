@@ -60,7 +60,7 @@ def update_masks(**kwargs) -> dict:
 
 def update_color_palette(**kwargs) -> dict:
     """Update color palette from keyword arguments."""
-    color_palette = kwargs.get('palette')
+    color_palette = kwargs.get('color_palette')
     if not color_palette or color_palette in ('None', 'null', None):
         raise ValueError("Color palette is required")
     

@@ -180,6 +180,13 @@ export function attachChatHandlers(
     root: HTMLElement,
     appStateContext: AppState,
 ): void {
+    const messagesContainer = root.querySelector<HTMLElement>(".chat-messages");
+    if (messagesContainer && !messagesContainer.dataset.initialScroll) {
+        messagesContainer.dataset.initialScroll = "true";
+        requestAnimationFrame(() => {
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        });
+    }
     const chatInput = root.querySelector<HTMLInputElement>(
         '[data-action="chat-input"]',
     );
@@ -247,7 +254,7 @@ async function sendChat(
 
     // Build chat history for context (limit to last 10 messages to avoid payload issues)
     const history: ChatClientMessage[] = appStateContext.chatMessages
-        .slice(Math.max(0, appStateContext.chatMessages.length - 11), -1) // Last 10 messages, excluding current
+        .slice(Math.max(0, appStateContext.chatMessages.length - 6), -1) // Last 5 messages, excluding current
         .map((msg) => ({
             role: msg.sender === "user" ? "user" : "assistant",
             content: msg.text,

@@ -51,6 +51,7 @@ export interface ChatRequest {
             lon?: number;
         };
         masks?: {
+            id?: number | null;
             variable?: string;
             unit?: string;
             lowerBound?: number | null;
@@ -186,6 +187,7 @@ export function buildChatContext(state: AppState): ChatRequest["context"] {
     }
     if (state.masks && state.masks.length > 0) {
         context.masks = state.masks.map((mask) => ({
+            id: mask.id,
             variable: mask.variable,
             unit: mask.unit,
             statistic: mask.statistic,

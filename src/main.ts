@@ -1206,7 +1206,10 @@ export type AppState = {
     ensembleVariable: string;
     ensembleUnit: string;
     ensembleStatistics: Map<EnsembleStatistic, Float32Array> | null; // Cached statistics for mask filtering
-    ensembleStatisticRanges: Map<EnsembleStatistic, { min: number; max: number }>;
+    ensembleStatisticRanges: Map<
+        EnsembleStatistic,
+        { min: number; max: number }
+    >;
     isLoading: boolean;
     loadingProgress: number;
     dataError: string | null;
@@ -1224,6 +1227,7 @@ export type AppState = {
     } | null;
     compareInfoOpen: boolean;
     masks: Array<{
+        id: number | null;
         lowerBound: number | null;
         upperBound: number | null;
         lowerEdited: boolean;
@@ -1336,6 +1340,7 @@ const state: AppState = {
     chartRequestId: 0,
 };
 
+let nextMaskId = 1;
 let mapCanvas: HTMLCanvasElement | null = null;
 let drawKeyHandler: ((e: KeyboardEvent) => void) | null = null;
 
@@ -1438,9 +1443,10 @@ function getMapRangeVariable(): { variable: string; unit: string } {
     return getActiveMapVariable();
 }
 
-function getEnsembleMaskRange(
-    stat: EnsembleStatistic,
-): { min: number | null; max: number | null } {
+function getEnsembleMaskRange(stat: EnsembleStatistic): {
+    min: number | null;
+    max: number | null;
+} {
     const range = state.ensembleStatisticRanges.get(stat);
     let rawMin: number | null = null;
     let rawMax: number | null = null;
@@ -2870,11 +2876,7 @@ function updateMapInfoPreview(samples: ChartSample[]) {
     state.mapInfoSamples = samples;
     try {
         const { variable, unit } = getActiveMapVariable();
-        state.mapInfoBoxes = buildChartBoxes(
-            samples,
-            variable,
-            unit,
-        );
+        state.mapInfoBoxes = buildChartBoxes(samples, variable, unit);
     } catch {
         return;
     }
@@ -3236,8 +3238,8 @@ async function loadMapInfoData() {
                             const pixelData = data as any;
                             const value = pixelData.values[0];
                             if (value !== null && isFinite(value)) {
-                            const rawValue =
-                                mapVariable === "hurs"
+                                const rawValue =
+                                    mapVariable === "hurs"
                                         ? Math.min(value, 100)
                                         : value;
                                 samples.push({
@@ -3294,8 +3296,8 @@ async function loadMapInfoData() {
                         if (modelData) {
                             const value = modelData.values[0];
                             if (value !== null && isFinite(value)) {
-                            const rawValue =
-                                mapVariable === "hurs"
+                                const rawValue =
+                                    mapVariable === "hurs"
                                         ? Math.min(value, 100)
                                         : value;
                                 samples.push({
@@ -4174,7 +4176,10 @@ async function loadEnsembleData(
 
     // Create arrays for all needed statistics
     const statsArrays = new Map<EnsembleStatistic, Float32Array>();
-    const statsRanges = new Map<EnsembleStatistic, { min: number; max: number }>();
+    const statsRanges = new Map<
+        EnsembleStatistic,
+        { min: number; max: number }
+    >();
     for (const stat of neededStats) {
         statsArrays.set(stat, new Float32Array(length));
         statsRanges.set(stat, { min: Infinity, max: -Infinity });
@@ -5562,14 +5567,15 @@ async function loadClimateData() {
         state.availableModels = metaData.models;
         setLoadingProgress(20);
 
-        const activeScenarioForRange =
-            state.mode === "Compare" && state.compareMode === "Scenarios"
-                ? state.compareScenarioA
-                : state.mode === "Ensemble"
-                  ? state.ensembleScenarios.length > 0
-                      ? state.ensembleScenarios[0]
-                      : state.scenario
-                  : state.scenario;
+        let activeScenarioForRange = state.scenario;
+        if (state.mode === "Compare" && state.compareMode === "Scenarios") {
+            activeScenarioForRange = state.compareScenarioA;
+        } else if (state.mode === "Ensemble") {
+            activeScenarioForRange =
+                state.ensembleScenarios.length > 0
+                    ? state.ensembleScenarios[0]
+                    : state.scenario;
+        }
         // Update time range based on the scenario driving the current request
         state.timeRange = getTimeRangeForScenario(activeScenarioForRange);
         setLoadingProgress(30);
@@ -6020,7 +6026,10 @@ function render() {
       ${
           state.canvasView === "map" && !state.mapRangeOpen
               ? renderTimeSlider({
-                    date: state.date,
+                    date:
+                        state.mode == "Ensemble"
+                            ? state.ensembleDate
+                            : state.date,
                     timeRange: state.timeRange,
                     sidebarOpen: state.sidebarOpen,
                     sidebarWidth: SIDEBAR_WIDTH,
@@ -7128,8 +7137,7 @@ function renderManualSection(params: {
                       })}">
                         ${state.masks
                             .map((mask, index) => {
-                                const maskVar =
-                                    mask.variable || state.variable;
+                                const maskVar = mask.variable || state.variable;
                                 const maskUnit =
                                     mask.unit ||
                                     getDefaultUnitOption(maskVar).label;
@@ -7657,10 +7665,7 @@ function renderManualSection(params: {
                                         getDefaultUnitOption(maskVar).label;
                                     const maskRange =
                                         state.mode === "Explore"
-                                            ? getMaskRangeFor(
-                                                  maskVar,
-                                                  maskUnit,
-                                              )
+                                            ? getMaskRangeFor(maskVar, maskUnit)
                                             : null;
                                     const ensembleRange =
                                         state.mode === "Ensemble"
@@ -8112,8 +8117,7 @@ function renderManualSection(params: {
                       })}">
                         ${state.masks
                             .map((mask, index) => {
-                                const maskVar =
-                                    mask.variable || state.variable;
+                                const maskVar = mask.variable || state.variable;
                                 const maskUnit =
                                     mask.unit ||
                                     getDefaultUnitOption(maskVar).label;
@@ -10784,6 +10788,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                 }
             }
             const newMask: {
+                id: number;
                 lowerBound: number | null;
                 upperBound: number | null;
                 lowerEdited: boolean;
@@ -10792,6 +10797,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                 variable?: string;
                 unit?: string;
             } = {
+                id: nextMaskId++,
                 lowerBound,
                 upperBound,
                 lowerEdited: false,
@@ -10901,7 +10907,8 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         state.chartVariable = variable;
         state.chartUnit = unit;
         // Use the appropriate date based on mode
-        state.chartDate = state.mode === "Ensemble" ? state.ensembleDate : state.date;
+        state.chartDate =
+            state.mode === "Ensemble" ? state.ensembleDate : state.date;
         state.chartError = null;
         render();
         loadChartData();
@@ -11072,19 +11079,32 @@ async function init() {
         render();
 
         // Reload data if necessary
-        if (
-            state.canvasView === "map" &&
-            (updates.date ||
+        if (state.canvasView === "map") {
+            const exploreChanged =
+                updates.date ||
                 updates.model ||
                 updates.scenario ||
-                updates.variable)
-        ) {
-            loadClimateData();
-        } else if (
-            state.canvasView === "map" &&
-            updates.palette &&
-            state.currentData
-        ) {
+                updates.variable;
+            const ensembleChanged =
+                updates.ensembleDate ||
+                updates.ensembleModels ||
+                updates.ensembleScenarios ||
+                updates.ensembleVariable ||
+                updates.ensembleUnit ||
+                updates.mode === "Ensemble";
+            const compareChanged =
+                updates.compareMode ||
+                updates.compareScenarioA ||
+                updates.compareScenarioB ||
+                updates.compareModelA ||
+                updates.compareModelB ||
+                updates.compareDateStart ||
+                updates.compareDateEnd ||
+                updates.mode === "Compare";
+            if (exploreChanged || ensembleChanged || compareChanged) {
+                loadClimateData();
+            }
+        } else if (updates.palette && state.currentData) {
             // If only palette changed and we already have data, just redraw the map with new palette
             render();
         }

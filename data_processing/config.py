@@ -31,7 +31,7 @@ VALID_CHART_MODES = [
     "range",
 ]
 
-VALID_CHART_LOCATIONS = ["World", "Point", "Region", "Search"]
+VALID_CHART_LOCATIONS = ["World","Draw", "Point"]
 
 # Climate models
 VALID_MODELS = [

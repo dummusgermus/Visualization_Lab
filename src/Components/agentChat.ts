@@ -180,6 +180,13 @@ export function attachChatHandlers(
     root: HTMLElement,
     appStateContext: AppState,
 ): void {
+    const messagesContainer = root.querySelector<HTMLElement>(".chat-messages");
+    if (messagesContainer && !messagesContainer.dataset.initialScroll) {
+        messagesContainer.dataset.initialScroll = "true";
+        requestAnimationFrame(() => {
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        });
+    }
     const chatInput = root.querySelector<HTMLInputElement>(
         '[data-action="chat-input"]',
     );

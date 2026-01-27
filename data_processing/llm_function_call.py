@@ -173,6 +173,11 @@ def _build_system_prompt(context: Optional[dict] = None) -> str:
         "- location (city/coordinates/point) or 'at/in <place>'",
         "- palette (viridis/thermal/magma/cividis)",
         "- applying value masks (e.g., highlight only values for tas between 290K and 300K)",
+        "== MASK RULES ==",
+        "- Always use update_masks even if youre just updating or adding a single mask.",
+        "- Masks filter the displayed data to only show values within specified bounds.",
+        "- Each mask must have a unique ID. If updating an existing mask, use its current ID; otherwise assign a new unique ID.",
+        "- Use values that make sense depending on the current views min and max values."
         "",
         "If the request can be answered without changing any of those, explain only using the context (the current state of the application) (no tools).",
         "If youre explaining pay attention to the variable, model, scenario, date, location and values such as min/max/average shown.",
@@ -342,8 +347,10 @@ def get_llm_client():
     global _llm_client
     if _llm_client is None:
         # Always use Ollama
-        base_url = os.environ.get("OLLAMA_URL", "http://ollama.warhol.informatik.rwth-aachen.de")
-        model = os.environ.get("OLLAMA_MODEL", "llama3.3:70b")
+        # base_url = os.environ.get("OLLAMA_URL", "http://ollama.warhol.informatik.rwth-aachen.de")
+        # model = os.environ.get("OLLAMA_MODEL", "llama3.3:70b")
+        base_url = os.environ.get("OLLAMA_URL", "http://192.168.159.85:11434")
+        model = os.environ.get("OLLAMA_MODEL", "glm-4.7-flash")
         _llm_client = OllamaClient(base_url=base_url, model=model)
         print(f"Using Ollama at {base_url} with model {model}")
 
@@ -497,7 +504,7 @@ def _get_state_control_functions(context: Optional[dict] = None) -> List[dict]:
             "type": "function",
             "function": {
                 "name": "switch_to_ensemble_mode",
-                "description": "Switch to ensemble mode to view  a combination of MULTIPLE models and/or scenarios on the MAP. Use this to see aggregated statistics (mean/median/min/max/std) across models and/or scenarios.",
+                "description": "Switch to ensemble mode to view  a combination of MULTIPLE models and/or scenarios on the MAP. Use this to see aggregated statistics (mean/median/min/max/std) across models and/or scenarios. Always include at least one model and one scenario. DO NOT use if location is mentioned. IMPORTANT: When date is 2015 or later, scenarios MUST be ssp245/ssp370/ssp585. DO NOT USE scenario1 and scenario2. The scenarios parameter is an array of scenarios to include.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -515,7 +522,7 @@ def _get_state_control_functions(context: Optional[dict] = None) -> List[dict]:
                                 "type": "string",
                                 "enum": list(config.SCENARIO_METADATA.keys())
                             },
-                            "description": "The scenarios to use"
+                            "description": "The scenarios to use. Insert as array of scenarios. (e.g., ['ssp245', 'ssp585'])"
                         },
                         "unit": {
                             "type": "string",
@@ -608,8 +615,6 @@ def _get_state_control_functions(context: Optional[dict] = None) -> List[dict]:
 1. A specific LOCATION is mentioned (e.g., 'in Berlin', 'at Search location', 'in Aachen')
 2. User wants to compare/aggregate MULTIPLE models or scenarios (e.g., 'compare all scenarios', 'average of models')
 3. User wants to see trends OVER TIME (e.g., 'from 2020 to 2050', 'temperature change over decades')
-
-You NEED to specify a location and models in this function call.
 If no location is specified and no location is set in the current state, set it to "World".
 You CANNOT use historical with other scenarios in chart view. If historical is selected, it MUST be the ONLY scenario.
 Same applies to scenarios: if multiple scenarios are selected, historical CANNOT be one of them.

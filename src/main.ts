@@ -10944,19 +10944,32 @@ async function init() {
         render();
 
         // Reload data if necessary
-        if (
-            state.canvasView === "map" &&
-            (updates.date ||
+        if (state.canvasView === "map") {
+            const exploreChanged =
+                updates.date ||
                 updates.model ||
                 updates.scenario ||
-                updates.variable)
-        ) {
-            loadClimateData();
-        } else if (
-            state.canvasView === "map" &&
-            updates.palette &&
-            state.currentData
-        ) {
+                updates.variable;
+            const ensembleChanged =
+                updates.ensembleDate ||
+                updates.ensembleModels ||
+                updates.ensembleScenarios ||
+                updates.ensembleVariable ||
+                updates.ensembleUnit ||
+                updates.mode === "Ensemble";
+            const compareChanged =
+                updates.compareMode ||
+                updates.compareScenarioA ||
+                updates.compareScenarioB ||
+                updates.compareModelA ||
+                updates.compareModelB ||
+                updates.compareDateStart ||
+                updates.compareDateEnd ||
+                updates.mode === "Compare";
+            if (exploreChanged || ensembleChanged || compareChanged) {
+                loadClimateData();
+            }
+        } else if (updates.palette && state.currentData) {
             // If only palette changed and we already have data, just redraw the map with new palette
             render();
         }

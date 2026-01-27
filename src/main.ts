@@ -10967,11 +10967,11 @@ async function init() {
 
     checkApiAvailability().then(() => {
         render();
+    
+        if (state.canvasView === "map" && state.mode === "Explore") {
+            loadClimateData();
+        }
     });
-
-    if (state.canvasView === "map" && state.mode === "Explore") {
-        loadClimateData();
-    }
 
     // Tutorial event handlers - attach once during init, not on every render
     appRoot.addEventListener("click", (e) => {

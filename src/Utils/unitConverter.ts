@@ -136,6 +136,12 @@ export function getUnitOptions(variable: string): UnitOption[] {
  */
 export function getDefaultUnitOption(variable: string): UnitOption {
     const options = getUnitOptions(variable);
+    if (variable === "tas") {
+        const celsius = options.find((opt) => opt.label.startsWith("Celsius"));
+        if (celsius) {
+            return celsius;
+        }
+    }
     return options[0];
 }
 

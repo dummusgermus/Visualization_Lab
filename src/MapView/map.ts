@@ -53,6 +53,10 @@ function setupCanvas(canvas: HTMLCanvasElement): {
     if (!ctx) return null;
 
     const rect = canvas.getBoundingClientRect();
+    const viewWidth = Math.max(0, Math.floor(rect.width));
+    const viewHeight = Math.max(0, Math.floor(rect.height));
+    if (!Number.isFinite(viewWidth) || !Number.isFinite(viewHeight)) return null;
+
     canvas.width = rect.width * window.devicePixelRatio;
     canvas.height = rect.height * window.devicePixelRatio;
     ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
@@ -60,8 +64,8 @@ function setupCanvas(canvas: HTMLCanvasElement): {
     return {
         ctx,
         rect,
-        viewWidth: rect.width,
-        viewHeight: rect.height,
+        viewWidth,
+        viewHeight,
     };
 }
 

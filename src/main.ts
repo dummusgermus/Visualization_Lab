@@ -1239,10 +1239,10 @@ const state: AppState = {
     panelTab: "Manual",
     sidebarOpen: true,
     canvasView: "map",
-    scenario: scenarios[0],
+    scenario: "SSP245",
     model: models[0],
     variable: variables[0],
-    date: "2000-01-01",
+    date: "2026-01-28",
     palette: paletteOptions[0].name,
     resolution: 2,
     selectedUnit: getDefaultUnitOption(variables[0]).label,
@@ -1303,14 +1303,14 @@ const state: AppState = {
     compareScenarioB: "SSP585",
     compareModelA: models[0],
     compareModelB: models[1] ?? models[0],
-    compareDateStart: "1962-06-28",
-    compareDateEnd: "2007-06-28",
+    compareDateStart: "2026-01-28",
+    compareDateEnd: "2050-01-28",
     masks: [],
     ensembleScenarios: ["SSP245", "SSP370", "SSP585"],
     ensembleModels: [...models],
     ensembleDropdown: { scenariosOpen: false, modelsOpen: false },
     ensembleStatistic: "mean",
-    ensembleDate: "2000-01-01",
+    ensembleDate: "2026-01-28",
     ensembleVariable: variables[0],
     ensembleUnit: getDefaultUnitOption(variables[0]).label,
     ensembleStatistics: null,
@@ -5512,9 +5512,9 @@ async function loadChartData() {
     }
 }
 
-async function loadClimateData() {
+async function loadClimateData(options?: { force?: boolean }) {
     // Prevent reloads during mask updates - user must click Apply button
-    if ((state as any).__updatingMask) {
+    if (!options?.force && (state as any).__updatingMask) {
         console.log("Skipping loadClimateData - mask update in progress");
         return;
     }
@@ -10803,13 +10803,15 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         });
     });
 
-    const applyMaskBtn = root.querySelector<HTMLButtonElement>(
+    const applyMaskBtns = root.querySelectorAll<HTMLButtonElement>(
         '[data-action="apply-masks"]',
     );
-    applyMaskBtn?.addEventListener("click", () => {
-        if (state.canvasView === "map") {
-            loadClimateData();
-        }
+    applyMaskBtns.forEach((btn) => {
+        btn.addEventListener("click", () => {
+            if (state.canvasView === "map") {
+                loadClimateData({ force: true });
+            }
+        });
     });
 
     const infoOpenBtn = root.querySelector<HTMLButtonElement>(

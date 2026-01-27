@@ -126,10 +126,24 @@ export function appendChatMessage(
 /**
  * Toggles the loading indicator visibility
  */
-function toggleLoadingIndicator(root: HTMLElement, visible: boolean): void {
+function toggleLoadingIndicator(
+    root: HTMLElement,
+    visible: boolean,
+    appStateContext?: AppState,
+): void {
+    if (appStateContext) {
+        appStateContext.chatIsLoading = visible;
+    }
     const loadingIndicator = root.querySelector<HTMLElement>(".chat-loading");
     if (loadingIndicator) {
         loadingIndicator.style.display = visible ? "flex" : "none";
+    }
+    if (visible) {
+        const messagesContainer =
+            root.querySelector<HTMLElement>(".chat-messages");
+        if (messagesContainer) {
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
     }
 }
 
@@ -139,6 +153,7 @@ function toggleLoadingIndicator(root: HTMLElement, visible: boolean): void {
 export function renderChatSection(
     chatMessages: ChatMessage[],
     chatInput: string,
+    chatIsLoading: boolean,
 ): string {
     return `
     <div class="chat-stack">
@@ -146,11 +161,12 @@ export function renderChatSection(
 
       <div class="chat-messages">
             ${chatMessages.map((msg) => createChatBubbleHTML(msg)).join("")}
-      </div>
-      <div class="chat-bubble chat-bubble-agent chat-loading" style="display: none">
-        <span class="chat-loading-dot"></span><span class="chat-loading-dot"></span><span class="chat-loading-dot"></span>
-      </div>
-    
+        </div>
+       <div class="chat-bubble chat-bubble-agent chat-loading" style="display: ${
+           chatIsLoading ? "flex" : "none"
+       }">
+            <span class="chat-loading-dot"></span><span class="chat-loading-dot"></span><span class="chat-loading-dot"></span>
+        </div>
 
       <div class="chat-box">
         <input
@@ -250,7 +266,7 @@ async function sendChat(
     appendChatMessage(root, userMessage);
 
     // Show loading indicator
-    toggleLoadingIndicator(root, true);
+    toggleLoadingIndicator(root, true, appStateContext);
 
     // Build chat history for context (limit to last 10 messages to avoid payload issues)
     const history: ChatClientMessage[] = appStateContext.chatMessages
@@ -285,7 +301,7 @@ async function sendChat(
             updateState(reply.new_state);
         }
         // Hide loading and append reply
-        toggleLoadingIndicator(root, false);
+        toggleLoadingIndicator(root, false, appStateContext);
         appendChatMessage(root, reply);
     } catch (error) {
         // Add error message

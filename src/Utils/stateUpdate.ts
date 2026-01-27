@@ -35,6 +35,9 @@ export function updateState(
         updates.mode = newState.mode;
     }
     if (newState.mode === "Explore") {
+        if (newState.selectedDate) {
+            updates.date = newState.selectedDate;
+        }
         if (newState.selectedModel) {
             updates.model = newState.selectedModel;
         } else if (newState.model) {
@@ -45,9 +48,6 @@ export function updateState(
                 newState.selectedScenario,
             );
         }
-        if (newState.selectedDate) {
-            updates.date = newState.selectedDate;
-        }
         if (newState.variable) {
             updates.variable = newState.variable;
         }
@@ -57,26 +57,35 @@ export function updateState(
     }
 
     // Compare mode fields
-    if (newState.compareMode) {
-        updates.compareMode = newState.compareMode;
-    }
-    if (newState.scenario1) {
-        updates.compareScenarioA = normalizeScenarioLabel(newState.scenario1);
-    }
-    if (newState.scenario2) {
-        updates.compareScenarioB = normalizeScenarioLabel(newState.scenario2);
-    }
-    if (newState.model1) {
-        updates.compareModelA = newState.model1;
-    }
-    if (newState.model2) {
-        updates.compareModelB = newState.model2;
-    }
-    if (newState.date1) {
-        updates.compareDateStart = newState.date1;
-    }
-    if (newState.date2) {
-        updates.compareDateEnd = newState.date2;
+    if (newState.mode === "Compare") {
+        if (newState.selectedDate) {
+            updates.date = newState.selectedDate;
+        }
+        if (newState.compareMode) {
+            updates.compareMode = newState.compareMode;
+        }
+        if (newState.scenario1) {
+            updates.compareScenarioA = normalizeScenarioLabel(
+                newState.scenario1,
+            );
+        }
+        if (newState.scenario2) {
+            updates.compareScenarioB = normalizeScenarioLabel(
+                newState.scenario2,
+            );
+        }
+        if (newState.model1) {
+            updates.compareModelA = newState.model1;
+        }
+        if (newState.model2) {
+            updates.compareModelB = newState.model2;
+        }
+        if (newState.date1) {
+            updates.compareDateStart = newState.date1;
+        }
+        if (newState.date2) {
+            updates.compareDateEnd = newState.date2;
+        }
     }
 
     // Chart mode fields

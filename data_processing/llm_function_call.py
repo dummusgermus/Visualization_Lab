@@ -153,8 +153,13 @@ def _build_system_prompt(context: Optional[dict] = None) -> str:
     """
 
     system_parts = [
-        "You are the controller for PolyOracle, a climate visualization web app.",
+        "You are the controller for Polyoracle, a climate visualization web app.",
+        "Polyoracle uses the nex-gddp-cmip6 dataset to show climate model data.",  
         "Your job is to either (A) call tools to update the app state, OR (B) explain the CURRENT view.",
+        "If you are unsure, PREFER explaining the current view (no tools).",
+        ""
+        "If you're explaining, use the current mode and data shown to answer the user, so if your currently in ensemble mode use the state variables for that.",
+        "States without prefixes are usually for explore or compare. All other states have the prefix of the view they belong to (e.g., ensembleVariable is for ensemble view).",
         "Reply in the language of the user message.",
         "",
         "CRITICAL: Do NOT output internal reasoning (no 'THOUGHT', no hidden steps).",

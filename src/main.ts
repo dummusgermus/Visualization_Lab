@@ -8872,7 +8872,11 @@ function renderChatSectionWrapper() {
         gap: 8,
     })}">
       <div style="${styleAttr(styles.sectionTitle)}">Chat</div>
-      ${renderChatSection(state.chatMessages, state.chatInput)}
+      ${renderChatSection(
+          state.chatMessages,
+          state.chatInput,
+          state.chatIsLoading,
+      )}
     </div>
   `;
 }

@@ -1222,10 +1222,6 @@ export type AppState = {
         string,
         Array<Float32Array | Float64Array>
     >;
-    ensembleProbabilityRawRangesByVariable: Map<
-        string,
-        { min: number; max: number }
-    >;
     isLoading: boolean;
     loadingProgress: number;
     dataError: string | null;
@@ -1355,10 +1351,6 @@ const state: AppState = {
     ensembleRawSamplesByVariable: new Map<
         string,
         Array<Float32Array | Float64Array>
-    >(),
-    ensembleProbabilityRawRangesByVariable: new Map<
-        string,
-        { min: number; max: number }
     >(),
     isLoading: false,
     loadingProgress: 0,
@@ -1534,11 +1526,25 @@ function getEnsembleProbabilityMaskRange(
     min: number | null;
     max: number | null;
 } {
-    const rawRange = state.ensembleProbabilityRawRangesByVariable.get(variable);
-    if (!rawRange) {
+    const sampleArrays = state.ensembleRawSamplesByVariable.get(variable);
+    if (!sampleArrays || sampleArrays.length === 0) {
         return { min: null, max: null };
     }
-    const converted = convertMinMax(rawRange.min, rawRange.max, variable, unitLabel);
+    let rawMin = Infinity;
+    let rawMax = -Infinity;
+    for (const sample of sampleArrays) {
+        for (let i = 0; i < sample.length; i++) {
+            const raw = sample[i];
+            if (!Number.isFinite(raw)) continue;
+            const clipped = variable === "hurs" ? Math.min(raw, 100) : raw;
+            rawMin = Math.min(rawMin, clipped);
+            rawMax = Math.max(rawMax, clipped);
+        }
+    }
+    if (!Number.isFinite(rawMin) || !Number.isFinite(rawMax)) {
+        return { min: null, max: null };
+    }
+    const converted = convertMinMax(rawMin, rawMax, variable, unitLabel);
     return { min: converted.min, max: converted.max };
 }
 
@@ -4167,9 +4173,9 @@ async function loadEnsembleData(
         state.ensembleDate = ensembleDate;
     }
 
-    // Determine which ensemble data are needed:
-    // - statistics: currently displayed variable/statistic + binary mask variable/statistic pairs
-    // - raw samples: only for probability masks
+    // Determine which variable/statistic combinations are needed:
+    // - always the currently displayed variable/statistic
+    // - plus all mask variable/statistic pairs (for per-mask filtering)
     const statsByVariable = new Map<string, Map<EnsembleStatistic, Float32Array>>();
     const rangesByVariable = new Map<
         string,
@@ -4179,48 +4185,31 @@ async function loadEnsembleData(
         string,
         Array<Float32Array | Float64Array>
     >();
-    const probabilityRawRangesByVariable = new Map<
-        string,
-        { min: number; max: number }
-    >();
     const requestedStatsByVariable = new Map<string, Set<EnsembleStatistic>>();
-    const requestedRawVariables = new Set<string>();
     const addRequestedStat = (variable: string, stat: EnsembleStatistic) => {
         if (!requestedStatsByVariable.has(variable)) {
             requestedStatsByVariable.set(variable, new Set<EnsembleStatistic>());
         }
         requestedStatsByVariable.get(variable)!.add(stat);
     };
-    const addRequestedRawVariable = (variable: string) => {
-        requestedRawVariables.add(variable);
-    };
     addRequestedStat(state.ensembleVariable, state.ensembleStatistic);
     if (state.masks && state.masks.length > 0) {
         for (const mask of state.masks) {
-            const maskVariable = mask.variable || state.ensembleVariable;
-            if (mask.kind === "probability") {
-                addRequestedRawVariable(maskVariable);
-            } else {
-                addRequestedStat(maskVariable, mask.statistic || "mean");
-            }
+            addRequestedStat(
+                mask.variable || state.ensembleVariable,
+                mask.statistic || "mean",
+            );
         }
     }
 
-    const variablesToProcess = Array.from(
-        new Set<string>([
-            ...Array.from(requestedStatsByVariable.keys()),
-            ...Array.from(requestedRawVariables.values()),
-        ]),
-    );
+    const variablesToProcess = Array.from(requestedStatsByVariable.keys());
     const requestsPerVariable = activeScenarios.length * activeModels.length;
     const totalRequests = Math.max(1, requestsPerVariable * variablesToProcess.length);
     let completedRequests = 0;
     onProgress?.(10);
 
     for (const targetVariable of variablesToProcess) {
-        const neededStats =
-            requestedStatsByVariable.get(targetVariable) ??
-            new Set<EnsembleStatistic>();
+        const neededStats = requestedStatsByVariable.get(targetVariable)!;
         const allDataArrays: (Float32Array | Float64Array)[] = [];
         const allShapes: Array<[number, number]> = [];
 
@@ -4267,27 +4256,7 @@ async function loadEnsembleData(
             continue;
         }
 
-        if (requestedRawVariables.has(targetVariable)) {
-            rawSamplesByVariable.set(targetVariable, allDataArrays);
-            let rawMin = Infinity;
-            let rawMax = -Infinity;
-            for (const arrayData of allDataArrays) {
-                for (let i = 0; i < arrayData.length; i++) {
-                    const raw = arrayData[i];
-                    if (!Number.isFinite(raw)) continue;
-                    const clipped =
-                        targetVariable === "hurs" ? Math.min(raw, 100) : raw;
-                    rawMin = Math.min(rawMin, clipped);
-                    rawMax = Math.max(rawMax, clipped);
-                }
-            }
-            if (Number.isFinite(rawMin) && Number.isFinite(rawMax)) {
-                probabilityRawRangesByVariable.set(targetVariable, {
-                    min: rawMin,
-                    max: rawMax,
-                });
-            }
-        }
+        rawSamplesByVariable.set(targetVariable, allDataArrays);
 
         // Verify all arrays have the same shape
         const firstShape = allShapes[0];
@@ -4302,86 +4271,84 @@ async function loadEnsembleData(
             }
         }
 
-        if (neededStats.size > 0) {
-            const length = allDataArrays[0].length;
-            const statsArrays = new Map<EnsembleStatistic, Float32Array>();
-            const statsRanges = new Map<
-                EnsembleStatistic,
-                { min: number; max: number }
-            >();
-            for (const stat of neededStats) {
-                statsArrays.set(stat, new Float32Array(length));
-                statsRanges.set(stat, { min: Infinity, max: -Infinity });
-            }
-
-            // Compute requested statistics for this variable
-            for (let i = 0; i < length; i++) {
-                const values: number[] = [];
-                for (const arrayData of allDataArrays) {
-                    const val = arrayData[i];
-                    if (!isFinite(val)) continue;
-                    values.push(
-                        targetVariable === "hurs" ? Math.min(val, 100) : val,
-                    );
-                }
-
-                if (values.length === 0) {
-                    for (const stat of neededStats) {
-                        statsArrays.get(stat)![i] = NaN;
-                    }
-                    continue;
-                }
-
-                const sorted =
-                    neededStats.has("median") ||
-                    neededStats.has("iqr") ||
-                    neededStats.has("percentile")
-                        ? [...values].sort((a, b) => a - b)
-                        : null;
-                const mean =
-                    neededStats.has("mean") || neededStats.has("std")
-                        ? values.reduce((a, b) => a + b, 0) / values.length
-                        : 0;
-
-                for (const stat of neededStats) {
-                    let result: number;
-                    if (stat === "mean") {
-                        result = mean;
-                    } else if (stat === "median") {
-                        result = percentile(sorted!, 50);
-                    } else if (stat === "std") {
-                        const variance =
-                            values.reduce(
-                                (sum, val) => sum + Math.pow(val - mean, 2),
-                                0,
-                            ) / values.length;
-                        result = Math.sqrt(variance);
-                    } else if (stat === "iqr") {
-                        const q75 = percentile(sorted!, 75);
-                        const q25 = percentile(sorted!, 25);
-                        result = q75 - q25;
-                    } else if (stat === "percentile") {
-                        const p90 = percentile(sorted!, 90);
-                        const p10 = percentile(sorted!, 10);
-                        result = p90 - p10;
-                    } else if (stat === "extremes") {
-                        result = Math.max(...values) - Math.min(...values);
-                    } else {
-                        result = mean;
-                    }
-
-                    statsArrays.get(stat)![i] = result;
-                    if (isFinite(result)) {
-                        const range = statsRanges.get(stat)!;
-                        range.min = Math.min(range.min, result);
-                        range.max = Math.max(range.max, result);
-                    }
-                }
-            }
-
-            statsByVariable.set(targetVariable, statsArrays);
-            rangesByVariable.set(targetVariable, statsRanges);
+        const length = allDataArrays[0].length;
+        const statsArrays = new Map<EnsembleStatistic, Float32Array>();
+        const statsRanges = new Map<
+            EnsembleStatistic,
+            { min: number; max: number }
+        >();
+        for (const stat of neededStats) {
+            statsArrays.set(stat, new Float32Array(length));
+            statsRanges.set(stat, { min: Infinity, max: -Infinity });
         }
+
+        // Compute requested statistics for this variable
+        for (let i = 0; i < length; i++) {
+            const values: number[] = [];
+            for (const arrayData of allDataArrays) {
+                const val = arrayData[i];
+                if (!isFinite(val)) continue;
+                values.push(
+                    targetVariable === "hurs" ? Math.min(val, 100) : val,
+                );
+            }
+
+            if (values.length === 0) {
+                for (const stat of neededStats) {
+                    statsArrays.get(stat)![i] = NaN;
+                }
+                continue;
+            }
+
+            const sorted =
+                neededStats.has("median") ||
+                neededStats.has("iqr") ||
+                neededStats.has("percentile")
+                    ? [...values].sort((a, b) => a - b)
+                    : null;
+            const mean =
+                neededStats.has("mean") || neededStats.has("std")
+                    ? values.reduce((a, b) => a + b, 0) / values.length
+                    : 0;
+
+            for (const stat of neededStats) {
+                let result: number;
+                if (stat === "mean") {
+                    result = mean;
+                } else if (stat === "median") {
+                    result = percentile(sorted!, 50);
+                } else if (stat === "std") {
+                    const variance =
+                        values.reduce(
+                            (sum, val) => sum + Math.pow(val - mean, 2),
+                            0,
+                        ) / values.length;
+                    result = Math.sqrt(variance);
+                } else if (stat === "iqr") {
+                    const q75 = percentile(sorted!, 75);
+                    const q25 = percentile(sorted!, 25);
+                    result = q75 - q25;
+                } else if (stat === "percentile") {
+                    const p90 = percentile(sorted!, 90);
+                    const p10 = percentile(sorted!, 10);
+                    result = p90 - p10;
+                } else if (stat === "extremes") {
+                    result = Math.max(...values) - Math.min(...values);
+                } else {
+                    result = mean;
+                }
+
+                statsArrays.get(stat)![i] = result;
+                if (isFinite(result)) {
+                    const range = statsRanges.get(stat)!;
+                    range.min = Math.min(range.min, result);
+                    range.max = Math.max(range.max, result);
+                }
+            }
+        }
+
+        statsByVariable.set(targetVariable, statsArrays);
+        rangesByVariable.set(targetVariable, statsRanges);
     }
 
     onProgress?.(90);
@@ -4415,7 +4382,6 @@ async function loadEnsembleData(
     state.ensembleStatisticsByVariable = statsByVariable;
     state.ensembleStatisticRangesByVariable = rangesByVariable;
     state.ensembleRawSamplesByVariable = rawSamplesByVariable;
-    state.ensembleProbabilityRawRangesByVariable = probabilityRawRangesByVariable;
 
     // Sync unedited ensemble mask bounds to newly computed ranges
     if (state.masks.length > 0) {
@@ -10513,23 +10479,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                             state.mode === "Ensemble" &&
                             state.canvasView === "map"
                         ) {
-                            const maskVariableForData =
-                                mask.variable || state.ensembleVariable;
-                            const hasData =
-                                mask.kind === "probability"
-                                    ? state.ensembleRawSamplesByVariable.has(
-                                          maskVariableForData,
-                                      )
-                                    : Boolean(
-                                          state.ensembleStatisticsByVariable
-                                              .get(maskVariableForData)
-                                              ?.has(stat),
-                                      );
-                            if (hasData) {
-                                // No reload needed: render() already refreshed map from cache.
-                            } else {
-                                void loadClimateData();
-                            }
+                            void loadClimateData();
                         }
                     }
                 }
@@ -10579,31 +10529,9 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                                 state.mode === "Ensemble") &&
                             state.canvasView === "map"
                         ) {
-                            let needsReload = false;
-                            if (state.mode === "Explore") {
-                                const maskVariable = m.variable || state.variable;
-                                needsReload =
-                                    maskVariable !== state.variable &&
-                                    !state.maskVariableData.has(maskVariable);
-                            } else {
-                                const maskVariable =
-                                    m.variable || state.ensembleVariable;
-                                needsReload =
-                                    m.kind === "probability"
-                                        ? !state.ensembleRawSamplesByVariable.has(
-                                              maskVariable,
-                                          )
-                                        : !state.ensembleStatisticsByVariable
-                                              .get(maskVariable)
-                                              ?.has(m.statistic || "mean");
-                            }
-                            if (needsReload) {
-                                // Reload only when required data is missing from cache.
-                                void loadClimateData();
-                                render(); // show loading state
-                            } else {
-                                // No reload needed: render() already refreshed map from cache.
-                            }
+                            // Reload so we fetch/cache the new mask variable/statistics.
+                            void loadClimateData();
+                            render(); // show loading state
                         }
                     }
                 }
@@ -10642,8 +10570,47 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                             state.mode === "Ensemble" &&
                             state.canvasView === "map"
                         ) {
-                            // Unit changes only affect value conversion, not data loading.
-                            // render() above already applies the unit conversion immediately.
+                            // Unit changes do not change raw ensemble data, only interpretation.
+                            // Re-render with cached arrays instead of re-fetching from the API.
+                            if (
+                                state.currentData &&
+                                appRoot &&
+                                state.dataMin !== null &&
+                                state.dataMax !== null
+                            ) {
+                                const canvas =
+                                    appRoot.querySelector<HTMLCanvasElement>(
+                                        "#map-canvas",
+                                    );
+                                if (canvas) {
+                                    mapCanvas = canvas;
+                                    applyMapInteractions(canvas);
+                                    renderMapData(
+                                        state.currentData,
+                                        mapCanvas,
+                                        paletteOptions,
+                                        state.palette,
+                                        state.dataMin,
+                                        state.dataMax,
+                                        state.ensembleVariable,
+                                        state.ensembleUnit,
+                                        state.masks,
+                                        state.ensembleStatistics,
+                                        true,
+                                        undefined,
+                                        state.ensembleStatisticsByVariable,
+                                        state.ensembleRawSamplesByVariable,
+                                    );
+                                    const palette =
+                                        paletteOptions.find(
+                                            (p) => p.name === state.palette,
+                                        ) || paletteOptions[0];
+                                    drawLegendGradient(
+                                        "legend-gradient-canvas",
+                                        palette.colors,
+                                    );
+                                }
+                            }
                         }
                     }
                 }

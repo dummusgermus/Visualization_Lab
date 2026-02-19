@@ -1210,6 +1210,14 @@ export type AppState = {
         EnsembleStatistic,
         { min: number; max: number }
     >;
+    ensembleStatisticsByVariable: Map<
+        string,
+        Map<EnsembleStatistic, Float32Array>
+    >;
+    ensembleStatisticRangesByVariable: Map<
+        string,
+        Map<EnsembleStatistic, { min: number; max: number }>
+    >;
     isLoading: boolean;
     loadingProgress: number;
     dataError: string | null;
@@ -1232,9 +1240,9 @@ export type AppState = {
         upperBound: number | null;
         lowerEdited: boolean;
         upperEdited: boolean;
-        statistic?: EnsembleStatistic; // Only used in ensemble mode
-        variable?: string; // Variable for this mask (used in explore mode)
-        unit?: string; // Unit for this mask (used in explore mode)
+        statistic?: EnsembleStatistic; // Used in ensemble mode
+        variable?: string; // Variable for this mask (explore + ensemble)
+        unit?: string; // Unit for this mask (explore + ensemble)
     }>;
     chartRequestId: number;
 };
@@ -1245,10 +1253,10 @@ const state: AppState = {
     panelTab: "Manual",
     sidebarOpen: true,
     canvasView: "map",
-    scenario: scenarios[0],
+    scenario: "SSP245",
     model: models[0],
     variable: variables[0],
-    date: "2000-01-01",
+    date: getDateForScenario("SSP245"),
     palette: paletteOptions[0].name,
     resolution: 2,
     selectedUnit: getDefaultUnitOption(variables[0]).label,
@@ -1309,20 +1317,31 @@ const state: AppState = {
     compareScenarioB: "SSP585",
     compareModelA: models[0],
     compareModelB: models[1] ?? models[0],
-    compareDateStart: "1962-06-28",
-    compareDateEnd: "2007-06-28",
+    compareDateStart: getDateForScenario("SSP245"),
+    compareDateEnd: clipDateToScenarioRange(
+        addYearsToDate(getDateForScenario("SSP245"), 30),
+        "SSP245",
+    ),
     masks: [],
     ensembleScenarios: ["SSP245", "SSP370", "SSP585"],
     ensembleModels: [...models],
     ensembleDropdown: { scenariosOpen: false, modelsOpen: false },
     ensembleStatistic: "mean",
-    ensembleDate: "2000-01-01",
+    ensembleDate: getDateForScenario("SSP245"),
     ensembleVariable: variables[0],
     ensembleUnit: getDefaultUnitOption(variables[0]).label,
     ensembleStatistics: null,
     ensembleStatisticRanges: new Map<
         EnsembleStatistic,
         { min: number; max: number }
+    >(),
+    ensembleStatisticsByVariable: new Map<
+        string,
+        Map<EnsembleStatistic, Float32Array>
+    >(),
+    ensembleStatisticRangesByVariable: new Map<
+        string,
+        Map<EnsembleStatistic, { min: number; max: number }>
     >(),
     isLoading: false,
     loadingProgress: 0,
@@ -1358,6 +1377,7 @@ let mapInfoRequestId = 0;
 let mapInfoDelayTimer: number | null = null;
 let mapRangeRequestId = 0;
 let mapRangeDelayTimer: number | null = null;
+let climateDataRequestId = 0;
 let mapInfoDragPosition: { left: number; top: number } | null = null;
 let mapInfoDragState: {
     active: boolean;
@@ -1443,11 +1463,24 @@ function getMapRangeVariable(): { variable: string; unit: string } {
     return getActiveMapVariable();
 }
 
-function getEnsembleMaskRange(stat: EnsembleStatistic): {
+function isDifferenceEnsembleStatistic(stat: EnsembleStatistic): boolean {
+    return stat === "std" || stat === "iqr" || stat === "percentile" || stat === "extremes";
+}
+
+function getEnsembleMaskRange(
+    stat: EnsembleStatistic,
+    variable = state.ensembleVariable,
+    unitLabel = state.ensembleUnit,
+): {
     min: number | null;
     max: number | null;
 } {
-    const range = state.ensembleStatisticRanges.get(stat);
+    const rangesForVariable =
+        state.ensembleStatisticRangesByVariable.get(variable) ??
+        (variable === state.ensembleVariable
+            ? state.ensembleStatisticRanges
+            : undefined);
+    const range = rangesForVariable?.get(stat);
     let rawMin: number | null = null;
     let rawMax: number | null = null;
 
@@ -1470,9 +1503,9 @@ function getEnsembleMaskRange(stat: EnsembleStatistic): {
     const converted = convertMinMax(
         rawMin,
         rawMax,
-        state.ensembleVariable,
-        state.ensembleUnit,
-        { isDifference: stat !== "mean" },
+        variable,
+        unitLabel,
+        { isDifference: isDifferenceEnsembleStatistic(stat) },
     );
     return { min: converted.min, max: converted.max };
 }
@@ -1644,6 +1677,15 @@ function getDateForScenario(scenario: string): string {
 
     // Use current date
     return `${currentYear}-${currentMonth}-${currentDay}`;
+}
+
+/**
+ * Add years to a date string (YYYY-MM-DD).
+ */
+function addYearsToDate(dateStr: string, years: number): string {
+    const d = new Date(dateStr);
+    d.setFullYear(d.getFullYear() + years);
+    return d.toISOString().slice(0, 10);
 }
 
 /**
@@ -4093,191 +4135,220 @@ async function loadEnsembleData(
         state.ensembleDate = ensembleDate;
     }
 
-    const totalRequests = activeScenarios.length * activeModels.length;
-    const allDataArrays: (Float32Array | Float64Array)[] = [];
-    const allShapes: Array<[number, number]> = [];
-
-    onProgress?.(10);
-
-    // Fetch all data
-    for (let i = 0; i < activeScenarios.length; i++) {
-        const scenario = activeScenarios[i];
-        for (let j = 0; j < activeModels.length; j++) {
-            const model = activeModels[j];
-            const progress =
-                10 +
-                Math.round(
-                    ((i * activeModels.length + j) / totalRequests) * 80,
-                );
-            onProgress?.(progress);
-
-            const request = createDataRequest({
-                variable: state.ensembleVariable,
-                date: ensembleDate,
-                model,
-                scenario,
-                resolution: state.resolution,
-            });
-
-            try {
-                const data = await fetchClimateData(request);
-                const arrayData = dataToArray(data);
-                if (arrayData) {
-                    allDataArrays.push(arrayData);
-                    allShapes.push(data.shape);
-                }
-            } catch (error) {
-                console.warn(
-                    `Failed to fetch data for ${scenario}/${model}:`,
-                    error,
-                );
-                // Continue with other datasets
-            }
+    // Determine which variable/statistic combinations are needed:
+    // - always the currently displayed variable/statistic
+    // - plus all mask variable/statistic pairs (for per-mask filtering)
+    const statsByVariable = new Map<string, Map<EnsembleStatistic, Float32Array>>();
+    const rangesByVariable = new Map<
+        string,
+        Map<EnsembleStatistic, { min: number; max: number }>
+    >();
+    const requestedStatsByVariable = new Map<string, Set<EnsembleStatistic>>();
+    const addRequestedStat = (variable: string, stat: EnsembleStatistic) => {
+        if (!requestedStatsByVariable.has(variable)) {
+            requestedStatsByVariable.set(variable, new Set<EnsembleStatistic>());
         }
-    }
-
-    if (allDataArrays.length === 0) {
-        throw new Error(
-            "No valid data could be loaded for the selected scenarios and models.",
-        );
-    }
-
-    onProgress?.(90);
-
-    // Verify all arrays have the same shape
-    const firstShape = allShapes[0];
-    for (let i = 1; i < allShapes.length; i++) {
-        if (
-            allShapes[i][0] !== firstShape[0] ||
-            allShapes[i][1] !== firstShape[1]
-        ) {
-            throw new Error(
-                "Ensemble datasets have mismatched shapes. Cannot compute statistics.",
+        requestedStatsByVariable.get(variable)!.add(stat);
+    };
+    addRequestedStat(state.ensembleVariable, state.ensembleStatistic);
+    if (state.masks && state.masks.length > 0) {
+        for (const mask of state.masks) {
+            addRequestedStat(
+                mask.variable || state.ensembleVariable,
+                mask.statistic || "mean",
             );
         }
     }
 
-    const length = allDataArrays[0].length;
-    const resultArray = new Float32Array(length);
-    let min = Infinity;
-    let max = -Infinity;
-    let sum = 0;
-    let count = 0;
+    const variablesToProcess = Array.from(requestedStatsByVariable.keys());
+    const requestsPerVariable = activeScenarios.length * activeModels.length;
+    const totalRequests = Math.max(1, requestsPerVariable * variablesToProcess.length);
+    let completedRequests = 0;
+    onProgress?.(10);
 
-    // Determine which statistics we need to compute
-    const neededStats = new Set<EnsembleStatistic>([state.ensembleStatistic]);
-    if (state.masks && state.masks.length > 0) {
-        for (const mask of state.masks) {
-            if (mask.statistic) {
-                neededStats.add(mask.statistic);
+    for (const targetVariable of variablesToProcess) {
+        const neededStats = requestedStatsByVariable.get(targetVariable)!;
+        const allDataArrays: (Float32Array | Float64Array)[] = [];
+        const allShapes: Array<[number, number]> = [];
+
+        for (let i = 0; i < activeScenarios.length; i++) {
+            const scenario = activeScenarios[i];
+            for (let j = 0; j < activeModels.length; j++) {
+                const model = activeModels[j];
+                const request = createDataRequest({
+                    variable: targetVariable,
+                    date: ensembleDate,
+                    model,
+                    scenario,
+                    resolution: state.resolution,
+                });
+
+                try {
+                    const data = await fetchClimateData(request);
+                    const arrayData = dataToArray(data);
+                    if (arrayData) {
+                        allDataArrays.push(arrayData);
+                        allShapes.push(data.shape);
+                    }
+                } catch (error) {
+                    console.warn(
+                        `Failed to fetch data for ${targetVariable} (${scenario}/${model}):`,
+                        error,
+                    );
+                    // Continue with remaining combinations
+                } finally {
+                    completedRequests += 1;
+                    const progress =
+                        10 + Math.round((completedRequests / totalRequests) * 78);
+                    onProgress?.(Math.min(88, progress));
+                }
             }
         }
-    }
 
-    // Create arrays for all needed statistics
-    const statsArrays = new Map<EnsembleStatistic, Float32Array>();
-    const statsRanges = new Map<
-        EnsembleStatistic,
-        { min: number; max: number }
-    >();
-    for (const stat of neededStats) {
-        statsArrays.set(stat, new Float32Array(length));
-        statsRanges.set(stat, { min: Infinity, max: -Infinity });
-    }
-
-    // Compute statistics pixel by pixel
-    for (let i = 0; i < length; i++) {
-        const values: number[] = [];
-
-        // Collect all valid values for this pixel
-        for (const arrayData of allDataArrays) {
-            const val = arrayData[i];
-            if (isFinite(val)) {
-                // Cap relative humidity to 100%
-                const processedVal =
-                    state.ensembleVariable === "hurs"
-                        ? Math.min(val, 100)
-                        : val;
-                values.push(processedVal);
-            }
-        }
-
-        if (values.length === 0) {
-            resultArray[i] = NaN;
-            for (const stat of neededStats) {
-                statsArrays.get(stat)![i] = NaN;
+        if (allDataArrays.length === 0) {
+            if (targetVariable === state.ensembleVariable) {
+                throw new Error(
+                    "No valid data could be loaded for the selected scenarios and models.",
+                );
             }
             continue;
         }
 
-        // Compute all needed statistics for this pixel
-        const sorted =
-            neededStats.has("median") ||
-            neededStats.has("iqr") ||
-            neededStats.has("percentile")
-                ? [...values].sort((a, b) => a - b)
-                : null;
-        const mean =
-            neededStats.has("mean") || neededStats.has("std")
-                ? values.reduce((a, b) => a + b, 0) / values.length
-                : 0;
+        // Verify all arrays have the same shape
+        const firstShape = allShapes[0];
+        for (let i = 1; i < allShapes.length; i++) {
+            if (
+                allShapes[i][0] !== firstShape[0] ||
+                allShapes[i][1] !== firstShape[1]
+            ) {
+                throw new Error(
+                    "Ensemble datasets have mismatched shapes. Cannot compute statistics.",
+                );
+            }
+        }
 
+        const length = allDataArrays[0].length;
+        const statsArrays = new Map<EnsembleStatistic, Float32Array>();
+        const statsRanges = new Map<
+            EnsembleStatistic,
+            { min: number; max: number }
+        >();
         for (const stat of neededStats) {
-            let result: number;
-            if (stat === "mean") {
-                result = mean;
-            } else if (stat === "median") {
-                result = percentile(sorted!, 50);
-            } else if (stat === "std") {
-                const variance =
-                    values.reduce(
-                        (sum, val) => sum + Math.pow(val - mean, 2),
-                        0,
-                    ) / values.length;
-                result = Math.sqrt(variance);
-            } else if (stat === "iqr") {
-                const q75 = percentile(sorted!, 75);
-                const q25 = percentile(sorted!, 25);
-                result = q75 - q25;
-            } else if (stat === "percentile") {
-                const p90 = percentile(sorted!, 90);
-                const p10 = percentile(sorted!, 10);
-                result = p90 - p10;
-            } else if (stat === "extremes") {
-                result = Math.max(...values) - Math.min(...values);
-            } else {
-                result = mean;
+            statsArrays.set(stat, new Float32Array(length));
+            statsRanges.set(stat, { min: Infinity, max: -Infinity });
+        }
+
+        // Compute requested statistics for this variable
+        for (let i = 0; i < length; i++) {
+            const values: number[] = [];
+            for (const arrayData of allDataArrays) {
+                const val = arrayData[i];
+                if (!isFinite(val)) continue;
+                values.push(
+                    targetVariable === "hurs" ? Math.min(val, 100) : val,
+                );
             }
 
-            statsArrays.get(stat)![i] = result;
-            if (isFinite(result)) {
-                const range = statsRanges.get(stat)!;
-                range.min = Math.min(range.min, result);
-                range.max = Math.max(range.max, result);
+            if (values.length === 0) {
+                for (const stat of neededStats) {
+                    statsArrays.get(stat)![i] = NaN;
+                }
+                continue;
+            }
+
+            const sorted =
+                neededStats.has("median") ||
+                neededStats.has("iqr") ||
+                neededStats.has("percentile")
+                    ? [...values].sort((a, b) => a - b)
+                    : null;
+            const mean =
+                neededStats.has("mean") || neededStats.has("std")
+                    ? values.reduce((a, b) => a + b, 0) / values.length
+                    : 0;
+
+            for (const stat of neededStats) {
+                let result: number;
+                if (stat === "mean") {
+                    result = mean;
+                } else if (stat === "median") {
+                    result = percentile(sorted!, 50);
+                } else if (stat === "std") {
+                    const variance =
+                        values.reduce(
+                            (sum, val) => sum + Math.pow(val - mean, 2),
+                            0,
+                        ) / values.length;
+                    result = Math.sqrt(variance);
+                } else if (stat === "iqr") {
+                    const q75 = percentile(sorted!, 75);
+                    const q25 = percentile(sorted!, 25);
+                    result = q75 - q25;
+                } else if (stat === "percentile") {
+                    const p90 = percentile(sorted!, 90);
+                    const p10 = percentile(sorted!, 10);
+                    result = p90 - p10;
+                } else if (stat === "extremes") {
+                    result = Math.max(...values) - Math.min(...values);
+                } else {
+                    result = mean;
+                }
+
+                statsArrays.get(stat)![i] = result;
+                if (isFinite(result)) {
+                    const range = statsRanges.get(stat)!;
+                    range.min = Math.min(range.min, result);
+                    range.max = Math.max(range.max, result);
+                }
             }
         }
 
-        // Use the displayed statistic for resultArray
-        const displayedResult = statsArrays.get(state.ensembleStatistic)![i];
-        resultArray[i] = displayedResult;
-
-        if (isFinite(displayedResult)) {
-            min = Math.min(min, displayedResult);
-            max = Math.max(max, displayedResult);
-            sum += displayedResult;
-            count += 1;
-        }
+        statsByVariable.set(targetVariable, statsArrays);
+        rangesByVariable.set(targetVariable, statsRanges);
     }
 
-    // Store all computed statistics in state
-    state.ensembleStatistics = statsArrays;
-    state.ensembleStatisticRanges = statsRanges;
+    onProgress?.(90);
+
+    const displayStats = statsByVariable.get(state.ensembleVariable);
+    const resultArray = displayStats?.get(state.ensembleStatistic);
+    if (!displayStats || !resultArray) {
+        throw new Error("Unable to compute ensemble statistics for the selected variable.");
+    }
+
+    let min = Infinity;
+    let max = -Infinity;
+    let sum = 0;
+    let count = 0;
+    for (let i = 0; i < resultArray.length; i++) {
+        const displayedResult = resultArray[i];
+        if (!isFinite(displayedResult)) continue;
+        min = Math.min(min, displayedResult);
+        max = Math.max(max, displayedResult);
+        sum += displayedResult;
+        count += 1;
+    }
+
+    // Store computed statistics in state:
+    // - ensembleStatistics / ensembleStatisticRanges for displayed variable (backward-compatible)
+    // - by-variable maps for per-mask variable filtering
+    state.ensembleStatistics = displayStats;
+    state.ensembleStatisticRanges =
+        rangesByVariable.get(state.ensembleVariable) ??
+        new Map<EnsembleStatistic, { min: number; max: number }>();
+    state.ensembleStatisticsByVariable = statsByVariable;
+    state.ensembleStatisticRangesByVariable = rangesByVariable;
 
     // Sync unedited ensemble mask bounds to newly computed ranges
     if (state.masks.length > 0) {
         for (const mask of state.masks) {
-            if (!mask.statistic) continue;
-            const range = getEnsembleMaskRange(mask.statistic);
+            const maskStatistic = mask.statistic || "mean";
+            const maskVariable = mask.variable || state.ensembleVariable;
+            const maskUnit = mask.unit || state.ensembleUnit;
+            const range = getEnsembleMaskRange(
+                maskStatistic,
+                maskVariable,
+                maskUnit,
+            );
             if (!mask.lowerEdited) {
                 mask.lowerBound = range.min;
             }
@@ -4308,9 +4379,11 @@ async function loadEnsembleData(
     // For now, we'll use the first dataset's structure
     const templateData = await fetchClimateData(templateRequest);
     // Mark spread/difference measures as differences (not absolute values)
-    // so unit conversions don't apply absolute offsets (e.g., Kelvin -> Celsius)
-    // Mean is absolute, all others (std, median, iqr, percentile, extremes) are differences
-    const isDifferenceStatistic = state.ensembleStatistic !== "mean";
+    // so unit conversions don't apply absolute offsets (e.g., Kelvin -> Celsius).
+    // Mean/median are absolute; spread measures (std/iqr/percentile/extremes) are differences.
+    const isDifferenceStatistic = isDifferenceEnsembleStatistic(
+        state.ensembleStatistic,
+    );
     const metadata = isDifferenceStatistic
         ? {
               ...(templateData.metadata || {}),
@@ -5555,6 +5628,7 @@ async function loadClimateData() {
     if (state.canvasView !== "map") {
         return;
     }
+    const requestId = ++climateDataRequestId;
 
     state.isLoading = true;
     setLoadingProgress(5, true);
@@ -5652,6 +5726,11 @@ async function loadClimateData() {
                         return { data, min, max, mean };
                     })();
 
+        // Ignore stale responses; only the newest request may update shared state.
+        if (requestId !== climateDataRequestId) {
+            return;
+        }
+
         state.currentData = result.data;
         state.dataMin = result.min;
         state.dataMax = result.max;
@@ -5729,6 +5808,11 @@ async function loadClimateData() {
             }
         }
 
+        // Ignore stale responses; only the newest request may update UI/loading state.
+        if (requestId !== climateDataRequestId) {
+            return;
+        }
+
         setLoadingProgress(100);
         state.isLoading = false;
 
@@ -5742,6 +5826,11 @@ async function loadClimateData() {
             }
         }
     } catch (error) {
+        // Ignore stale failures; a newer request is already in flight.
+        if (requestId !== climateDataRequestId) {
+            return;
+        }
+
         if (error instanceof DataClientError && error.statusCode) {
             state.dataError = error.message;
         } else {
@@ -5851,7 +5940,9 @@ function render() {
                           : state.selectedUnit,
                       state.mode === "Compare" ||
                           (state.mode === "Ensemble" &&
-                              state.ensembleStatistic !== "mean"),
+                              isDifferenceEnsembleStatistic(
+                                  state.ensembleStatistic,
+                              )),
                       state.mapRangeOpen ? 70 : 0,
                   )
                 : ""
@@ -6112,6 +6203,9 @@ function render() {
                     state.mode === "Explore"
                         ? state.maskVariableData
                         : undefined,
+                    state.mode === "Ensemble"
+                        ? state.ensembleStatisticsByVariable
+                        : null,
                 );
 
                 // Draw the gradient on the legend canvas
@@ -7137,10 +7231,16 @@ function renderManualSection(params: {
                       })}">
                         ${state.masks
                             .map((mask, index) => {
-                                const maskVar = mask.variable || state.variable;
+                                const maskVar =
+                                    mask.variable ||
+                                    (state.mode === "Ensemble"
+                                        ? state.ensembleVariable
+                                        : state.variable);
                                 const maskUnit =
                                     mask.unit ||
-                                    getDefaultUnitOption(maskVar).label;
+                                    (state.mode === "Ensemble"
+                                        ? state.ensembleUnit
+                                        : getDefaultUnitOption(maskVar).label);
                                 const maskRange =
                                     state.mode === "Explore"
                                         ? getMaskRangeFor(maskVar, maskUnit)
@@ -7149,20 +7249,24 @@ function renderManualSection(params: {
                                     state.mode === "Ensemble"
                                         ? getEnsembleMaskRange(
                                               mask.statistic || "mean",
+                                              maskVar,
+                                              maskUnit,
                                           )
                                         : null;
                                 const lowerPlaceholder =
-                                    ensembleRange?.min ??
-                                    maskRange?.min ??
-                                    (maskVar === state.variable
-                                        ? state.dataMin
-                                        : null);
+                                    state.mode === "Ensemble"
+                                        ? (ensembleRange?.min ?? null)
+                                        : (maskRange?.min ??
+                                          (maskVar === state.variable
+                                              ? state.dataMin
+                                              : null));
                                 const upperPlaceholder =
-                                    ensembleRange?.max ??
-                                    maskRange?.max ??
-                                    (maskVar === state.variable
-                                        ? state.dataMax
-                                        : null);
+                                    state.mode === "Ensemble"
+                                        ? (ensembleRange?.max ?? null)
+                                        : (maskRange?.max ??
+                                          (maskVar === state.variable
+                                              ? state.dataMax
+                                              : null));
                                 return `
                           ${
                               state.mode === "Ensemble"
@@ -7209,6 +7313,31 @@ function renderManualSection(params: {
                                         'class="custom-select-wrapper"',
                                         `class="custom-select-wrapper" data-mask-index="${index}" style="width: 100px;"`,
                                     )}
+                                    ${renderSelect(
+                                        "maskVariable",
+                                        variables,
+                                        maskVar,
+                                        {
+                                            dataKey: "maskVariable",
+                                            infoType: "variable",
+                                        },
+                                    ).replace(
+                                        'class="custom-select-wrapper"',
+                                        `class="custom-select-wrapper" data-mask-index="${index}" style="width: 90px;"`,
+                                    )}
+                                    ${renderSelect(
+                                        "maskUnit",
+                                        getUnitOptions(maskVar).map(
+                                            (opt) => opt.label,
+                                        ),
+                                        maskUnit,
+                                        {
+                                            dataKey: "maskUnit",
+                                        },
+                                    ).replace(
+                                        'class="custom-select-wrapper"',
+                                        `class="custom-select-wrapper" data-mask-index="${index}" style="width: 120px;"`,
+                                    )}
                                   </div>
                                   `
                                   : state.mode === "Explore"
@@ -7229,7 +7358,7 @@ function renderManualSection(params: {
                                         },
                                     ).replace(
                                         'class="custom-select-wrapper"',
-                                        `class="custom-select-wrapper" data-mask-index="${index}" style="width: 140px;"`,
+                                        `class="custom-select-wrapper" data-mask-index="${index}" style="width: 90px;"`,
                                     )}
                                     ${renderSelect(
                                         "maskUnit",
@@ -7659,10 +7788,15 @@ function renderManualSection(params: {
                             ${state.masks
                                 .map((mask, index) => {
                                     const maskVar =
-                                        mask.variable || state.variable;
+                                        mask.variable ||
+                                        (state.mode === "Ensemble"
+                                            ? state.ensembleVariable
+                                            : state.variable);
                                     const maskUnit =
                                         mask.unit ||
-                                        getDefaultUnitOption(maskVar).label;
+                                        (state.mode === "Ensemble"
+                                            ? state.ensembleUnit
+                                            : getDefaultUnitOption(maskVar).label);
                                     const maskRange =
                                         state.mode === "Explore"
                                             ? getMaskRangeFor(maskVar, maskUnit)
@@ -7671,20 +7805,24 @@ function renderManualSection(params: {
                                         state.mode === "Ensemble"
                                             ? getEnsembleMaskRange(
                                                   mask.statistic || "mean",
+                                                  maskVar,
+                                                  maskUnit,
                                               )
                                             : null;
                                     const lowerPlaceholder =
-                                        ensembleRange?.min ??
-                                        maskRange?.min ??
-                                        (maskVar === state.variable
-                                            ? state.dataMin
-                                            : null);
+                                        state.mode === "Ensemble"
+                                            ? (ensembleRange?.min ?? null)
+                                            : (maskRange?.min ??
+                                              (maskVar === state.variable
+                                                  ? state.dataMin
+                                                  : null));
                                     const upperPlaceholder =
-                                        ensembleRange?.max ??
-                                        maskRange?.max ??
-                                        (maskVar === state.variable
-                                            ? state.dataMax
-                                            : null);
+                                        state.mode === "Ensemble"
+                                            ? (ensembleRange?.max ?? null)
+                                            : (maskRange?.max ??
+                                              (maskVar === state.variable
+                                                  ? state.dataMax
+                                                  : null));
                                     return `
                               <div style="${styleAttr({
                                   display: "flex",
@@ -7734,7 +7872,32 @@ function renderManualSection(params: {
                                               .replace(
                                                   'class="custom-select-wrapper"',
                                                   `class="custom-select-wrapper" data-mask-index="${index}"`,
-                                              )
+                                              ) +
+                                          renderSelect(
+                                              "maskVariable",
+                                              variables,
+                                              maskVar,
+                                              {
+                                                  dataKey: "maskVariable",
+                                                  infoType: "variable",
+                                              },
+                                          ).replace(
+                                              'class="custom-select-wrapper"',
+                                              `class="custom-select-wrapper" data-mask-index="${index}" style="width: 90px;"`,
+                                          ) +
+                                          renderSelect(
+                                              "maskUnit",
+                                              getUnitOptions(maskVar).map(
+                                                  (opt) => opt.label,
+                                              ),
+                                              maskUnit,
+                                              {
+                                                  dataKey: "maskUnit",
+                                              },
+                                          ).replace(
+                                              'class="custom-select-wrapper"',
+                                              `class="custom-select-wrapper" data-mask-index="${index}" style="width: 120px;"`,
+                                          )
                                         : state.mode === "Explore"
                                           ? `
                                             ${renderSelect(
@@ -7747,7 +7910,7 @@ function renderManualSection(params: {
                                                 },
                                             ).replace(
                                                 'class="custom-select-wrapper"',
-                                                `class="custom-select-wrapper" data-mask-index="${index}" style="width: 140px;"`,
+                                                `class="custom-select-wrapper" data-mask-index="${index}" style="width: 90px;"`,
                                             )}
                                             ${renderSelect(
                                                 "maskUnit",
@@ -8117,10 +8280,16 @@ function renderManualSection(params: {
                       })}">
                         ${state.masks
                             .map((mask, index) => {
-                                const maskVar = mask.variable || state.variable;
+                                const maskVar =
+                                    mask.variable ||
+                                    (state.mode === "Ensemble"
+                                        ? state.ensembleVariable
+                                        : state.variable);
                                 const maskUnit =
                                     mask.unit ||
-                                    getDefaultUnitOption(maskVar).label;
+                                    (state.mode === "Ensemble"
+                                        ? state.ensembleUnit
+                                        : getDefaultUnitOption(maskVar).label);
                                 const maskRange =
                                     state.mode === "Explore"
                                         ? getMaskRangeFor(maskVar, maskUnit)
@@ -8129,20 +8298,24 @@ function renderManualSection(params: {
                                     state.mode === "Ensemble"
                                         ? getEnsembleMaskRange(
                                               mask.statistic || "mean",
+                                              maskVar,
+                                              maskUnit,
                                           )
                                         : null;
                                 const lowerPlaceholder =
-                                    ensembleRange?.min ??
-                                    maskRange?.min ??
-                                    (maskVar === state.variable
-                                        ? state.dataMin
-                                        : null);
+                                    state.mode === "Ensemble"
+                                        ? (ensembleRange?.min ?? null)
+                                        : (maskRange?.min ??
+                                          (maskVar === state.variable
+                                              ? state.dataMin
+                                              : null));
                                 const upperPlaceholder =
-                                    ensembleRange?.max ??
-                                    maskRange?.max ??
-                                    (maskVar === state.variable
-                                        ? state.dataMax
-                                        : null);
+                                    state.mode === "Ensemble"
+                                        ? (ensembleRange?.max ?? null)
+                                        : (maskRange?.max ??
+                                          (maskVar === state.variable
+                                              ? state.dataMax
+                                              : null));
                                 return `
                           ${
                               state.mode === "Ensemble"
@@ -8189,6 +8362,31 @@ function renderManualSection(params: {
                                         'class="custom-select-wrapper"',
                                         `class="custom-select-wrapper" data-mask-index="${index}" style="width: 100px;"`,
                                     )}
+                                    ${renderSelect(
+                                        "maskVariable",
+                                        variables,
+                                        maskVar,
+                                        {
+                                            dataKey: "maskVariable",
+                                            infoType: "variable",
+                                        },
+                                    ).replace(
+                                        'class="custom-select-wrapper"',
+                                        `class="custom-select-wrapper" data-mask-index="${index}" style="width: 90px;"`,
+                                    )}
+                                    ${renderSelect(
+                                        "maskUnit",
+                                        getUnitOptions(maskVar).map(
+                                            (opt) => opt.label,
+                                        ),
+                                        maskUnit,
+                                        {
+                                            dataKey: "maskUnit",
+                                        },
+                                    ).replace(
+                                        'class="custom-select-wrapper"',
+                                        `class="custom-select-wrapper" data-mask-index="${index}" style="width: 120px;"`,
+                                    )}
                                   </div>
                                   `
                                   : state.mode === "Explore"
@@ -8209,7 +8407,7 @@ function renderManualSection(params: {
                                         },
                                     ).replace(
                                         'class="custom-select-wrapper"',
-                                        `class="custom-select-wrapper" data-mask-index="${index}" style="width: 140px;"`,
+                                        `class="custom-select-wrapper" data-mask-index="${index}" style="width: 90px;"`,
                                     )}
                                     ${renderSelect(
                                         "maskUnit",
@@ -9263,6 +9461,23 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
 
                 state.mode = value;
 
+                // When switching to Compare: use current/adjusted date as first, same date +30y as second
+                if (value === "Compare") {
+                    const baseDate = state.date;
+                    state.compareDateStart = clipDateToScenarioRange(
+                        baseDate,
+                        state.scenario,
+                    );
+                    state.compareDateEnd = clipDateToScenarioRange(
+                        addYearsToDate(baseDate, 30),
+                        state.scenario,
+                    );
+                }
+                // When switching to Ensemble: use current/adjusted date (from Explore or last adjusted)
+                if (value === "Ensemble") {
+                    state.ensembleDate = state.date;
+                }
+
                 const tutorialState = getTutorialState();
                 if (
                     tutorialState.active &&
@@ -9901,6 +10116,8 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                             state.masks,
                             state.ensembleStatistics,
                             true,
+                            undefined,
+                            state.ensembleStatisticsByVariable,
                         );
 
                         // Redraw gradient with new palette
@@ -9958,14 +10175,29 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                         const mask = state.masks[index];
                         mask.statistic = stat;
                         if (state.mode === "Ensemble") {
-                            const range = getEnsembleMaskRange(stat);
+                            const maskVariable =
+                                mask.variable || state.ensembleVariable;
+                            const maskUnit = mask.unit || state.ensembleUnit;
+                            const range = getEnsembleMaskRange(
+                                stat,
+                                maskVariable,
+                                maskUnit,
+                            );
                             mask.lowerBound = range.min;
                             mask.upperBound = range.max;
                             mask.lowerEdited = false;
                             mask.upperEdited = false;
                         }
                         render();
-                        // Don't reload map automatically - user will click Apply button
+                        // In Ensemble mode, preload selected statistic immediately so masks
+                        // (e.g. std while viewing mean) are available without first switching
+                        // the displayed map statistic.
+                        if (
+                            state.mode === "Ensemble" &&
+                            state.canvasView === "map"
+                        ) {
+                            void loadClimateData();
+                        }
                     }
                 }
                 return;
@@ -9982,20 +10214,33 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                         const m = state.masks[index];
                         m.variable = val;
                         m.unit = getDefaultUnitOption(val).label;
-                        // Reset bounds to unrestricted – old bounds were for the previous variable
-                        // (e.g. temp K); applying them to the new variable (e.g. humidity %)
-                        // would fail every pixel. Unrestricted = "full range" until user sets bounds.
-                        m.lowerBound = null;
-                        m.upperBound = null;
-                        m.lowerEdited = false;
-                        m.upperEdited = false;
+                        if (state.mode === "Ensemble") {
+                            const stat = m.statistic || "mean";
+                            const range = getEnsembleMaskRange(
+                                stat,
+                                m.variable,
+                                m.unit,
+                            );
+                            m.lowerBound = range.min;
+                            m.upperBound = range.max;
+                            m.lowerEdited = false;
+                            m.upperEdited = false;
+                        } else {
+                            // Reset bounds to unrestricted – old bounds were for the previous variable
+                            // (e.g. temp K); applying them to the new variable (e.g. humidity %)
+                            // would fail every pixel. Unrestricted = "full range" until user sets bounds.
+                            m.lowerBound = null;
+                            m.upperBound = null;
+                            m.lowerEdited = false;
+                            m.upperEdited = false;
+                        }
                         render();
-                        // Reload so we fetch/cache the new mask variable; otherwise
-                        // maskVariableData lacks it and the filtered mask appears empty.
                         if (
-                            state.mode === "Explore" &&
+                            (state.mode === "Explore" ||
+                                state.mode === "Ensemble") &&
                             state.canvasView === "map"
                         ) {
+                            // Reload so we fetch/cache the new mask variable/statistics.
                             void loadClimateData();
                             render(); // show loading state
                         }
@@ -10012,9 +10257,26 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                         index >= 0 &&
                         index < state.masks.length
                     ) {
-                        state.masks[index].unit = val;
+                        const mask = state.masks[index];
+                        mask.unit = val;
+                        if (state.mode === "Ensemble") {
+                            const range = getEnsembleMaskRange(
+                                mask.statistic || "mean",
+                                mask.variable || state.ensembleVariable,
+                                mask.unit,
+                            );
+                            mask.lowerBound = range.min;
+                            mask.upperBound = range.max;
+                            mask.lowerEdited = false;
+                            mask.upperEdited = false;
+                        }
                         render();
-                        // Don't reload map automatically - user will click Apply button
+                        if (
+                            state.mode === "Ensemble" &&
+                            state.canvasView === "map"
+                        ) {
+                            void loadClimateData();
+                        }
                     }
                 }
                 return;
@@ -10778,7 +11040,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
     );
     addMaskBtns.forEach((btn) => {
         btn.addEventListener("click", () => {
-            // Initialize new mask with current data min/max
+            // Initialize new mask with mode-appropriate defaults
             let lowerBound = state.dataMin;
             let upperBound = state.dataMax;
             if (state.mode === "Explore") {
@@ -10790,6 +11052,14 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                     lowerBound = range.min;
                     upperBound = range.max;
                 }
+            } else if (state.mode === "Ensemble") {
+                const range = getEnsembleMaskRange(
+                    "mean",
+                    state.ensembleVariable,
+                    state.ensembleUnit,
+                );
+                lowerBound = range.min;
+                upperBound = range.max;
             }
             const newMask: {
                 id: number;
@@ -10810,6 +11080,8 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             // In ensemble mode, default to "mean" statistic
             if (state.mode === "Ensemble") {
                 newMask.statistic = "mean";
+                newMask.variable = state.ensembleVariable;
+                newMask.unit = state.ensembleUnit;
             }
             // In explore mode, default to current variable and unit
             if (state.mode === "Explore") {

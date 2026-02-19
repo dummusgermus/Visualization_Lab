@@ -27,6 +27,12 @@ let drawMode = false;
 let drawCallbacks: DrawCallbacks | null = null;
 let transformCallback: (() => void) | null = null;
 
+function isDifferenceEnsembleStatistic(
+    stat: "mean" | "std" | "median" | "iqr" | "percentile" | "extremes",
+): boolean {
+    return stat === "std" || stat === "iqr" || stat === "percentile" || stat === "extremes";
+}
+
 // Export function to reset map transform state
 export function resetMapTransform(): void {
     currentTransform = d3.zoomIdentity;
@@ -367,6 +373,10 @@ export function renderMapData(
     ensembleStatistics?: Map<"mean" | "std" | "median" | "iqr" | "percentile" | "extremes", Float32Array> | null,
     isEnsembleMode?: boolean,
     maskVariableData?: Map<string, ClimateData>,
+    ensembleStatisticsByVariable?: Map<
+        string,
+        Map<"mean" | "std" | "median" | "iqr" | "percentile" | "extremes", Float32Array>
+    > | null,
 ): void {
     // masks parameter is used in the rendering loop below
     if (!mapCanvas) return;
@@ -385,6 +395,7 @@ export function renderMapData(
             ensembleStatistics,
             isEnsembleMode,
             maskVariableData,
+            ensembleStatisticsByVariable,
         );
     } catch (err) {
         console.error("renderMapData failed (e.g. when changing display variable with masks):", err);
@@ -412,6 +423,10 @@ function runRenderMapData(
     ensembleStatistics?: Map<"mean" | "std" | "median" | "iqr" | "percentile" | "extremes", Float32Array> | null,
     isEnsembleMode?: boolean,
     maskVariableData?: Map<string, ClimateData>,
+    ensembleStatisticsByVariable?: Map<
+        string,
+        Map<"mean" | "std" | "median" | "iqr" | "percentile" | "extremes", Float32Array>
+    > | null,
 ): void {
     const arrayData = dataToArray(data);
     if (!arrayData) {
@@ -558,8 +573,15 @@ function runRenderMapData(
                             !mask.upperEdited || mask.upperBound === null;
                         
                         // Get the statistic value for this mask
+                        const maskVar = mask.variable || variable;
+                        const maskUnit = mask.unit || selectedUnit;
                         const maskStat = mask.statistic || "mean";
-                        const statArray = ensembleStatistics.get(maskStat);
+                        const statsForVar =
+                            (maskVar
+                                ? ensembleStatisticsByVariable?.get(maskVar)
+                                : undefined) ??
+                            (maskVar === variable ? ensembleStatistics : undefined);
+                        const statArray = statsForVar?.get(maskStat);
                         if (!statArray) {
                             // Statistic not available, skip this mask
                             continue;
@@ -575,11 +597,19 @@ function runRenderMapData(
                         
                         // Convert statistic value if unit conversion is needed
                         let statDisplayValue = statValue;
-                        if (variable && selectedUnit) {
-                            const isStatDifference = maskStat !== "mean";
-                            statDisplayValue = convertValue(statValue, variable, selectedUnit, {
-                                isDifference: isStatDifference || isDifference,
-                            });
+                        if (maskVar && maskUnit) {
+                            const isStatDifference =
+                                isDifferenceEnsembleStatistic(maskStat);
+                            statDisplayValue = convertValue(
+                                statValue,
+                                maskVar,
+                                maskUnit,
+                                {
+                                    // Each mask statistic must be interpreted independently:
+                                    // mean is absolute, all others are differences.
+                                    isDifference: isStatDifference,
+                                },
+                            );
                         }
                         
                         // Check bounds

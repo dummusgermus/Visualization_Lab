@@ -43,22 +43,30 @@ export function renderMapLegend(
     selectedUnit?: string,
     isDifference?: boolean,
     offsetY = 0,
+    options?: {
+        titleOverride?: string;
+        unitOverride?: string;
+        skipConversion?: boolean;
+    },
 ): string {
     const variableMeta = metadata?.variable_metadata[variable];
-    const name = variableMeta?.name || variable;
+    const name = options?.titleOverride || variableMeta?.name || variable;
 
     // Convert min/max if unit is selected
     let convertedMin = min;
     let convertedMax = max;
     let unit = variableMeta?.unit || "";
     
-    if (selectedUnit) {
+    if (selectedUnit && !options?.skipConversion) {
         const converted = convertMinMax(min, max, variable, selectedUnit, {
             isDifference,
         });
         convertedMin = converted.min;
         convertedMax = converted.max;
         unit = getUnitString(variable, selectedUnit);
+    }
+    if (options?.unitOverride !== undefined) {
+        unit = options.unitOverride;
     }
 
     // Calculate 5 equally spaced values from max to min

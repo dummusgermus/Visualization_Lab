@@ -9,6 +9,7 @@ let currentMax = 1;
 let currentVariable = "";
 let currentSelectedUnit = "";
 let currentIsDifference = false;
+let currentProbabilityMode = false;
 
 function getOrCreateTooltip(): HTMLDivElement {
     if (!tooltipElement) {
@@ -30,10 +31,11 @@ export function showTooltip(
 ): void {
     const tooltip = getOrCreateTooltip();
     
-    // Convert value if unit is selected
     let convertedValue = value;
     let displayUnit = unit;
-    if (currentSelectedUnit && currentVariable) {
+    if (currentProbabilityMode) {
+        displayUnit = "%";
+    } else if (currentSelectedUnit && currentVariable) {
         convertedValue = convertValue(value, currentVariable, currentSelectedUnit, {
             isDifference: isDifference ?? currentIsDifference,
         });
@@ -66,7 +68,8 @@ export function setDataRange(
     max: number,
     variable?: string,
     selectedUnit?: string,
-    isDifference?: boolean
+    isDifference?: boolean,
+    isProbabilityMode?: boolean,
 ): void {
     currentMin = min;
     currentMax = max;
@@ -78,5 +81,8 @@ export function setDataRange(
     }
     if (isDifference !== undefined) {
         currentIsDifference = isDifference;
+    }
+    if (isProbabilityMode !== undefined) {
+        currentProbabilityMode = isProbabilityMode;
     }
 }

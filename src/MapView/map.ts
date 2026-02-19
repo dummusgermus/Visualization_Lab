@@ -33,6 +33,68 @@ function isDifferenceEnsembleStatistic(
     return stat === "std" || stat === "iqr" || stat === "percentile" || stat === "extremes";
 }
 
+function erfApprox(x: number): number {
+    // Abramowitz and Stegun approximation (7.1.26)
+    const sign = x < 0 ? -1 : 1;
+    const ax = Math.abs(x);
+    const t = 1 / (1 + 0.3275911 * ax);
+    const a1 = 0.254829592;
+    const a2 = -0.284496736;
+    const a3 = 1.421413741;
+    const a4 = -1.453152027;
+    const a5 = 1.061405429;
+    const poly = (((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t);
+    const y = 1 - poly * Math.exp(-ax * ax);
+    return sign * y;
+}
+
+function normalCdf(x: number): number {
+    return 0.5 * (1 + erfApprox(x / Math.SQRT2));
+}
+
+function computeGaussianRangeProbabilityAtIndex(
+    sampleArrays: Array<Float32Array | Float64Array>,
+    idx: number,
+    variable: string,
+    unit: string | undefined,
+    lowerBound: number | null,
+    upperBound: number | null,
+    lowerEdited: boolean,
+    upperEdited: boolean,
+): number {
+    let count = 0;
+    let mean = 0;
+    let m2 = 0;
+    for (const sample of sampleArrays) {
+        const raw = sample[idx];
+        if (!Number.isFinite(raw)) continue;
+        const clipped = variable === "hurs" ? Math.min(raw, 100) : raw;
+        const value = unit ? convertValue(clipped, variable, unit) : clipped;
+        if (!Number.isFinite(value)) continue;
+        count += 1;
+        const delta = value - mean;
+        mean += delta / count;
+        const delta2 = value - mean;
+        m2 += delta * delta2;
+    }
+    if (count === 0) return NaN;
+
+    const lower = lowerEdited && lowerBound !== null ? lowerBound : -Infinity;
+    const upper = upperEdited && upperBound !== null ? upperBound : Infinity;
+    if (lower > upper) return 0;
+
+    const variance = m2 / count;
+    const std = Math.sqrt(Math.max(0, variance));
+    if (!Number.isFinite(std) || std < 1e-10) {
+        return mean >= lower && mean <= upper ? 1 : 0;
+    }
+
+    const zLower = (lower - mean) / std;
+    const zUpper = (upper - mean) / std;
+    const probability = normalCdf(zUpper) - normalCdf(zLower);
+    return Math.max(0, Math.min(1, probability));
+}
+
 // Export function to reset map transform state
 export function resetMapTransform(): void {
     currentTransform = d3.zoomIdentity;
@@ -369,6 +431,7 @@ export function renderMapData(
         statistic?: "mean" | "std" | "median" | "iqr" | "percentile" | "extremes";
         variable?: string;
         unit?: string;
+        kind?: "binary" | "probability";
     }>,
     ensembleStatistics?: Map<"mean" | "std" | "median" | "iqr" | "percentile" | "extremes", Float32Array> | null,
     isEnsembleMode?: boolean,
@@ -376,6 +439,10 @@ export function renderMapData(
     ensembleStatisticsByVariable?: Map<
         string,
         Map<"mean" | "std" | "median" | "iqr" | "percentile" | "extremes", Float32Array>
+    > | null,
+    ensembleRawSamplesByVariable?: Map<
+        string,
+        Array<Float32Array | Float64Array>
     > | null,
 ): void {
     // masks parameter is used in the rendering loop below
@@ -396,6 +463,7 @@ export function renderMapData(
             isEnsembleMode,
             maskVariableData,
             ensembleStatisticsByVariable,
+            ensembleRawSamplesByVariable,
         );
     } catch (err) {
         console.error("renderMapData failed (e.g. when changing display variable with masks):", err);
@@ -419,6 +487,7 @@ function runRenderMapData(
         statistic?: "mean" | "std" | "median" | "iqr" | "percentile" | "extremes";
         variable?: string;
         unit?: string;
+        kind?: "binary" | "probability";
     }>,
     ensembleStatistics?: Map<"mean" | "std" | "median" | "iqr" | "percentile" | "extremes", Float32Array> | null,
     isEnsembleMode?: boolean,
@@ -426,6 +495,10 @@ function runRenderMapData(
     ensembleStatisticsByVariable?: Map<
         string,
         Map<"mean" | "std" | "median" | "iqr" | "percentile" | "extremes", Float32Array>
+    > | null,
+    ensembleRawSamplesByVariable?: Map<
+        string,
+        Array<Float32Array | Float64Array>
     > | null,
 ): void {
     const arrayData = dataToArray(data);
@@ -472,9 +545,6 @@ function runRenderMapData(
     if (!Number.isFinite(convertedMax)) convertedMax = 1;
     if (convertedMax <= convertedMin) convertedMax = convertedMin + 1;
 
-    // Set data range for tooltip/legend indicator (use converted values)
-    setDataRange(convertedMin, convertedMax, variable, selectedUnit, isDifference);
-
     const palette =
         paletteOptions.find((p) => p.name === currentPalette) ||
         paletteOptions[0];
@@ -513,6 +583,29 @@ function runRenderMapData(
     const latStep = 150 / height;
 
     const maskVariableArrays = new Map<string, Float32Array | Float64Array>();
+    const probabilityMasks =
+        isEnsembleMode && masks
+            ? masks.filter((mask) => mask.kind === "probability")
+            : [];
+    const binaryMasks =
+        masks?.filter((mask) => mask.kind !== "probability") ?? [];
+    const useProbabilityRendering =
+        Boolean(isEnsembleMode) && probabilityMasks.length > 0;
+    const effectiveColorMin = useProbabilityRendering ? 0 : convertedMin;
+    const effectiveColorMax = useProbabilityRendering ? 1 : convertedMax;
+    const effectiveTooltipMin = useProbabilityRendering ? 0 : convertedMin;
+    const effectiveTooltipMax = useProbabilityRendering ? 100 : convertedMax;
+
+    // Set data range for tooltip/legend indicator (use converted values)
+    setDataRange(
+        effectiveTooltipMin,
+        effectiveTooltipMax,
+        variable,
+        selectedUnit,
+        isDifference,
+        useProbabilityRendering,
+    );
+
     if (!isEnsembleMode && masks && masks.length > 0 && maskVariableData) {
         const uniqueMaskVars = new Set<string>();
         for (const mask of masks) {
@@ -562,11 +655,11 @@ function runRenderMapData(
             // In ensemble mode: intersection (AND) - pixel must pass ALL masks
             // In other modes: union (OR) - pixel passes if it passes ANY mask
             let passesMask = false;
-            if (masks && masks.length > 0) {
+            if (binaryMasks.length > 0) {
                 if (isEnsembleMode && ensembleStatistics) {
                     // Ensemble mode: intersection logic - must pass ALL masks
                     passesMask = true;
-                    for (const mask of masks) {
+                    for (const mask of binaryMasks) {
                         const lowerUnrestricted =
                             !mask.lowerEdited || mask.lowerBound === null;
                         const upperUnrestricted =
@@ -635,8 +728,20 @@ function runRenderMapData(
                     //   variables we filter on. Each mask's variable is fixed.
                     
                     // Group masks by variable (skip masks without explicit variable)
-                    const masksByVariable = new Map<string, typeof masks>();
-                    for (const mask of masks) {
+                    const masksByVariable = new Map<
+                        string,
+                        Array<{
+                            lowerBound: number | null;
+                            upperBound: number | null;
+                            lowerEdited: boolean;
+                            upperEdited: boolean;
+                            statistic?: "mean" | "std" | "median" | "iqr" | "percentile" | "extremes";
+                            variable?: string;
+                            unit?: string;
+                            kind?: "binary" | "probability";
+                        }>
+                    >();
+                    for (const mask of binaryMasks) {
                         const maskVar = mask.variable;
                         if (!maskVar) continue; // Don't use display variable as fallback
                         if (!masksByVariable.has(maskVar)) {
@@ -716,9 +821,53 @@ function runRenderMapData(
                 passesMask = true;
             }
 
+            let probabilityValue = 1;
+            if (
+                useProbabilityRendering &&
+                probabilityMasks.length > 0 &&
+                isEnsembleMode
+            ) {
+                const idx = (height - 1 - y) * width + x;
+                probabilityValue = 1;
+                for (const mask of probabilityMasks) {
+                    const maskVar = mask.variable || variable;
+                    if (!maskVar) {
+                        probabilityValue = NaN;
+                        break;
+                    }
+                    const sampleArrays =
+                        ensembleRawSamplesByVariable?.get(maskVar);
+                    if (!sampleArrays || sampleArrays.length === 0) {
+                        probabilityValue = NaN;
+                        break;
+                    }
+                    const maskUnit = mask.unit || selectedUnit;
+                    const p = computeGaussianRangeProbabilityAtIndex(
+                        sampleArrays,
+                        idx,
+                        maskVar,
+                        maskUnit,
+                        mask.lowerBound,
+                        mask.upperBound,
+                        mask.lowerEdited,
+                        mask.upperEdited,
+                    );
+                    if (!Number.isFinite(p)) {
+                        probabilityValue = NaN;
+                        break;
+                    }
+                    probabilityValue *= p;
+                }
+                if (!Number.isFinite(probabilityValue)) {
+                    probabilityValue = 0;
+                } else {
+                    probabilityValue = Math.max(0, Math.min(1, probabilityValue));
+                }
+            }
+
             let r: number, g: number, b: number;
             
-            if (!passesMask && masks && masks.length > 0) {
+            if (!passesMask && binaryMasks.length > 0) {
                 // Render masked pixels in dark gray (slightly lighter than background)
                 // Background is #070b13 (rgb(7, 11, 19)), use a slightly lighter gray
                 r = 20;
@@ -726,18 +875,21 @@ function runRenderMapData(
                 b = 32;
             } else {
                 // Guard against zero/NaN range and non-finite displayValue to avoid crash when switching variables
-                const range = convertedMax - convertedMin;
+                const range = effectiveColorMax - effectiveColorMin;
+                const colorValue = useProbabilityRendering
+                    ? probabilityValue
+                    : displayValue;
                 let normalized: number;
                 if (
                     !Number.isFinite(range) ||
                     range <= 0 ||
-                    !Number.isFinite(displayValue)
+                    !Number.isFinite(colorValue)
                 ) {
                     normalized = 0.5;
                 } else {
                     normalized = Math.min(
                         1,
-                        Math.max(0, (displayValue - convertedMin) / range),
+                        Math.max(0, (colorValue - effectiveColorMin) / range),
                     );
                     if (!Number.isFinite(normalized)) normalized = 0.5;
                 }
@@ -770,7 +922,9 @@ function runRenderMapData(
                     pixels[pixelIdx + 2] = b;
                     pixels[pixelIdx + 3] = 255;
                     // Store original value for hover lookup (will be converted in tooltip)
-                    valueLookup[iy][ix] = value;
+                    valueLookup[iy][ix] = useProbabilityRendering
+                        ? probabilityValue * 100
+                        : value;
                 }
             }
         }

@@ -1218,6 +1218,14 @@ export type AppState = {
         string,
         Map<EnsembleStatistic, { min: number; max: number }>
     >;
+    ensembleRawSamplesByVariable: Map<
+        string,
+        Array<Float32Array | Float64Array>
+    >;
+    ensembleProbabilityRawRangesByVariable: Map<
+        string,
+        { min: number; max: number }
+    >;
     isLoading: boolean;
     loadingProgress: number;
     dataError: string | null;
@@ -1240,6 +1248,7 @@ export type AppState = {
         upperBound: number | null;
         lowerEdited: boolean;
         upperEdited: boolean;
+        kind?: "binary" | "probability";
         statistic?: EnsembleStatistic; // Used in ensemble mode
         variable?: string; // Variable for this mask (explore + ensemble)
         unit?: string; // Unit for this mask (explore + ensemble)
@@ -1342,6 +1351,14 @@ const state: AppState = {
     ensembleStatisticRangesByVariable: new Map<
         string,
         Map<EnsembleStatistic, { min: number; max: number }>
+    >(),
+    ensembleRawSamplesByVariable: new Map<
+        string,
+        Array<Float32Array | Float64Array>
+    >(),
+    ensembleProbabilityRawRangesByVariable: new Map<
+        string,
+        { min: number; max: number }
     >(),
     isLoading: false,
     loadingProgress: 0,
@@ -1507,6 +1524,21 @@ function getEnsembleMaskRange(
         unitLabel,
         { isDifference: isDifferenceEnsembleStatistic(stat) },
     );
+    return { min: converted.min, max: converted.max };
+}
+
+function getEnsembleProbabilityMaskRange(
+    variable = state.ensembleVariable,
+    unitLabel = state.ensembleUnit,
+): {
+    min: number | null;
+    max: number | null;
+} {
+    const rawRange = state.ensembleProbabilityRawRangesByVariable.get(variable);
+    if (!rawRange) {
+        return { min: null, max: null };
+    }
+    const converted = convertMinMax(rawRange.min, rawRange.max, variable, unitLabel);
     return { min: converted.min, max: converted.max };
 }
 
@@ -4135,39 +4167,60 @@ async function loadEnsembleData(
         state.ensembleDate = ensembleDate;
     }
 
-    // Determine which variable/statistic combinations are needed:
-    // - always the currently displayed variable/statistic
-    // - plus all mask variable/statistic pairs (for per-mask filtering)
+    // Determine which ensemble data are needed:
+    // - statistics: currently displayed variable/statistic + binary mask variable/statistic pairs
+    // - raw samples: only for probability masks
     const statsByVariable = new Map<string, Map<EnsembleStatistic, Float32Array>>();
     const rangesByVariable = new Map<
         string,
         Map<EnsembleStatistic, { min: number; max: number }>
     >();
+    const rawSamplesByVariable = new Map<
+        string,
+        Array<Float32Array | Float64Array>
+    >();
+    const probabilityRawRangesByVariable = new Map<
+        string,
+        { min: number; max: number }
+    >();
     const requestedStatsByVariable = new Map<string, Set<EnsembleStatistic>>();
+    const requestedRawVariables = new Set<string>();
     const addRequestedStat = (variable: string, stat: EnsembleStatistic) => {
         if (!requestedStatsByVariable.has(variable)) {
             requestedStatsByVariable.set(variable, new Set<EnsembleStatistic>());
         }
         requestedStatsByVariable.get(variable)!.add(stat);
     };
+    const addRequestedRawVariable = (variable: string) => {
+        requestedRawVariables.add(variable);
+    };
     addRequestedStat(state.ensembleVariable, state.ensembleStatistic);
     if (state.masks && state.masks.length > 0) {
         for (const mask of state.masks) {
-            addRequestedStat(
-                mask.variable || state.ensembleVariable,
-                mask.statistic || "mean",
-            );
+            const maskVariable = mask.variable || state.ensembleVariable;
+            if (mask.kind === "probability") {
+                addRequestedRawVariable(maskVariable);
+            } else {
+                addRequestedStat(maskVariable, mask.statistic || "mean");
+            }
         }
     }
 
-    const variablesToProcess = Array.from(requestedStatsByVariable.keys());
+    const variablesToProcess = Array.from(
+        new Set<string>([
+            ...Array.from(requestedStatsByVariable.keys()),
+            ...Array.from(requestedRawVariables.values()),
+        ]),
+    );
     const requestsPerVariable = activeScenarios.length * activeModels.length;
     const totalRequests = Math.max(1, requestsPerVariable * variablesToProcess.length);
     let completedRequests = 0;
     onProgress?.(10);
 
     for (const targetVariable of variablesToProcess) {
-        const neededStats = requestedStatsByVariable.get(targetVariable)!;
+        const neededStats =
+            requestedStatsByVariable.get(targetVariable) ??
+            new Set<EnsembleStatistic>();
         const allDataArrays: (Float32Array | Float64Array)[] = [];
         const allShapes: Array<[number, number]> = [];
 
@@ -4214,6 +4267,28 @@ async function loadEnsembleData(
             continue;
         }
 
+        if (requestedRawVariables.has(targetVariable)) {
+            rawSamplesByVariable.set(targetVariable, allDataArrays);
+            let rawMin = Infinity;
+            let rawMax = -Infinity;
+            for (const arrayData of allDataArrays) {
+                for (let i = 0; i < arrayData.length; i++) {
+                    const raw = arrayData[i];
+                    if (!Number.isFinite(raw)) continue;
+                    const clipped =
+                        targetVariable === "hurs" ? Math.min(raw, 100) : raw;
+                    rawMin = Math.min(rawMin, clipped);
+                    rawMax = Math.max(rawMax, clipped);
+                }
+            }
+            if (Number.isFinite(rawMin) && Number.isFinite(rawMax)) {
+                probabilityRawRangesByVariable.set(targetVariable, {
+                    min: rawMin,
+                    max: rawMax,
+                });
+            }
+        }
+
         // Verify all arrays have the same shape
         const firstShape = allShapes[0];
         for (let i = 1; i < allShapes.length; i++) {
@@ -4227,84 +4302,86 @@ async function loadEnsembleData(
             }
         }
 
-        const length = allDataArrays[0].length;
-        const statsArrays = new Map<EnsembleStatistic, Float32Array>();
-        const statsRanges = new Map<
-            EnsembleStatistic,
-            { min: number; max: number }
-        >();
-        for (const stat of neededStats) {
-            statsArrays.set(stat, new Float32Array(length));
-            statsRanges.set(stat, { min: Infinity, max: -Infinity });
-        }
-
-        // Compute requested statistics for this variable
-        for (let i = 0; i < length; i++) {
-            const values: number[] = [];
-            for (const arrayData of allDataArrays) {
-                const val = arrayData[i];
-                if (!isFinite(val)) continue;
-                values.push(
-                    targetVariable === "hurs" ? Math.min(val, 100) : val,
-                );
-            }
-
-            if (values.length === 0) {
-                for (const stat of neededStats) {
-                    statsArrays.get(stat)![i] = NaN;
-                }
-                continue;
-            }
-
-            const sorted =
-                neededStats.has("median") ||
-                neededStats.has("iqr") ||
-                neededStats.has("percentile")
-                    ? [...values].sort((a, b) => a - b)
-                    : null;
-            const mean =
-                neededStats.has("mean") || neededStats.has("std")
-                    ? values.reduce((a, b) => a + b, 0) / values.length
-                    : 0;
-
+        if (neededStats.size > 0) {
+            const length = allDataArrays[0].length;
+            const statsArrays = new Map<EnsembleStatistic, Float32Array>();
+            const statsRanges = new Map<
+                EnsembleStatistic,
+                { min: number; max: number }
+            >();
             for (const stat of neededStats) {
-                let result: number;
-                if (stat === "mean") {
-                    result = mean;
-                } else if (stat === "median") {
-                    result = percentile(sorted!, 50);
-                } else if (stat === "std") {
-                    const variance =
-                        values.reduce(
-                            (sum, val) => sum + Math.pow(val - mean, 2),
-                            0,
-                        ) / values.length;
-                    result = Math.sqrt(variance);
-                } else if (stat === "iqr") {
-                    const q75 = percentile(sorted!, 75);
-                    const q25 = percentile(sorted!, 25);
-                    result = q75 - q25;
-                } else if (stat === "percentile") {
-                    const p90 = percentile(sorted!, 90);
-                    const p10 = percentile(sorted!, 10);
-                    result = p90 - p10;
-                } else if (stat === "extremes") {
-                    result = Math.max(...values) - Math.min(...values);
-                } else {
-                    result = mean;
+                statsArrays.set(stat, new Float32Array(length));
+                statsRanges.set(stat, { min: Infinity, max: -Infinity });
+            }
+
+            // Compute requested statistics for this variable
+            for (let i = 0; i < length; i++) {
+                const values: number[] = [];
+                for (const arrayData of allDataArrays) {
+                    const val = arrayData[i];
+                    if (!isFinite(val)) continue;
+                    values.push(
+                        targetVariable === "hurs" ? Math.min(val, 100) : val,
+                    );
                 }
 
-                statsArrays.get(stat)![i] = result;
-                if (isFinite(result)) {
-                    const range = statsRanges.get(stat)!;
-                    range.min = Math.min(range.min, result);
-                    range.max = Math.max(range.max, result);
+                if (values.length === 0) {
+                    for (const stat of neededStats) {
+                        statsArrays.get(stat)![i] = NaN;
+                    }
+                    continue;
+                }
+
+                const sorted =
+                    neededStats.has("median") ||
+                    neededStats.has("iqr") ||
+                    neededStats.has("percentile")
+                        ? [...values].sort((a, b) => a - b)
+                        : null;
+                const mean =
+                    neededStats.has("mean") || neededStats.has("std")
+                        ? values.reduce((a, b) => a + b, 0) / values.length
+                        : 0;
+
+                for (const stat of neededStats) {
+                    let result: number;
+                    if (stat === "mean") {
+                        result = mean;
+                    } else if (stat === "median") {
+                        result = percentile(sorted!, 50);
+                    } else if (stat === "std") {
+                        const variance =
+                            values.reduce(
+                                (sum, val) => sum + Math.pow(val - mean, 2),
+                                0,
+                            ) / values.length;
+                        result = Math.sqrt(variance);
+                    } else if (stat === "iqr") {
+                        const q75 = percentile(sorted!, 75);
+                        const q25 = percentile(sorted!, 25);
+                        result = q75 - q25;
+                    } else if (stat === "percentile") {
+                        const p90 = percentile(sorted!, 90);
+                        const p10 = percentile(sorted!, 10);
+                        result = p90 - p10;
+                    } else if (stat === "extremes") {
+                        result = Math.max(...values) - Math.min(...values);
+                    } else {
+                        result = mean;
+                    }
+
+                    statsArrays.get(stat)![i] = result;
+                    if (isFinite(result)) {
+                        const range = statsRanges.get(stat)!;
+                        range.min = Math.min(range.min, result);
+                        range.max = Math.max(range.max, result);
+                    }
                 }
             }
-        }
 
-        statsByVariable.set(targetVariable, statsArrays);
-        rangesByVariable.set(targetVariable, statsRanges);
+            statsByVariable.set(targetVariable, statsArrays);
+            rangesByVariable.set(targetVariable, statsRanges);
+        }
     }
 
     onProgress?.(90);
@@ -4337,6 +4414,8 @@ async function loadEnsembleData(
         new Map<EnsembleStatistic, { min: number; max: number }>();
     state.ensembleStatisticsByVariable = statsByVariable;
     state.ensembleStatisticRangesByVariable = rangesByVariable;
+    state.ensembleRawSamplesByVariable = rawSamplesByVariable;
+    state.ensembleProbabilityRawRangesByVariable = probabilityRawRangesByVariable;
 
     // Sync unedited ensemble mask bounds to newly computed ranges
     if (state.masks.length > 0) {
@@ -4344,11 +4423,14 @@ async function loadEnsembleData(
             const maskStatistic = mask.statistic || "mean";
             const maskVariable = mask.variable || state.ensembleVariable;
             const maskUnit = mask.unit || state.ensembleUnit;
-            const range = getEnsembleMaskRange(
-                maskStatistic,
-                maskVariable,
-                maskUnit,
-            );
+            const range =
+                mask.kind === "probability"
+                    ? getEnsembleProbabilityMaskRange(maskVariable, maskUnit)
+                    : getEnsembleMaskRange(
+                          maskStatistic,
+                          maskVariable,
+                          maskUnit,
+                      );
             if (!mask.lowerEdited) {
                 mask.lowerBound = range.min;
             }
@@ -5917,6 +5999,9 @@ function render() {
         state.canvasView === "map" ? "translateX(0%)" : "translateX(100%)";
     const tabTransform =
         state.panelTab === "Manual" ? "translateX(0%)" : "translateX(-50%)";
+    const hasProbabilityMasks =
+        state.mode === "Ensemble" &&
+        state.masks.some((mask) => mask.kind === "probability");
 
     root.innerHTML = `
     <div style="${styleAttr(styles.page)}">
@@ -5929,21 +6014,32 @@ function render() {
             state.dataMin !== null &&
             state.dataMax !== null
                 ? renderMapLegend(
-                      state.mode === "Ensemble"
-                          ? state.ensembleVariable
-                          : state.variable,
-                      state.dataMin,
-                      state.dataMax,
+                      hasProbabilityMasks
+                          ? "probability"
+                          : state.mode === "Ensemble"
+                            ? state.ensembleVariable
+                            : state.variable,
+                      hasProbabilityMasks ? 0 : state.dataMin,
+                      hasProbabilityMasks ? 100 : state.dataMax,
                       state.metaData,
-                      state.mode === "Ensemble"
-                          ? state.ensembleUnit
-                          : state.selectedUnit,
+                      hasProbabilityMasks
+                          ? undefined
+                          : state.mode === "Ensemble"
+                            ? state.ensembleUnit
+                            : state.selectedUnit,
                       state.mode === "Compare" ||
                           (state.mode === "Ensemble" &&
                               isDifferenceEnsembleStatistic(
                                   state.ensembleStatistic,
                               )),
                       state.mapRangeOpen ? 70 : 0,
+                      hasProbabilityMasks
+                          ? {
+                                titleOverride: "Joint Probability",
+                                unitOverride: "%",
+                                skipConversion: true,
+                            }
+                          : undefined,
                   )
                 : ""
         }
@@ -6205,6 +6301,9 @@ function render() {
                         : undefined,
                     state.mode === "Ensemble"
                         ? state.ensembleStatisticsByVariable
+                        : null,
+                    state.mode === "Ensemble"
+                        ? state.ensembleRawSamplesByVariable
                         : null,
                 );
 
@@ -6975,6 +7074,9 @@ function renderManualSection(params: {
     modeIndicatorTransform: string;
 }) {
     const { modeTransform, resolutionFill, modeIndicatorTransform } = params;
+    const hasProbabilityMasks =
+        state.mode === "Ensemble" &&
+        state.masks.some((mask) => mask.kind === "probability");
 
     const renderCollapsible = (
         label: string,
@@ -7247,11 +7349,16 @@ function renderManualSection(params: {
                                         : null;
                                 const ensembleRange =
                                     state.mode === "Ensemble"
-                                        ? getEnsembleMaskRange(
-                                              mask.statistic || "mean",
-                                              maskVar,
-                                              maskUnit,
-                                          )
+                                        ? mask.kind === "probability"
+                                            ? getEnsembleProbabilityMaskRange(
+                                                  maskVar,
+                                                  maskUnit,
+                                              )
+                                            : getEnsembleMaskRange(
+                                                  mask.statistic || "mean",
+                                                  maskVar,
+                                                  maskUnit,
+                                              )
                                         : null;
                                 const lowerPlaceholder =
                                     state.mode === "Ensemble"
@@ -7277,42 +7384,48 @@ function renderManualSection(params: {
                                       gap: 8,
                                       marginBottom: 4,
                                   })}">
-                                    ${renderSelect(
-                                        "maskStatistic",
-                                        [
-                                            "mean",
-                                            "std",
-                                            "median",
-                                            "iqr",
-                                            "percentile",
-                                            "extremes",
-                                        ],
-                                        mask.statistic || "mean",
-                                        {
-                                            dataKey: "maskStatistic",
-                                            selectedLabel:
-                                                mask.statistic === "mean"
-                                                    ? "Mean"
-                                                    : mask.statistic === "std"
-                                                      ? "Std"
-                                                      : mask.statistic ===
-                                                          "median"
-                                                        ? "Median"
-                                                        : mask.statistic ===
-                                                            "iqr"
-                                                          ? "IQR"
-                                                          : mask.statistic ===
-                                                              "percentile"
-                                                            ? "Percentile"
-                                                            : mask.statistic ===
-                                                                "extremes"
-                                                              ? "Extremes"
-                                                              : "Mean",
-                                        },
-                                    ).replace(
-                                        'class="custom-select-wrapper"',
-                                        `class="custom-select-wrapper" data-mask-index="${index}" style="width: 100px;"`,
-                                    )}
+                                    ${
+                                        mask.kind === "probability"
+                                            ? ""
+                                            : renderSelect(
+                                                  "maskStatistic",
+                                                  [
+                                                      "mean",
+                                                      "std",
+                                                      "median",
+                                                      "iqr",
+                                                      "percentile",
+                                                      "extremes",
+                                                  ],
+                                                  mask.statistic || "mean",
+                                                  {
+                                                      dataKey: "maskStatistic",
+                                                      selectedLabel:
+                                                          mask.statistic ===
+                                                          "mean"
+                                                              ? "Mean"
+                                                              : mask.statistic ===
+                                                                  "std"
+                                                                ? "Std"
+                                                                : mask.statistic ===
+                                                                    "median"
+                                                                  ? "Median"
+                                                                  : mask.statistic ===
+                                                                      "iqr"
+                                                                    ? "IQR"
+                                                                    : mask.statistic ===
+                                                                        "percentile"
+                                                                      ? "Percentile"
+                                                                      : mask.statistic ===
+                                                                          "extremes"
+                                                                        ? "Extremes"
+                                                                        : "Mean",
+                                                  },
+                                              ).replace(
+                                                  'class="custom-select-wrapper"',
+                                                  `class="custom-select-wrapper" data-mask-index="${index}" style="width: 100px;"`,
+                                              )
+                                    }
                                     ${renderSelect(
                                         "maskVariable",
                                         variables,
@@ -7512,6 +7625,34 @@ function renderManualSection(params: {
                         >
                           + Add Mask
                         </button>
+                        ${
+                            state.mode === "Ensemble"
+                                ? `
+                        <button
+                          type="button"
+                          data-action="add-probability-mask"
+                          style="${styleAttr({
+                              padding: "8px 14px",
+                              borderRadius: 10,
+                              border: "1px solid var(--border-subtle)",
+                              background: "var(--bg-transparent)",
+                              color: "var(--text-secondary)",
+                              fontSize: 12.5,
+                              fontWeight: 600,
+                              cursor: "pointer",
+                              transition: "all 0.15s ease",
+                              textAlign: "left",
+                              width: "100%",
+                              marginTop: 4,
+                          })}"
+                          onmouseover="this.style.borderColor='var(--border-medium)'; this.style.background='var(--bg-subtle)'"
+                          onmouseout="this.style.borderColor='var(--border-subtle)'; this.style.background='var(--bg-transparent)'"
+                        >
+                          + Add Probability Mask
+                        </button>
+                        `
+                                : ""
+                        }
                       </div>
                       `
                       : `
@@ -7536,6 +7677,34 @@ function renderManualSection(params: {
                       >
                         + Add Mask
                       </button>
+                      ${
+                          state.mode === "Ensemble"
+                              ? `
+                      <button
+                        type="button"
+                        data-action="add-probability-mask"
+                        style="${styleAttr({
+                            padding: "8px 14px",
+                            borderRadius: 10,
+                            border: "1px solid var(--border-subtle)",
+                            background: "var(--bg-transparent)",
+                            color: "var(--text-secondary)",
+                            fontSize: 12.5,
+                            fontWeight: 600,
+                            cursor: "pointer",
+                            transition: "all 0.15s ease",
+                            textAlign: "left",
+                            width: "100%",
+                            marginTop: 4,
+                        })}"
+                        onmouseover="this.style.borderColor='var(--border-medium)'; this.style.background='var(--bg-subtle)'"
+                        onmouseout="this.style.borderColor='var(--border-subtle)'; this.style.background='var(--bg-transparent)'"
+                      >
+                        + Add Probability Mask
+                      </button>
+                      `
+                              : ""
+                      }
                       `
               }
             </div>
@@ -7803,11 +7972,16 @@ function renderManualSection(params: {
                                             : null;
                                     const ensembleRange =
                                         state.mode === "Ensemble"
-                                            ? getEnsembleMaskRange(
-                                                  mask.statistic || "mean",
-                                                  maskVar,
-                                                  maskUnit,
-                                              )
+                                            ? mask.kind === "probability"
+                                                ? getEnsembleProbabilityMaskRange(
+                                                      maskVar,
+                                                      maskUnit,
+                                                  )
+                                                : getEnsembleMaskRange(
+                                                      mask.statistic || "mean",
+                                                      maskVar,
+                                                      maskUnit,
+                                                  )
                                             : null;
                                     const lowerPlaceholder =
                                         state.mode === "Ensemble"
@@ -7831,48 +8005,51 @@ function renderManualSection(params: {
                               })}">
                                 ${
                                     state.mode === "Ensemble"
-                                        ? renderSelect(
-                                              "maskStatistic",
-                                              [
-                                                  "mean",
-                                                  "std",
-                                                  "median",
-                                                  "iqr",
-                                                  "percentile",
-                                                  "extremes",
-                                              ],
-                                              mask.statistic || "mean",
-                                              {
-                                                  dataKey: "maskStatistic",
-                                                  selectedLabel:
-                                                      mask.statistic === "mean"
-                                                          ? "Mean"
-                                                          : mask.statistic ===
-                                                              "std"
-                                                            ? "Std"
-                                                            : mask.statistic ===
-                                                                "median"
-                                                              ? "Median"
-                                                              : mask.statistic ===
-                                                                  "iqr"
-                                                                ? "IQR"
+                                        ? (mask.kind === "probability"
+                                              ? ""
+                                              : renderSelect(
+                                                    "maskStatistic",
+                                                    [
+                                                        "mean",
+                                                        "std",
+                                                        "median",
+                                                        "iqr",
+                                                        "percentile",
+                                                        "extremes",
+                                                    ],
+                                                    mask.statistic || "mean",
+                                                    {
+                                                        dataKey: "maskStatistic",
+                                                        selectedLabel:
+                                                            mask.statistic ===
+                                                            "mean"
+                                                                ? "Mean"
                                                                 : mask.statistic ===
-                                                                    "percentile"
-                                                                  ? "Percentile"
+                                                                    "std"
+                                                                  ? "Std"
                                                                   : mask.statistic ===
-                                                                      "extremes"
-                                                                    ? "Extremes"
-                                                                    : "Mean",
-                                              },
-                                          )
-                                              .replace(
-                                                  'data-key="maskStatistic"',
-                                                  `data-key="maskStatistic" data-mask-index="${index}"`,
-                                              )
-                                              .replace(
-                                                  'class="custom-select-wrapper"',
-                                                  `class="custom-select-wrapper" data-mask-index="${index}"`,
-                                              ) +
+                                                                      "median"
+                                                                    ? "Median"
+                                                                    : mask.statistic ===
+                                                                        "iqr"
+                                                                      ? "IQR"
+                                                                      : mask.statistic ===
+                                                                          "percentile"
+                                                                        ? "Percentile"
+                                                                        : mask.statistic ===
+                                                                            "extremes"
+                                                                          ? "Extremes"
+                                                                          : "Mean",
+                                                    },
+                                                )
+                                                    .replace(
+                                                        'data-key="maskStatistic"',
+                                                        `data-key="maskStatistic" data-mask-index="${index}"`,
+                                                    )
+                                                    .replace(
+                                                        'class="custom-select-wrapper"',
+                                                        `class="custom-select-wrapper" data-mask-index="${index}"`,
+                                                    )) +
                                           renderSelect(
                                               "maskVariable",
                                               variables,
@@ -8039,6 +8216,34 @@ function renderManualSection(params: {
                             >
                               + Add Mask
                             </button>
+                            ${
+                                state.mode === "Ensemble"
+                                    ? `
+                            <button
+                              type="button"
+                              data-action="add-probability-mask"
+                              style="${styleAttr({
+                                  padding: "8px 14px",
+                                  borderRadius: 10,
+                                  border: "1px solid var(--border-subtle)",
+                                  background: "var(--bg-transparent)",
+                                  color: "var(--text-secondary)",
+                                  fontSize: 12.5,
+                                  fontWeight: 600,
+                                  cursor: "pointer",
+                                  transition: "all 0.15s ease",
+                                  textAlign: "left",
+                                  width: "100%",
+                                  marginTop: 4,
+                              })}"
+                              onmouseover="this.style.borderColor='var(--border-medium)'; this.style.background='var(--bg-subtle)'"
+                              onmouseout="this.style.borderColor='var(--border-subtle)'; this.style.background='var(--bg-transparent)'"
+                            >
+                              + Add Probability Mask
+                            </button>
+                            `
+                                    : ""
+                            }
                           </div>
                           `
                           : `
@@ -8063,6 +8268,34 @@ function renderManualSection(params: {
                           >
                             + Add Mask
                           </button>
+                          ${
+                              state.mode === "Ensemble"
+                                  ? `
+                          <button
+                            type="button"
+                            data-action="add-probability-mask"
+                            style="${styleAttr({
+                                padding: "8px 14px",
+                                borderRadius: 10,
+                                border: "1px solid var(--border-subtle)",
+                                background: "var(--bg-transparent)",
+                                color: "var(--text-secondary)",
+                                fontSize: 12.5,
+                                fontWeight: 600,
+                                cursor: "pointer",
+                                transition: "all 0.15s ease",
+                                textAlign: "left",
+                                width: "100%",
+                                marginTop: 4,
+                            })}"
+                            onmouseover="this.style.borderColor='var(--border-medium)'; this.style.background='var(--bg-subtle)'"
+                            onmouseout="this.style.borderColor='var(--border-subtle)'; this.style.background='var(--bg-transparent)'"
+                          >
+                            + Add Probability Mask
+                          </button>
+                          `
+                                  : ""
+                          }
                           `
                   }
                 </div>
@@ -8103,6 +8336,10 @@ function renderManualSection(params: {
                       {
                           dataKey: "ensembleVariable",
                           infoType: "variable",
+                          disabled: hasProbabilityMasks,
+                          selectedLabel: hasProbabilityMasks
+                              ? "Probability"
+                              : undefined,
                       },
                   ),
               )}
@@ -8296,11 +8533,16 @@ function renderManualSection(params: {
                                         : null;
                                 const ensembleRange =
                                     state.mode === "Ensemble"
-                                        ? getEnsembleMaskRange(
-                                              mask.statistic || "mean",
-                                              maskVar,
-                                              maskUnit,
-                                          )
+                                        ? mask.kind === "probability"
+                                            ? getEnsembleProbabilityMaskRange(
+                                                  maskVar,
+                                                  maskUnit,
+                                              )
+                                            : getEnsembleMaskRange(
+                                                  mask.statistic || "mean",
+                                                  maskVar,
+                                                  maskUnit,
+                                              )
                                         : null;
                                 const lowerPlaceholder =
                                     state.mode === "Ensemble"
@@ -8326,42 +8568,48 @@ function renderManualSection(params: {
                                       gap: 8,
                                       marginBottom: 4,
                                   })}">
-                                    ${renderSelect(
-                                        "maskStatistic",
-                                        [
-                                            "mean",
-                                            "std",
-                                            "median",
-                                            "iqr",
-                                            "percentile",
-                                            "extremes",
-                                        ],
-                                        mask.statistic || "mean",
-                                        {
-                                            dataKey: "maskStatistic",
-                                            selectedLabel:
-                                                mask.statistic === "mean"
-                                                    ? "Mean"
-                                                    : mask.statistic === "std"
-                                                      ? "Std"
-                                                      : mask.statistic ===
-                                                          "median"
-                                                        ? "Median"
-                                                        : mask.statistic ===
-                                                            "iqr"
-                                                          ? "IQR"
-                                                          : mask.statistic ===
-                                                              "percentile"
-                                                            ? "Percentile"
-                                                            : mask.statistic ===
-                                                                "extremes"
-                                                              ? "Extremes"
-                                                              : "Mean",
-                                        },
-                                    ).replace(
-                                        'class="custom-select-wrapper"',
-                                        `class="custom-select-wrapper" data-mask-index="${index}" style="width: 100px;"`,
-                                    )}
+                                    ${
+                                        mask.kind === "probability"
+                                            ? ""
+                                            : renderSelect(
+                                                  "maskStatistic",
+                                                  [
+                                                      "mean",
+                                                      "std",
+                                                      "median",
+                                                      "iqr",
+                                                      "percentile",
+                                                      "extremes",
+                                                  ],
+                                                  mask.statistic || "mean",
+                                                  {
+                                                      dataKey: "maskStatistic",
+                                                      selectedLabel:
+                                                          mask.statistic ===
+                                                          "mean"
+                                                              ? "Mean"
+                                                              : mask.statistic ===
+                                                                  "std"
+                                                                ? "Std"
+                                                                : mask.statistic ===
+                                                                    "median"
+                                                                  ? "Median"
+                                                                  : mask.statistic ===
+                                                                      "iqr"
+                                                                    ? "IQR"
+                                                                    : mask.statistic ===
+                                                                        "percentile"
+                                                                      ? "Percentile"
+                                                                      : mask.statistic ===
+                                                                          "extremes"
+                                                                        ? "Extremes"
+                                                                        : "Mean",
+                                                  },
+                                              ).replace(
+                                                  'class="custom-select-wrapper"',
+                                                  `class="custom-select-wrapper" data-mask-index="${index}" style="width: 100px;"`,
+                                              )
+                                    }
                                     ${renderSelect(
                                         "maskVariable",
                                         variables,
@@ -8561,6 +8809,34 @@ function renderManualSection(params: {
                         >
                           + Add Mask
                         </button>
+                        ${
+                            state.mode === "Ensemble"
+                                ? `
+                        <button
+                          type="button"
+                          data-action="add-probability-mask"
+                          style="${styleAttr({
+                              padding: "8px 14px",
+                              borderRadius: 10,
+                              border: "1px solid var(--border-subtle)",
+                              background: "var(--bg-transparent)",
+                              color: "var(--text-secondary)",
+                              fontSize: 12.5,
+                              fontWeight: 600,
+                              cursor: "pointer",
+                              transition: "all 0.15s ease",
+                              textAlign: "left",
+                              width: "100%",
+                              marginTop: 4,
+                          })}"
+                          onmouseover="this.style.borderColor='var(--border-medium)'; this.style.background='var(--bg-subtle)'"
+                          onmouseout="this.style.borderColor='var(--border-subtle)'; this.style.background='var(--bg-transparent)'"
+                        >
+                          + Add Probability Mask
+                        </button>
+                        `
+                                : ""
+                        }
                       </div>
                       `
                       : `
@@ -8585,6 +8861,34 @@ function renderManualSection(params: {
                       >
                         + Add Mask
                       </button>
+                      ${
+                          state.mode === "Ensemble"
+                              ? `
+                      <button
+                        type="button"
+                        data-action="add-probability-mask"
+                        style="${styleAttr({
+                            padding: "8px 14px",
+                            borderRadius: 10,
+                            border: "1px solid var(--border-subtle)",
+                            background: "var(--bg-transparent)",
+                            color: "var(--text-secondary)",
+                            fontSize: 12.5,
+                            fontWeight: 600,
+                            cursor: "pointer",
+                            transition: "all 0.15s ease",
+                            textAlign: "left",
+                            width: "100%",
+                            marginTop: 4,
+                        })}"
+                        onmouseover="this.style.borderColor='var(--border-medium)'; this.style.background='var(--bg-subtle)'"
+                        onmouseout="this.style.borderColor='var(--border-subtle)'; this.style.background='var(--bg-transparent)'"
+                      >
+                        + Add Probability Mask
+                      </button>
+                      `
+                              : ""
+                      }
                       `
               }
             </div>
@@ -10084,6 +10388,12 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                 render();
                 return;
             case "ensembleVariable":
+                if (
+                    state.mode === "Ensemble" &&
+                    state.masks.some((mask) => mask.kind === "probability")
+                ) {
+                    return;
+                }
                 state.ensembleVariable = val;
                 state.ensembleUnit = getDefaultUnitOption(val).label;
                 triggerMapReload = true;
@@ -10118,6 +10428,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                             true,
                             undefined,
                             state.ensembleStatisticsByVariable,
+                            state.ensembleRawSamplesByVariable,
                         );
 
                         // Redraw gradient with new palette
@@ -10178,11 +10489,17 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                             const maskVariable =
                                 mask.variable || state.ensembleVariable;
                             const maskUnit = mask.unit || state.ensembleUnit;
-                            const range = getEnsembleMaskRange(
-                                stat,
-                                maskVariable,
-                                maskUnit,
-                            );
+                            const range =
+                                mask.kind === "probability"
+                                    ? getEnsembleProbabilityMaskRange(
+                                          maskVariable,
+                                          maskUnit,
+                                      )
+                                    : getEnsembleMaskRange(
+                                          stat,
+                                          maskVariable,
+                                          maskUnit,
+                                      );
                             mask.lowerBound = range.min;
                             mask.upperBound = range.max;
                             mask.lowerEdited = false;
@@ -10196,7 +10513,23 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                             state.mode === "Ensemble" &&
                             state.canvasView === "map"
                         ) {
-                            void loadClimateData();
+                            const maskVariableForData =
+                                mask.variable || state.ensembleVariable;
+                            const hasData =
+                                mask.kind === "probability"
+                                    ? state.ensembleRawSamplesByVariable.has(
+                                          maskVariableForData,
+                                      )
+                                    : Boolean(
+                                          state.ensembleStatisticsByVariable
+                                              .get(maskVariableForData)
+                                              ?.has(stat),
+                                      );
+                            if (hasData) {
+                                // No reload needed: render() already refreshed map from cache.
+                            } else {
+                                void loadClimateData();
+                            }
                         }
                     }
                 }
@@ -10216,11 +10549,17 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                         m.unit = getDefaultUnitOption(val).label;
                         if (state.mode === "Ensemble") {
                             const stat = m.statistic || "mean";
-                            const range = getEnsembleMaskRange(
-                                stat,
-                                m.variable,
-                                m.unit,
-                            );
+                            const range =
+                                m.kind === "probability"
+                                    ? getEnsembleProbabilityMaskRange(
+                                          m.variable,
+                                          m.unit,
+                                      )
+                                    : getEnsembleMaskRange(
+                                          stat,
+                                          m.variable,
+                                          m.unit,
+                                      );
                             m.lowerBound = range.min;
                             m.upperBound = range.max;
                             m.lowerEdited = false;
@@ -10240,9 +10579,31 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                                 state.mode === "Ensemble") &&
                             state.canvasView === "map"
                         ) {
-                            // Reload so we fetch/cache the new mask variable/statistics.
-                            void loadClimateData();
-                            render(); // show loading state
+                            let needsReload = false;
+                            if (state.mode === "Explore") {
+                                const maskVariable = m.variable || state.variable;
+                                needsReload =
+                                    maskVariable !== state.variable &&
+                                    !state.maskVariableData.has(maskVariable);
+                            } else {
+                                const maskVariable =
+                                    m.variable || state.ensembleVariable;
+                                needsReload =
+                                    m.kind === "probability"
+                                        ? !state.ensembleRawSamplesByVariable.has(
+                                              maskVariable,
+                                          )
+                                        : !state.ensembleStatisticsByVariable
+                                              .get(maskVariable)
+                                              ?.has(m.statistic || "mean");
+                            }
+                            if (needsReload) {
+                                // Reload only when required data is missing from cache.
+                                void loadClimateData();
+                                render(); // show loading state
+                            } else {
+                                // No reload needed: render() already refreshed map from cache.
+                            }
                         }
                     }
                 }
@@ -10260,11 +10621,17 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                         const mask = state.masks[index];
                         mask.unit = val;
                         if (state.mode === "Ensemble") {
-                            const range = getEnsembleMaskRange(
-                                mask.statistic || "mean",
-                                mask.variable || state.ensembleVariable,
-                                mask.unit,
-                            );
+                            const range =
+                                mask.kind === "probability"
+                                    ? getEnsembleProbabilityMaskRange(
+                                          mask.variable || state.ensembleVariable,
+                                          mask.unit,
+                                      )
+                                    : getEnsembleMaskRange(
+                                          mask.statistic || "mean",
+                                          mask.variable || state.ensembleVariable,
+                                          mask.unit,
+                                      );
                             mask.lowerBound = range.min;
                             mask.upperBound = range.max;
                             mask.lowerEdited = false;
@@ -10275,7 +10642,8 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                             state.mode === "Ensemble" &&
                             state.canvasView === "map"
                         ) {
-                            void loadClimateData();
+                            // Unit changes only affect value conversion, not data loading.
+                            // render() above already applies the unit conversion immediately.
                         }
                     }
                 }
@@ -11035,61 +11403,85 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
     );
 
     // Mask handlers
+    const createMask = (kind: "binary" | "probability") => {
+        if (kind === "probability" && state.mode !== "Ensemble") {
+            return;
+        }
+        // Initialize new mask with mode-appropriate defaults
+        let lowerBound = state.dataMin;
+        let upperBound = state.dataMax;
+        if (state.mode === "Explore") {
+            const range = getMaskRangeFor(
+                state.variable,
+                state.selectedUnit,
+            );
+            if (range) {
+                lowerBound = range.min;
+                upperBound = range.max;
+            }
+        } else if (state.mode === "Ensemble") {
+            const range =
+                kind === "probability"
+                    ? getEnsembleProbabilityMaskRange(
+                          state.ensembleVariable,
+                          state.ensembleUnit,
+                      )
+                    : getEnsembleMaskRange(
+                          "mean",
+                          state.ensembleVariable,
+                          state.ensembleUnit,
+                      );
+            lowerBound = range.min;
+            upperBound = range.max;
+        }
+        const newMask: {
+            id: number;
+            lowerBound: number | null;
+            upperBound: number | null;
+            lowerEdited: boolean;
+            upperEdited: boolean;
+            kind?: "binary" | "probability";
+            statistic?: EnsembleStatistic;
+            variable?: string;
+            unit?: string;
+        } = {
+            id: nextMaskId++,
+            lowerBound,
+            upperBound,
+            lowerEdited: false,
+            upperEdited: false,
+            kind,
+        };
+        // In ensemble mode, default to "mean" statistic and current variable/unit
+        if (state.mode === "Ensemble") {
+            newMask.statistic = "mean";
+            newMask.variable = state.ensembleVariable;
+            newMask.unit = state.ensembleUnit;
+        }
+        // In explore mode, default to current variable and unit
+        if (state.mode === "Explore") {
+            newMask.variable = state.variable;
+            newMask.unit = state.selectedUnit;
+        }
+        state.masks.push(newMask);
+        render();
+    };
+
     const addMaskBtns = root.querySelectorAll<HTMLButtonElement>(
         '[data-action="add-mask"]',
     );
     addMaskBtns.forEach((btn) => {
         btn.addEventListener("click", () => {
-            // Initialize new mask with mode-appropriate defaults
-            let lowerBound = state.dataMin;
-            let upperBound = state.dataMax;
-            if (state.mode === "Explore") {
-                const range = getMaskRangeFor(
-                    state.variable,
-                    state.selectedUnit,
-                );
-                if (range) {
-                    lowerBound = range.min;
-                    upperBound = range.max;
-                }
-            } else if (state.mode === "Ensemble") {
-                const range = getEnsembleMaskRange(
-                    "mean",
-                    state.ensembleVariable,
-                    state.ensembleUnit,
-                );
-                lowerBound = range.min;
-                upperBound = range.max;
-            }
-            const newMask: {
-                id: number;
-                lowerBound: number | null;
-                upperBound: number | null;
-                lowerEdited: boolean;
-                upperEdited: boolean;
-                statistic?: EnsembleStatistic;
-                variable?: string;
-                unit?: string;
-            } = {
-                id: nextMaskId++,
-                lowerBound,
-                upperBound,
-                lowerEdited: false,
-                upperEdited: false,
-            };
-            // In ensemble mode, default to "mean" statistic
-            if (state.mode === "Ensemble") {
-                newMask.statistic = "mean";
-                newMask.variable = state.ensembleVariable;
-                newMask.unit = state.ensembleUnit;
-            }
-            // In explore mode, default to current variable and unit
-            if (state.mode === "Explore") {
-                newMask.variable = state.variable;
-                newMask.unit = state.selectedUnit;
-            }
-            state.masks.push(newMask);
-            render();
+            createMask("binary");
+        });
+    });
+
+    const addProbabilityMaskBtns = root.querySelectorAll<HTMLButtonElement>(
+        '[data-action="add-probability-mask"]',
+    );
+    addProbabilityMaskBtns.forEach((btn) => {
+        btn.addEventListener("click", () => {
+            createMask("probability");
         });
     });
 

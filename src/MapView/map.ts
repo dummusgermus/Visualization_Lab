@@ -3,6 +3,11 @@ import { hexToRgb } from "../Utils/colorUtils";
 import { dataToArray, type ClimateData } from "../Utils/dataClient";
 import { convertMinMax, convertValue } from "../Utils/unitConverter";
 import { hideTooltip, setDataRange, showTooltip } from "./tooltip";
+import {
+    drawBaseMapOverlay,
+    setBaseMapOverlayInvalidationCallback,
+    setBaseMapOverlayVisibility,
+} from "./baseMapOverlay";
 
 type DrawCallbacks = {
     onClick?: (coords: { lat: number; lon: number }) => void;
@@ -108,6 +113,19 @@ export function resetMapTransform(): void {
 
 export function getCurrentZoomLevel(): number {
     return currentTransform.k;
+}
+
+export function setMapOverlayVisibility(options: {
+    showBorders?: boolean;
+    showLabels?: boolean;
+}) {
+    setBaseMapOverlayVisibility(options);
+    if (cachedMapCanvas) {
+        const targetCanvas = document.querySelector<HTMLCanvasElement>("#map-canvas");
+        if (targetCanvas) {
+            redrawCachedMap(targetCanvas);
+        }
+    }
 }
 
 // Helper function to setup canvas with proper DPI scaling
@@ -412,6 +430,19 @@ function redrawCachedMap(canvas: HTMLCanvasElement): void {
     }
 
     ctx.restore();
+
+    drawBaseMapOverlay(
+        ctx,
+        rect.width,
+        rect.height,
+        cachedMapCanvas.width,
+        cachedMapCanvas.height,
+        {
+            x: currentTransform.x,
+            y: currentTransform.y,
+            k: currentTransform.k,
+        },
+    );
 }
 
 export function renderMapData(
@@ -509,13 +540,9 @@ function runRenderMapData(
 
     const setup = setupCanvas(mapCanvas);
     if (!setup) return;
-    const { ctx, rect, viewWidth, viewHeight } = setup;
+    const { viewWidth, viewHeight } = setup;
     const [height, width] = data.shape;
     const expectedLen = width * height;
-
-    ctx.clearRect(0, 0, rect.width, rect.height);
-
-    ctx.save();
 
     // Cache for hover functionality
     const isDifference =
@@ -933,28 +960,11 @@ function runRenderMapData(
     offscreenCtx.putImageData(imageData, 0, 0);
     cachedMapCanvas = offscreen;
     cachedValueLookup = valueLookup;
-
-    // draw the cached map with current transform
-    ctx.clearRect(0, 0, rect.width, rect.height);
-    ctx.save();
-
-    // Apply D3 zoom transform
-    ctx.translate(currentTransform.x, currentTransform.y);
-    ctx.scale(currentTransform.k, currentTransform.k);
-
-    // horizontal wrapping
-    ctx.imageSmoothingEnabled = false;
-    const mapWidth = cachedMapCanvas.width;
-    const viewLeft = -currentTransform.x / currentTransform.k;
-    const viewRight = (rect.width - currentTransform.x) / currentTransform.k;
-    const startTile = Math.floor(viewLeft / mapWidth) - 1;
-    const endTile = Math.ceil(viewRight / mapWidth) + 1;
-
-    for (let i = startTile; i <= endTile; i++) {
-        ctx.drawImage(cachedMapCanvas, i * mapWidth, 0);
-    }
-
-    ctx.restore();
+    // Trigger redraw once the border dataset is loaded.
+    setBaseMapOverlayInvalidationCallback(() => {
+        redrawCachedMap(mapCanvas);
+    });
+    redrawCachedMap(mapCanvas);
 }
 
 export function zoomToLocation(

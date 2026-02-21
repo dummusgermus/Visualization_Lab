@@ -7,18 +7,23 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
+    "generate:map-labels": "node scripts/generate-map-labels.mjs",
     "predeploy": "npm run build",
     "deploy": "gh-pages -d dist"
   },
   "devDependencies": {
     "@types/d3": "^7.4.3",
     "@types/d3-geo": "^3.1.0",
+    "@types/topojson-client": "^3.1.5",
+    "all-the-cities": "^3.1.0",
     "gh-pages": "^6.3.0",
     "typescript": "~5.9.3",
     "vite": "^7.2.4"
   },
   "dependencies": {
     "d3": "^7.9.0",
-    "d3-geo": "^3.1.1"
+    "d3-geo": "^3.1.1",
+    "topojson-client": "^3.1.0",
+    "world-atlas": "^2.0.2"
   }
 }

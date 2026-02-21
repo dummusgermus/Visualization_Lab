@@ -23,6 +23,7 @@ import {
     getCurrentZoomLevel,
     projectLonLatToCanvas,
     renderMapData,
+    setMapOverlayVisibility,
     setupMapInteractions,
     zoomToLocation,
 } from "./MapView/map";
@@ -1190,6 +1191,9 @@ export type AppState = {
     mapLocationSearchSelection: string | null;
     mapLocationSearchFocused: boolean;
     mapLocationSearchCursor: { start: number; end: number };
+    mapOptionsOpen: boolean;
+    mapShowBorders: boolean;
+    mapShowCities: boolean;
     mapMarker: MapMarker | null;
     mapInfoSamples: ChartSample[];
     mapInfoBoxes: ChartBox[] | null;
@@ -1319,6 +1323,9 @@ const state: AppState = {
     mapLocationSearchSelection: null,
     mapLocationSearchFocused: false,
     mapLocationSearchCursor: { start: 0, end: 0 },
+    mapOptionsOpen: false,
+    mapShowBorders: true,
+    mapShowCities: true,
     mapMarker: null,
     mapInfoSamples: [],
     mapInfoBoxes: null,
@@ -6335,6 +6342,10 @@ function render() {
     mapCanvas = appRoot.querySelector<HTMLCanvasElement>("#map-canvas");
 
     if (mapCanvas) {
+        setMapOverlayVisibility({
+            showBorders: state.mapShowBorders,
+            showLabels: state.mapShowCities,
+        });
         if (
             state.currentData &&
             !state.dataError &&
@@ -9163,7 +9174,7 @@ function renderMapSearchBar() {
 
     return `
       <div data-role="map-location-search" style="${styleAttr(wrapStyle)}">
-        <div class="location-search-row" style="display: flex; align-items: center; gap: 8px;">
+        <div class="location-search-row" style="display: flex; align-items: center; gap: 8px; position: relative;">
           <input
             type="text"
             class="location-search-input"
@@ -9198,6 +9209,71 @@ function renderMapSearchBar() {
               <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
             </svg>
           </button>
+          <button
+            type="button"
+            data-action="toggle-map-options-menu"
+            aria-label="Map options"
+            aria-expanded="${state.mapOptionsOpen ? "true" : "false"}"
+            style="
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              width: 36px;
+              height: 36px;
+              padding: 0;
+              border: 1px solid rgba(148, 163, 184, 0.3);
+              border-radius: 6px;
+              background: ${state.mapOptionsOpen ? "rgba(56, 189, 248, 0.14)" : "rgba(15, 23, 42, 0.85)"};
+              color: ${state.mapOptionsOpen ? "#7dd3fc" : "var(--text-secondary)"};
+              cursor: pointer;
+              transition: all 0.2s ease;
+            "
+            onmouseover="this.style.background='rgba(56, 189, 248, 0.18)';this.style.color='#7dd3fc';"
+            onmouseout="this.style.background='${state.mapOptionsOpen ? "rgba(56, 189, 248, 0.14)" : "rgba(15, 23, 42, 0.85)"}';this.style.color='${state.mapOptionsOpen ? "#7dd3fc" : "var(--text-secondary)"}';"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 6h18"></path>
+              <path d="M7 12h14"></path>
+              <path d="M11 18h10"></path>
+              <path d="M5 6l0 0"></path>
+              <circle cx="5" cy="6" r="1.3" fill="currentColor" stroke="none"></circle>
+              <circle cx="5" cy="12" r="1.3" fill="currentColor" stroke="none"></circle>
+              <circle cx="5" cy="18" r="1.3" fill="currentColor" stroke="none"></circle>
+            </svg>
+          </button>
+          ${
+              state.mapOptionsOpen
+                  ? `
+          <div
+            data-role="map-options-menu"
+            style="
+              position: absolute;
+              right: 0;
+              top: calc(100% + 8px);
+              min-width: 190px;
+              padding: 10px;
+              border-radius: 10px;
+              border: 1px solid var(--border-medium);
+              background: rgba(12, 18, 32, 0.96);
+              box-shadow: var(--shadow-elevated);
+              z-index: 22;
+              backdrop-filter: blur(10px);
+            "
+          >
+            <div style="font-size: 11px; letter-spacing: 0.45px; text-transform: uppercase; color: var(--text-secondary); margin-bottom: 8px;">
+              Map options
+            </div>
+            <label style="display:flex; align-items:center; gap:8px; padding:6px 4px; cursor:pointer; color:var(--text-primary); font-size:13px; font-weight:600;">
+              <input type="checkbox" data-action="toggle-map-borders" ${state.mapShowBorders ? "checked" : ""} />
+              Show borders
+            </label>
+            <label style="display:flex; align-items:center; gap:8px; padding:6px 4px; cursor:pointer; color:var(--text-primary); font-size:13px; font-weight:600;">
+              <input type="checkbox" data-action="toggle-map-cities" ${state.mapShowCities ? "checked" : ""} />
+              Show city names
+            </label>
+          </div>`
+                  : ""
+          }
         </div>
         ${state.mapLocationSearchLoading ? statusMessage : ""}
         ${
@@ -11950,6 +12026,51 @@ async function init() {
             "[data-action]",
         ) as HTMLElement | null;
         const action = actionElement?.getAttribute("data-action");
+        const isMapOptionsAction =
+            action === "toggle-map-options-menu" ||
+            action === "toggle-map-borders" ||
+            action === "toggle-map-cities";
+
+        if (
+            state.mapOptionsOpen &&
+            !isMapOptionsAction &&
+            !target.closest('[data-role="map-options-menu"]')
+        ) {
+            state.mapOptionsOpen = false;
+            render();
+        }
+
+        if (action === "toggle-map-options-menu") {
+            e.preventDefault();
+            e.stopPropagation();
+            state.mapOptionsOpen = !state.mapOptionsOpen;
+            render();
+            return;
+        }
+
+        if (action === "toggle-map-borders") {
+            const checkbox = actionElement as HTMLInputElement | null;
+            if (!checkbox) return;
+            state.mapShowBorders = checkbox.checked;
+            setMapOverlayVisibility({
+                showBorders: state.mapShowBorders,
+                showLabels: state.mapShowCities,
+            });
+            render();
+            return;
+        }
+
+        if (action === "toggle-map-cities") {
+            const checkbox = actionElement as HTMLInputElement | null;
+            if (!checkbox) return;
+            state.mapShowCities = checkbox.checked;
+            setMapOverlayVisibility({
+                showBorders: state.mapShowBorders,
+                showLabels: state.mapShowCities,
+            });
+            render();
+            return;
+        }
 
         if (action === "tutorial-continue") {
             e.preventDefault();

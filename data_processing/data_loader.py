@@ -57,6 +57,24 @@ def _read_dataset(field: str, timestep_idx: int, quality: int):
     return _read_dataset_cached(field, timestep_idx, quality)
 
 
+def _evenly_subsample_dates(dates: List[datetime], max_points: int) -> List[datetime]:
+    """Keep temporal coverage while capping processing cost."""
+    if max_points <= 0 or len(dates) <= max_points:
+        return dates
+    # Use evenly spaced integer indices and keep endpoints.
+    indices = np.linspace(0, len(dates) - 1, num=max_points, dtype=int)
+    seen = set()
+    reduced = []
+    for idx in indices:
+        if idx in seen:
+            continue
+        seen.add(idx)
+        reduced.append(dates[idx])
+    if reduced and reduced[-1] != dates[-1]:
+        reduced[-1] = dates[-1]
+    return reduced
+
+
 def load_data(
     variable: str,
     time,
@@ -198,6 +216,7 @@ def load_time_series(
 
     if not dates:
         return []
+    dates = _evenly_subsample_dates(dates, config.MAX_TIME_SERIES_POINTS)
 
     def _load(date_obj):
         payload = load_data(
@@ -313,6 +332,7 @@ def load_pixel_time_series(
 
     if not dates:
         return []
+    dates = _evenly_subsample_dates(dates, config.MAX_TIME_SERIES_POINTS)
 
     def _load(date_obj):
         return load_pixel_window(

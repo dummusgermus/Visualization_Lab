@@ -187,5 +187,12 @@ MEMORY_CACHE_MAXSIZE = int(os.environ.get("NEX_GDDP_MEMORY_CACHE", "32"))
 # Toggle disk caching (set env NEX_GDDP_DISABLE_DISK_CACHE=1 to disable)
 DISK_CACHE_ENABLED = os.environ.get("NEX_GDDP_DISABLE_DISK_CACHE", "0") != "1"
 
-# Maximum concurrent workers for high-level loaders
-MAX_WORKERS = int(os.environ.get("NEX_GDDP_MAX_WORKERS", "8"))
+# Maximum concurrent workers for high-level loaders.
+# Keep default conservative to prevent CPU saturation on local machines.
+MAX_WORKERS = int(os.environ.get("NEX_GDDP_MAX_WORKERS", "3"))
+
+# Hard cap for sampled timesteps returned by time-series style endpoints.
+# If the requested range has more timesteps, the loader subsamples evenly.
+MAX_TIME_SERIES_POINTS = int(
+    os.environ.get("NEX_GDDP_MAX_TIME_SERIES_POINTS", "600")
+)

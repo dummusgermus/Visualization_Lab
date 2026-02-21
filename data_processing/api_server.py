@@ -625,7 +625,16 @@ def main():
 
     host = os.environ.get("NEX_GDDP_API_HOST", "0.0.0.0")
     port = int(os.environ.get("NEX_GDDP_API_PORT", "8000"))
-    uvicorn.run(app=app, host=host, port=port, reload=False)
+    graceful_timeout = int(
+        os.environ.get("NEX_GDDP_GRACEFUL_SHUTDOWN_TIMEOUT", "5")
+    )
+    uvicorn.run(
+        app=app,
+        host=host,
+        port=port,
+        reload=False,
+        timeout_graceful_shutdown=graceful_timeout,
+    )
 
 
 if __name__ == "__main__":

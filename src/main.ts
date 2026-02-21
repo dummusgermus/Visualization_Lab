@@ -288,12 +288,32 @@ const paletteOptions = [
         colors: ["#440154", "#3b528b", "#21908d", "#5dc863", "#fde725"],
     },
     {
+        name: "Plasma",
+        colors: ["#0d0887", "#7e03a8", "#cc4678", "#f89441", "#f0f921"],
+    },
+    {
+        name: "Inferno",
+        colors: ["#000004", "#420a68", "#932667", "#dd513a", "#fdea45"],
+    },
+    {
         name: "Magma",
         colors: ["#000004", "#3b0f70", "#8c2981", "#de4968", "#fe9f6d"],
     },
     {
         name: "Cividis",
         colors: ["#00204c", "#31456a", "#6b6d7f", "#a59c8f", "#fdea9b"],
+    },
+    {
+        name: "Coolwarm",
+        colors: ["#3b4cc0", "#6f92f3", "#dddcdc", "#f49a7b", "#b40426"],
+    },
+    {
+        name: "RdBu",
+        colors: ["#67001f", "#d6604d", "#f7f7f7", "#4393c3", "#053061"],
+    },
+    {
+        name: "Turbo",
+        colors: ["#30123b", "#4145ab", "#2fb7b0", "#8bd646", "#f9a31b"],
     },
     {
         name: "Thermal",
@@ -6004,8 +6024,13 @@ function render() {
                                 titleOverride: "Joint Probability",
                                 unitOverride: "%",
                                 skipConversion: true,
+                                paletteControlHtml: renderLegendPaletteSelect(),
+                                bottomControlsHtml: renderLegendUnitControl(),
                             }
-                          : undefined,
+                          : {
+                                paletteControlHtml: renderLegendPaletteSelect(),
+                                bottomControlsHtml: renderLegendUnitControl(),
+                            },
                   )
                 : ""
         }
@@ -7016,6 +7041,80 @@ function renderSelect(
   `;
 }
 
+function renderLegendPaletteSelect() {
+    const uniqueId = `legend-palette-${Math.random().toString(36).substr(2, 9)}`;
+    return `
+    <div class="custom-select-container">
+      <div class="custom-select-wrapper legend-palette-wrapper" data-key="palette" data-role="palette-selector">
+        <button
+          type="button"
+          class="custom-select-trigger legend-palette-trigger"
+          data-action="update-select"
+          data-key="palette"
+          id="${uniqueId}-trigger"
+          aria-label="Select color palette"
+        >
+          <span class="custom-select-value legend-palette-current">${escapeHtml(state.palette)}</span>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M12 4a8 8 0 1 0 0 16h1.2c1.4 0 2.3-1.5 1.6-2.7-.6-1-.2-2.3.9-2.8 1.1-.5 2.3.2 2.4 1.4.1 1.2 1.1 2.1 2.3 2.1H21a3 3 0 0 0 3-3c0-6.1-5.4-11-12-11Z" stroke="currentColor" stroke-width="1.6"/>
+            <circle cx="7.3" cy="11.2" r="1.1" fill="currentColor"/>
+            <circle cx="10.1" cy="8.2" r="1.1" fill="currentColor"/>
+            <circle cx="14.1" cy="8.6" r="1.1" fill="currentColor"/>
+            <circle cx="16.8" cy="11.7" r="1.1" fill="currentColor"/>
+          </svg>
+        </button>
+        <div class="custom-select-dropdown legend-palette-dropdown" id="${uniqueId}-dropdown" role="listbox">
+          ${paletteOptions
+              .map(
+                  (palette) => `
+            <div class="custom-select-option ${
+                palette.name === state.palette ? "selected" : ""
+            }"
+                 data-value="${palette.name}"
+                 data-action="update-select"
+                 data-key="palette"
+                 role="option"
+                 ${palette.name === state.palette ? 'aria-selected="true"' : ""}
+                 tabindex="0">
+              <div class="legend-palette-option-content">
+                <div class="legend-palette-swatches">
+                  ${palette.colors
+                      .slice(0, 4)
+                      .map(
+                          (color) =>
+                              `<span class="legend-palette-dot" style="background:${color};"></span>`,
+                      )
+                      .join("")}
+                </div>
+                <span class="legend-palette-name">${escapeHtml(palette.name)}</span>
+              </div>
+            </div>
+          `,
+              )
+              .join("")}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderLegendUnitControl() {
+    const isEnsemble = state.mode === "Ensemble";
+    const unitKey = isEnsemble ? "ensembleUnit" : "unit";
+    const currentUnit = isEnsemble ? state.ensembleUnit : state.selectedUnit;
+    const unitVariable = isEnsemble ? state.ensembleVariable : state.variable;
+    return `
+    <div class="legend-unit-select">
+      ${renderSelect(
+          unitKey,
+          getUnitOptions(unitVariable).map((opt) => opt.label),
+          currentUnit,
+          { dataKey: unitKey, dataRole: "unit-selector" },
+      )}
+    </div>
+  `;
+}
+
 function renderTabButton(
     value: PanelTab,
     activeStyle?: Style,
@@ -7205,44 +7304,6 @@ function renderManualSection(params: {
                       infoType: "variable",
                       dataRole: "variable-selector",
                   }),
-              )}
-            </div>
-          </div>
-
-          <div style="margin-top:14px">
-            <div style="${styleAttr({
-                display: "flex",
-                flexDirection: "column",
-                gap: 8,
-            })}">
-              <div style="${styleAttr(styles.sectionTitle)}">Unit</div>
-              ${renderField(
-                  "",
-                  renderSelect(
-                      "unit",
-                      getUnitOptions(state.variable).map((opt) => opt.label),
-                      state.selectedUnit,
-                      { dataKey: "unit", dataRole: "unit-selector" },
-                  ),
-              )}
-            </div>
-          </div>
-
-          <div style="margin-top:14px">
-            <div style="${styleAttr({
-                display: "flex",
-                flexDirection: "column",
-                gap: 8,
-            })}">
-              <div style="${styleAttr(styles.sectionTitle)}">Color palette</div>
-              ${renderField(
-                  "",
-                  renderSelect(
-                      "palette",
-                      paletteOptions.map((p) => p.name),
-                      state.palette,
-                      { dataKey: "palette", dataRole: "palette-selector" },
-                  ),
               )}
             </div>
           </div>
@@ -7832,48 +7893,6 @@ function renderManualSection(params: {
                     flexDirection: "column",
                     gap: 8,
                 })}">
-                  <div style="${styleAttr(styles.sectionTitle)}">Unit</div>
-                  ${renderField(
-                      "",
-                      renderSelect(
-                          "unit",
-                          getUnitOptions(state.variable).map(
-                              (opt) => opt.label,
-                          ),
-                          state.selectedUnit,
-                          { dataKey: "unit" },
-                      ),
-                  )}
-                </div>
-              </div>
-
-              <div style="margin-top:14px">
-                <div style="${styleAttr({
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 8,
-                })}">
-                  <div style="${styleAttr(
-                      styles.sectionTitle,
-                  )}">Color palette</div>
-                  ${renderField(
-                      "",
-                      renderSelect(
-                          "palette",
-                          paletteOptions.map((p) => p.name),
-                          state.palette,
-                          { dataKey: "palette" },
-                      ),
-                  )}
-                </div>
-              </div>
-
-              <div style="margin-top:14px">
-                <div style="${styleAttr({
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 8,
-                })}">
                   <div style="${styleAttr(
                       styles.sectionTitle,
                   )}">Resolution</div>
@@ -8389,46 +8408,6 @@ function renderManualSection(params: {
                 ),
                 "ensembleModels",
             )}
-          </div>
-
-          <div style="margin-top:14px">
-            <div style="${styleAttr({
-                display: "flex",
-                flexDirection: "column",
-                gap: 8,
-            })}">
-              <div style="${styleAttr(styles.sectionTitle)}">Unit</div>
-              ${renderField(
-                  "",
-                  renderSelect(
-                      "ensembleUnit",
-                      getUnitOptions(state.ensembleVariable).map(
-                          (opt) => opt.label,
-                      ),
-                      state.ensembleUnit,
-                      { dataKey: "ensembleUnit" },
-                  ),
-              )}
-            </div>
-          </div>
-
-          <div style="margin-top:14px">
-            <div style="${styleAttr({
-                display: "flex",
-                flexDirection: "column",
-                gap: 8,
-            })}">
-              <div style="${styleAttr(styles.sectionTitle)}">Color palette</div>
-              ${renderField(
-                  "",
-                  renderSelect(
-                      "palette",
-                      paletteOptions.map((p) => p.name),
-                      state.palette,
-                      { dataKey: "palette", dataRole: "palette-selector" },
-                  ),
-              )}
-            </div>
           </div>
 
           <div style="margin-top:14px">

@@ -47,6 +47,8 @@ export function renderMapLegend(
         titleOverride?: string;
         unitOverride?: string;
         skipConversion?: boolean;
+        paletteControlHtml?: string;
+        bottomControlsHtml?: string;
     },
 ): string {
     const variableMeta = metadata?.variable_metadata[variable];
@@ -84,7 +86,14 @@ export function renderMapLegend(
         : "";
     return `
       <div class="map-legend" ${offsetStyle}>
-        <div class="legend-title">${name}</div>
+        <div class="legend-header">
+          <div class="legend-title">${name}</div>
+          ${
+              options?.paletteControlHtml
+                  ? `<div class="legend-palette-control">${options.paletteControlHtml}</div>`
+                  : ""
+          }
+        </div>
         <div class="legend-container">
         <canvas id="legend-gradient-canvas" width="20" height="200" style="width: 20px; height: 200px; border-radius: 4px;"></canvas>
           <div class="legend-labels">
@@ -93,6 +102,11 @@ export function renderMapLegend(
                 .join("")}
           </div>
         </div>
+        ${
+            options?.bottomControlsHtml
+                ? `<div class="legend-bottom-controls">${options.bottomControlsHtml}</div>`
+                : ""
+        }
       </div>
     `;
 }

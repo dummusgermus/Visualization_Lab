@@ -482,6 +482,56 @@ input[type="date"]:hover::-webkit-calendar-picker-indicator {
     gap: 12px;
 }
 
+.overlay-palette-wrapper {
+    width: auto;
+}
+
+.overlay-palette-trigger {
+    width: 30px;
+    min-width: 30px;
+    height: 30px;
+    min-height: 30px;
+    border-radius: 8px;
+    border: none;
+    background: transparent;
+    box-shadow: none;
+    margin: 0;
+    padding: 0;
+    justify-content: center;
+}
+
+.overlay-palette-trigger .custom-select-value,
+.overlay-palette-trigger .custom-select-arrow {
+    display: none;
+}
+
+.overlay-palette-trigger svg {
+    width: 14px;
+    height: 14px;
+    color: var(--text-secondary);
+    display: block;
+}
+
+.overlay-palette-wrapper.open .overlay-palette-trigger svg,
+.overlay-palette-trigger:hover svg,
+.overlay-palette-trigger:focus svg,
+.overlay-palette-trigger:focus-visible svg {
+    color: var(--accent-blue);
+}
+
+.overlay-palette-dropdown {
+    left: auto;
+    right: 0;
+    min-width: 170px;
+    max-width: 220px;
+    transform: translateY(-8px);
+    padding: 6px;
+}
+
+.overlay-palette-wrapper.open .overlay-palette-dropdown {
+    transform: translateY(0);
+}
+
 .custom-select-info-panel {
     position: fixed;
     width: 260px;

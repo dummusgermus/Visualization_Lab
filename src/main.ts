@@ -1156,7 +1156,10 @@ export type AppState = {
     model: string;
     variable: string;
     date: string;
-    palette: string;
+    mapPalette: string;
+    mapInfoPalette: string;
+    mapRangePalette: string;
+    chartPalette: string;
     resolution: number;
     selectedUnit: string; // Unit label (e.g., "Kelvin (K)", "Celsius (°C)")
     chartMode: ChartMode;
@@ -1282,7 +1285,10 @@ const state: AppState = {
     model: models[0],
     variable: variables[0],
     date: getDateForScenario("SSP245"),
-    palette: paletteOptions[0].name,
+    mapPalette: paletteOptions[0].name,
+    mapInfoPalette: paletteOptions[0].name,
+    mapRangePalette: paletteOptions[0].name,
+    chartPalette: paletteOptions[0].name,
     resolution: 2,
     selectedUnit: getDefaultUnitOption(variables[0]).label,
     chartMode: "single",
@@ -2396,7 +2402,11 @@ function renderMapInfoBody(): string {
                 : "Preparing datasets";
         const preview =
             state.mapInfoBoxes && state.mapInfoBoxes.length
-                ? renderMiniChartSvg(state.mapInfoBoxes, unit)
+                ? renderMiniChartSvg(
+                      state.mapInfoBoxes,
+                      unit,
+                      state.mapInfoPalette,
+                  )
                 : `<div style="${styleAttr(
                       styles.chartEmpty,
                   )}">Loading boxplots...</div>`;
@@ -2421,7 +2431,11 @@ function renderMapInfoBody(): string {
         )}">Click a location to load boxplots.</div>`;
     }
 
-    return renderMiniChartSvg(state.mapInfoBoxes, getActiveMapVariable().unit);
+    return renderMiniChartSvg(
+        state.mapInfoBoxes,
+        getActiveMapVariable().unit,
+        state.mapInfoPalette,
+    );
 }
 
 function renderMapInfoWindow() {
@@ -2456,6 +2470,7 @@ function renderMapInfoWindow() {
             )}</div>
           </div>
           <div style="${styleAttr(styles.mapInfoActions)}">
+            ${renderOverlayPaletteSelect("mapInfoPalette", state.mapInfoPalette)}
             <button
               type="button"
               data-action="close-map-info"
@@ -2506,7 +2521,12 @@ function renderMapRangeBody(): string {
             state.mapRangeSeries && state.mapRangeSeries.length
                 ? `<div style="${styleAttr(styles.mapRangeChartWrap)}">${renderChartRangeSvg(
                       state.mapRangeSeries,
-                      { compact: true, unitLabel: unit },
+                      {
+                          compact: true,
+                          unitLabel: unit,
+                          paletteName: state.mapRangePalette,
+                          lightToDarkNoDarkest: true,
+                      },
                   )}</div>`
                 : `<div style="${styleAttr(
                       styles.chartEmpty,
@@ -2534,7 +2554,12 @@ function renderMapRangeBody(): string {
 
     return `<div style="${styleAttr(styles.mapRangeChartWrap)}">${renderChartRangeSvg(
         state.mapRangeSeries,
-        { compact: true, unitLabel: unit },
+        {
+            compact: true,
+            unitLabel: unit,
+            paletteName: state.mapRangePalette,
+            lightToDarkNoDarkest: true,
+        },
     )}</div>`;
 }
 
@@ -2563,18 +2588,24 @@ function renderMapRangeOverlay() {
                   title,
               )}</div>
             </div>
-            <button
-              type="button"
-              data-action="close-map-range"
-              aria-label="Close range view"
-              style="${styleAttr(styles.mapInfoActionBtn)}"
-              onmouseover="this.style.color='var(--text-primary)';this.style.background='rgba(15, 23, 42, 0.85)';"
-              onmouseout="this.style.color='var(--text-secondary)';this.style.background='transparent';"
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <path d="M6 6l12 12M18 6l-12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-              </svg>
-            </button>
+            <div style="${styleAttr(styles.mapInfoActions)}">
+              ${renderOverlayPaletteSelect(
+                  "mapRangePalette",
+                  state.mapRangePalette,
+              )}
+              <button
+                type="button"
+                data-action="close-map-range"
+                aria-label="Close range view"
+                style="${styleAttr(styles.mapInfoActionBtn)}"
+                onmouseover="this.style.color='var(--text-primary)';this.style.background='rgba(15, 23, 42, 0.85)';"
+                onmouseout="this.style.color='var(--text-secondary)';this.style.background='transparent';"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M6 6l12 12M18 6l-12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                </svg>
+              </button>
+            </div>
           </div>
           <div class="map-range-body" style="${styleAttr(styles.mapRangeBody)}">
             ${renderMapRangeBody()}
@@ -4583,6 +4614,7 @@ function updateChartContainerDOM() {
     if (!chartContainer) return;
 
     const isRangeMode = state.chartMode === "range";
+    const useOverlayChartPaletteLogic = true;
     let body = "";
 
     if (state.chartLoading) {
@@ -4622,9 +4654,13 @@ function updateChartContainerDOM() {
           </div>
           ${
               !isRangeMode && state.chartBoxes
-                  ? renderChartSvg(state.chartBoxes)
+                  ? renderChartSvg(state.chartBoxes, {
+                        lightToDarkNoDarkest: useOverlayChartPaletteLogic,
+                    })
                   : isRangeMode && state.chartRangeSeries
-                    ? renderChartRangeSvg(state.chartRangeSeries)
+                    ? renderChartRangeSvg(state.chartRangeSeries, {
+                          lightToDarkNoDarkest: useOverlayChartPaletteLogic,
+                      })
                     : ""
           }
         `;
@@ -4643,8 +4679,12 @@ function updateChartContainerDOM() {
         body = `<div style="${styleAttr(styles.chartEmpty)}">${emptyCopy}</div>`;
     } else {
         body = isRangeMode
-            ? renderChartRangeSvg(state.chartRangeSeries ?? [])
-            : renderChartSvg(state.chartBoxes ?? []);
+            ? renderChartRangeSvg(state.chartRangeSeries ?? [], {
+                  lightToDarkNoDarkest: useOverlayChartPaletteLogic,
+              })
+            : renderChartSvg(state.chartBoxes ?? [], {
+                  lightToDarkNoDarkest: useOverlayChartPaletteLogic,
+              });
     }
 
     const chartLocationLabel =
@@ -4690,6 +4730,41 @@ function updateChartContainerDOM() {
         </div>
       `;
 
+    // Chart content is frequently re-rendered without a full app render, so
+    // chart-local palette dropdowns need their own binding here.
+    const chartPaletteWrappers = chartContainer.querySelectorAll<HTMLElement>(
+        '.overlay-palette-wrapper[data-key="chartPalette"]',
+    );
+    chartPaletteWrappers.forEach((wrapper) => {
+        const trigger = wrapper.querySelector<HTMLElement>(
+            ".overlay-palette-trigger",
+        );
+        const options = wrapper.querySelectorAll<HTMLElement>(
+            ".custom-select-option",
+        );
+        if (!trigger || options.length === 0) return;
+
+        trigger.addEventListener("click", (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const isOpen = wrapper.classList.contains("open");
+            chartPaletteWrappers.forEach((w) => w.classList.remove("open"));
+            wrapper.classList.toggle("open", !isOpen);
+        });
+
+        options.forEach((option) => {
+            option.addEventListener("click", (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const value = option.dataset.value;
+                if (!value) return;
+                state.chartPalette = value;
+                chartPaletteWrappers.forEach((w) => w.classList.remove("open"));
+                updateChartContainerDOM();
+            });
+        });
+    });
+
     // Add hover event listeners for boxplot model indicators
     if (!isRangeMode && state.chartBoxes && state.chartBoxes.length > 0) {
         // Use setTimeout to ensure DOM is fully parsed
@@ -4700,17 +4775,14 @@ function updateChartContainerDOM() {
 }
 
 function attachBoxplotHoverListeners() {
-    const svg = document.querySelector("[data-role='chart-container'] svg");
-    if (!svg) {
-        return;
-    }
-
-    const hoverOverlay = svg.querySelector(
-        ".boxplot-hover-overlay",
-    ) as SVGElement;
+    const hoverOverlay = document.querySelector(
+        "[data-role='chart-container'] .boxplot-hover-overlay",
+    ) as SVGElement | null;
     if (!hoverOverlay) {
         return;
     }
+    const svg = hoverOverlay.closest("svg") as SVGElement | null;
+    if (!svg) return;
 
     const hoverAreas = svg.querySelectorAll(".boxplot-hover-area");
     const modelIndicators = svg.querySelectorAll(".model-indicator");
@@ -6275,7 +6347,7 @@ function render() {
                     state.currentData,
                     mapCanvas,
                     paletteOptions,
-                    state.palette,
+                    state.mapPalette,
                     state.dataMin,
                     state.dataMax,
                     state.mode === "Ensemble"
@@ -6300,7 +6372,7 @@ function render() {
 
                 // Draw the gradient on the legend canvas
                 const palette =
-                    paletteOptions.find((p) => p.name === state.palette) ||
+                    paletteOptions.find((p) => p.name === state.mapPalette) ||
                     paletteOptions[0];
                 drawLegendGradient("legend-gradient-canvas", palette.colors);
 
@@ -6375,7 +6447,10 @@ function formatNumberCompact(value: number): string {
     return value.toPrecision(2);
 }
 
-function renderChartSvg(boxes: ChartBox[]): string {
+function renderChartSvg(
+    boxes: ChartBox[],
+    options?: { lightToDarkNoDarkest?: boolean },
+): string {
     if (!boxes.length) {
         return `<div style="${styleAttr(
             styles.chartEmpty,
@@ -6387,9 +6462,15 @@ function renderChartSvg(boxes: ChartBox[]): string {
     });
 
     const palette =
-        paletteOptions.find((p) => p.name === state.palette) ||
+        paletteOptions.find((p) => p.name === state.chartPalette) ||
         paletteOptions[0];
-    const colors = palette.colors;
+    const overlayColors =
+        options?.lightToDarkNoDarkest && palette.colors.length > 2
+            ? palette.colors.slice(1).reverse()
+            : options?.lightToDarkNoDarkest
+              ? [...palette.colors].reverse()
+              : palette.colors;
+    const colors = overlayColors.length ? overlayColors : palette.colors;
 
     const width = 900;
     const height = 440;
@@ -6431,7 +6512,11 @@ function renderChartSvg(boxes: ChartBox[]): string {
     const boxesMarkup = sortedBoxes
         .map((box, idx) => {
             const x = margin.left + xStep * (idx + 1);
-            const color = colors[idx % colors.length];
+            const colorIdx =
+                sortedBoxes.length === 1
+                    ? Math.floor(colors.length / 2)
+                    : idx % colors.length;
+            const color = colors[colorIdx];
             const { min, q1, median, q3, max, mean } = box.stats;
             const boxTop = yScale(q3) + margin.top;
             const boxBottom = yScale(q1) + margin.top;
@@ -6557,19 +6642,28 @@ function renderChartSvg(boxes: ChartBox[]): string {
     `;
 
     return `
-      <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Global box plots" preserveAspectRatio="xMidYMid meet" style="width:100%; height:auto;">
-        ${axisLine}
-        ${axisTicks}
-        ${boxesMarkup}
-        <g class="boxplot-hover-overlay" style="opacity: 0; pointer-events: none;">
-          ${hoverOverlayMarkup}
-        </g>
-        ${yLabel}
-      </svg>
+      <div style="position:relative; width:100%;">
+        <div style="position:absolute; top:10px; right:12px; z-index:2;">
+          ${renderOverlayPaletteSelect("chartPalette", state.chartPalette)}
+        </div>
+        <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Global box plots" preserveAspectRatio="xMidYMid meet" style="width:100%; height:auto;">
+          ${axisLine}
+          ${axisTicks}
+          ${boxesMarkup}
+          <g class="boxplot-hover-overlay" style="opacity: 0; pointer-events: none;">
+            ${hoverOverlayMarkup}
+          </g>
+          ${yLabel}
+        </svg>
+      </div>
     `;
 }
 
-function renderMiniChartSvg(boxes: ChartBox[], unitLabel: string): string {
+function renderMiniChartSvg(
+    boxes: ChartBox[],
+    unitLabel: string,
+    paletteName: string,
+): string {
     if (!boxes.length) {
         return `<div style="${styleAttr(
             styles.chartEmpty,
@@ -6581,9 +6675,12 @@ function renderMiniChartSvg(boxes: ChartBox[], unitLabel: string): string {
     });
 
     const palette =
-        paletteOptions.find((p) => p.name === state.palette) ||
-        paletteOptions[0];
-    const colors = palette.colors;
+        paletteOptions.find((p) => p.name === paletteName) || paletteOptions[0];
+    const overlayColors =
+        palette.colors.length > 2
+            ? palette.colors.slice(1).reverse()
+            : [...palette.colors].reverse();
+    const colors = overlayColors.length ? overlayColors : palette.colors;
 
     const width = 560;
     const height = 300;
@@ -6625,7 +6722,11 @@ function renderMiniChartSvg(boxes: ChartBox[], unitLabel: string): string {
     const boxesMarkup = sortedBoxes
         .map((box, idx) => {
             const x = margin.left + xStep * (idx + 1);
-            const color = colors[idx % colors.length];
+            const colorIdx =
+                sortedBoxes.length === 1
+                    ? Math.floor(colors.length / 2)
+                    : idx % colors.length;
+            const color = colors[colorIdx];
             const { min, q1, median, q3, max, mean } = box.stats;
             const boxTop = yScale(q3) + margin.top;
             const boxBottom = yScale(q1) + margin.top;
@@ -6686,7 +6787,12 @@ function renderMiniChartSvg(boxes: ChartBox[], unitLabel: string): string {
 
 function renderChartRangeSvg(
     series: ChartSeries[],
-    options?: { compact?: boolean; unitLabel?: string },
+    options?: {
+        compact?: boolean;
+        unitLabel?: string;
+        paletteName?: string;
+        lightToDarkNoDarkest?: boolean;
+    },
 ): string {
     if (!series.length) {
         return `<div style="${styleAttr(
@@ -6694,10 +6800,16 @@ function renderChartRangeSvg(
         )}">No chart data loaded yet.</div>`;
     }
 
+    const paletteName = options?.paletteName ?? state.chartPalette;
     const palette =
-        paletteOptions.find((p) => p.name === state.palette) ||
-        paletteOptions[0];
-    const colors = palette.colors;
+        paletteOptions.find((p) => p.name === paletteName) || paletteOptions[0];
+    const overlayColors =
+        options?.lightToDarkNoDarkest && palette.colors.length > 2
+            ? palette.colors.slice(1).reverse()
+            : options?.lightToDarkNoDarkest
+              ? [...palette.colors].reverse()
+              : palette.colors;
+    const colors = overlayColors.length ? overlayColors : palette.colors;
 
     const compact = options?.compact ?? false;
     const unitLabel = options?.unitLabel ?? state.chartUnit;
@@ -6875,6 +6987,11 @@ function renderChartRangeSvg(
       <div style="width:100%; display:flex; flex-direction:column; gap:12px; align-items:center;">
         <div style="position:relative; width:100%; display:flex; justify-content:center;">
           <div style="position:absolute; top:10px; right:16px; display:flex; gap:12px; align-items:center; color:var(--text-secondary); font-size:${legendFont}px; z-index:2;">
+            ${
+                compact
+                    ? ""
+                    : `<div>${renderOverlayPaletteSelect("chartPalette", state.chartPalette)}</div>`
+            }
             <div style="display:flex; align-items:center; gap:6px;">
               <span style="display:inline-block; width:26px; height:0; border-top:1px solid var(--text-primary);"></span>
               <span>Median</span>
@@ -7045,16 +7162,16 @@ function renderLegendPaletteSelect() {
     const uniqueId = `legend-palette-${Math.random().toString(36).substr(2, 9)}`;
     return `
     <div class="custom-select-container">
-      <div class="custom-select-wrapper legend-palette-wrapper" data-key="palette" data-role="palette-selector">
+      <div class="custom-select-wrapper legend-palette-wrapper" data-key="mapPalette" data-role="palette-selector">
         <button
           type="button"
           class="custom-select-trigger legend-palette-trigger"
           data-action="update-select"
-          data-key="palette"
+          data-key="mapPalette"
           id="${uniqueId}-trigger"
           aria-label="Select color palette"
         >
-          <span class="custom-select-value legend-palette-current">${escapeHtml(state.palette)}</span>
+          <span class="custom-select-value legend-palette-current">${escapeHtml(state.mapPalette)}</span>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
             <path d="M12 4a8 8 0 1 0 0 16h1.2c1.4 0 2.3-1.5 1.6-2.7-.6-1-.2-2.3.9-2.8 1.1-.5 2.3.2 2.4 1.4.1 1.2 1.1 2.1 2.3 2.1H21a3 3 0 0 0 3-3c0-6.1-5.4-11-12-11Z" stroke="currentColor" stroke-width="1.6"/>
             <circle cx="7.3" cy="11.2" r="1.1" fill="currentColor"/>
@@ -7068,13 +7185,75 @@ function renderLegendPaletteSelect() {
               .map(
                   (palette) => `
             <div class="custom-select-option ${
-                palette.name === state.palette ? "selected" : ""
+                palette.name === state.mapPalette ? "selected" : ""
             }"
                  data-value="${palette.name}"
                  data-action="update-select"
-                 data-key="palette"
+                 data-key="mapPalette"
                  role="option"
-                 ${palette.name === state.palette ? 'aria-selected="true"' : ""}
+                 ${palette.name === state.mapPalette ? 'aria-selected="true"' : ""}
+                 tabindex="0">
+              <div class="legend-palette-option-content">
+                <div class="legend-palette-swatches">
+                  ${palette.colors
+                      .slice(0, 4)
+                      .map(
+                          (color) =>
+                              `<span class="legend-palette-dot" style="background:${color};"></span>`,
+                      )
+                      .join("")}
+                </div>
+                <span class="legend-palette-name">${escapeHtml(palette.name)}</span>
+              </div>
+            </div>
+          `,
+              )
+              .join("")}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderOverlayPaletteSelect(
+    dataKey: "mapInfoPalette" | "mapRangePalette" | "chartPalette",
+    currentPalette: string,
+) {
+    const uniqueId = `overlay-palette-${dataKey}-${Math.random()
+        .toString(36)
+        .substr(2, 9)}`;
+    return `
+    <div class="custom-select-container">
+      <div class="custom-select-wrapper overlay-palette-wrapper" data-key="${dataKey}">
+        <button
+          type="button"
+          class="custom-select-trigger overlay-palette-trigger"
+          data-action="update-select"
+          data-key="${dataKey}"
+          id="${uniqueId}-trigger"
+          aria-label="Select color palette"
+        >
+          <span class="custom-select-value">${escapeHtml(currentPalette)}</span>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M12 4a8 8 0 1 0 0 16h1.2c1.4 0 2.3-1.5 1.6-2.7-.6-1-.2-2.3.9-2.8 1.1-.5 2.3.2 2.4 1.4.1 1.2 1.1 2.1 2.3 2.1H21a3 3 0 0 0 3-3c0-6.1-5.4-11-12-11Z" stroke="currentColor" stroke-width="1.6"/>
+            <circle cx="7.3" cy="11.2" r="1.1" fill="currentColor"/>
+            <circle cx="10.1" cy="8.2" r="1.1" fill="currentColor"/>
+            <circle cx="14.1" cy="8.6" r="1.1" fill="currentColor"/>
+            <circle cx="16.8" cy="11.7" r="1.1" fill="currentColor"/>
+          </svg>
+        </button>
+        <div class="custom-select-dropdown overlay-palette-dropdown" id="${uniqueId}-dropdown" role="listbox">
+          ${paletteOptions
+              .map(
+                  (palette) => `
+            <div class="custom-select-option ${
+                palette.name === currentPalette ? "selected" : ""
+            }"
+                 data-value="${palette.name}"
+                 data-action="update-select"
+                 data-key="${dataKey}"
+                 role="option"
+                 ${palette.name === currentPalette ? 'aria-selected="true"' : ""}
                  tabindex="0">
               <div class="legend-palette-option-content">
                 <div class="legend-palette-swatches">
@@ -10040,7 +10219,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                         2: "model",
                         4: "variable",
                         5: "unit",
-                        6: "palette",
+                        6: "mapPalette",
                     };
 
                     // If this selection matches the current tutorial step's expected data key
@@ -10167,7 +10346,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                                 state.currentData,
                                 mapCanvas,
                                 paletteOptions,
-                                state.palette,
+                                state.mapPalette,
                                 state.dataMin,
                                 state.dataMax,
                                 state.variable,
@@ -10181,7 +10360,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                             );
                             const palette =
                                 paletteOptions.find(
-                                    (p) => p.name === state.palette,
+                                    (p) => p.name === state.mapPalette,
                                 ) || paletteOptions[0];
                             drawLegendGradient(
                                 "legend-gradient-canvas",
@@ -10224,8 +10403,8 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                     }
                 }
                 return;
-            case "palette":
-                state.palette = val;
+            case "mapPalette":
+                state.mapPalette = val;
                 render();
                 if (
                     state.canvasView === "map" &&
@@ -10242,7 +10421,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                             state.currentData,
                             mapCanvas,
                             paletteOptions,
-                            state.palette,
+                            state.mapPalette,
                             state.dataMin,
                             state.dataMax,
                             state.variable,
@@ -10258,7 +10437,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                         // Redraw gradient with new palette
                         const palette =
                             paletteOptions.find(
-                                (p) => p.name === state.palette,
+                                (p) => p.name === state.mapPalette,
                             ) || paletteOptions[0];
                         drawLegendGradient(
                             "legend-gradient-canvas",
@@ -10266,6 +10445,18 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                         );
                     }
                 }
+                return;
+            case "mapInfoPalette":
+                state.mapInfoPalette = val;
+                render();
+                return;
+            case "mapRangePalette":
+                state.mapRangePalette = val;
+                render();
+                return;
+            case "chartPalette":
+                state.chartPalette = val;
+                render();
                 return;
             case "compareMode":
                 state.compareMode = val as CompareMode;
@@ -10363,7 +10554,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                             state.currentData,
                             mapCanvas,
                             paletteOptions,
-                            state.palette,
+                            state.mapPalette,
                             state.dataMin,
                             state.dataMax,
                             state.ensembleVariable,
@@ -10379,7 +10570,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                         // Redraw gradient with new palette
                         const palette =
                             paletteOptions.find(
-                                (p) => p.name === state.palette,
+                                (p) => p.name === state.mapPalette,
                             ) || paletteOptions[0];
                         drawLegendGradient(
                             "legend-gradient-canvas",
@@ -10568,7 +10759,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                                         state.currentData,
                                         mapCanvas,
                                         paletteOptions,
-                                        state.palette,
+                                        state.mapPalette,
                                         state.dataMin,
                                         state.dataMax,
                                         state.ensembleVariable,
@@ -10582,7 +10773,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                                     );
                                     const palette =
                                         paletteOptions.find(
-                                            (p) => p.name === state.palette,
+                                            (p) => p.name === state.mapPalette,
                                         ) || paletteOptions[0];
                                     drawLegendGradient(
                                         "legend-gradient-canvas",
@@ -11502,6 +11693,8 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         if (!state.mapMarker && !state.mapPolygon) return;
         state.canvasView = "chart";
         state.chartMode = "single";
+        // Keep expanded boxplot colors consistent with the map info palette selection
+        state.chartPalette = state.mapInfoPalette;
         if (state.mapPolygon && state.mapPolygon.length >= 3) {
             state.chartLocation = "Draw";
             state.chartPolygon = state.mapPolygon;
@@ -11618,7 +11811,13 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         mapInfoHeader.addEventListener("pointerdown", (e) => {
             if (e.button !== 0) return;
             const target = e.target as HTMLElement | null;
-            if (target?.closest("button")) return;
+            if (
+                target?.closest(
+                    "button, .custom-select-wrapper, .custom-select-dropdown, .custom-select-option",
+                )
+            ) {
+                return;
+            }
             e.preventDefault();
             e.stopPropagation();
             const panelRect = mapInfoPanel.getBoundingClientRect();
@@ -11718,8 +11917,8 @@ async function init() {
             if (exploreChanged || ensembleChanged || compareChanged) {
                 loadClimateData();
             }
-        } else if (updates.palette && state.currentData) {
-            // If only palette changed and we already have data, just redraw the map with new palette
+        } else if (updates.mapPalette && state.currentData) {
+            // If only map palette changed and we already have data, just redraw
             render();
         }
         if (
@@ -11838,7 +12037,7 @@ async function init() {
                     2: "model",
                     4: "variable",
                     5: "unit",
-                    6: "palette",
+                    6: "mapPalette",
                 };
 
                 // If this selection matches the current tutorial step's expected data key

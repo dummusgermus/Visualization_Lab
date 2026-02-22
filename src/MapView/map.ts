@@ -540,7 +540,18 @@ function runRenderMapData(
 
     const setup = setupCanvas(mapCanvas);
     if (!setup) return;
-    const { viewWidth, viewHeight } = setup;
+    let { viewWidth, viewHeight } = setup;
+    
+    // Ensure dimensions are valid integers (getBoundingClientRect can return decimals)
+    viewWidth = Math.floor(viewWidth);
+    viewHeight = Math.floor(viewHeight);
+    
+    // Guard against invalid canvas dimensions
+    if (viewWidth <= 0 || viewHeight <= 0 || !isFinite(viewWidth) || !isFinite(viewHeight)) {
+        console.warn("Invalid canvas dimensions:", { viewWidth, viewHeight });
+        return;
+    }
+    
     const [height, width] = data.shape;
     const expectedLen = width * height;
 

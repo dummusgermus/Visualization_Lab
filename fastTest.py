@@ -11,13 +11,11 @@ def plot_tasmax_pixel_42_ssp(
     figsize=(14, 8)
 ):
     """
-    Plot 42 tasmax SSP fields (14 models × ssp126/245/370/585) at single pixel.
-    CORRECT OpenVisus API: BoxQuery + field + logic_box slice.
+    CORRECT: access = db.createAccess()
     """
     db = DB
     nt = int(db.getTime())
     
-    # your exact 42 ssp tasmax fields
     ssp_pattern = re.compile(r'tasmax_day_[^_]+_(ssp1|ssp2|ssp3|ssp5)')
     all_fields = db.getFields()
     ssp_fields = [f for f in all_fields if ssp_pattern.search(f)]
@@ -32,25 +30,21 @@ def plot_tasmax_pixel_42_ssp(
     
     for field_name in ssp_fields:
         try:
-            # STEP 1: create empty BoxQuery
-            query = db.createBoxQuery()
+            p1 = ov.PointNi([x1, y1, t1])
+            p2 = ov.PointNi([x2, y2, t2])
+            box = ov.BoxNi(p1, p2)
             
-            # STEP 2: set field by index (fields are 0-indexed)
             field_idx = all_fields.index(field_name)
-            query.field = field_idx
+            query = db.createBoxQuery(box, field_idx)
             
-            # STEP 3: set logic box [minX,minY,minZ, maxX,maxY,maxZ]
-            query.logic_box = [x1, y1, t1, x2, y2, t2]
+            # CORRECT ACCESS CREATION
+            access = db.createAccess()
+            access.execute(query)
             
-            # STEP 4: execute query (streams single pixel)
-            query.execute()
-            
-            # STEP 5: get data
             data = query.getSamples().toNumPy()
             ts = np.squeeze(data.astype(np.float32))
             t = np.arange(t1, t1 + len(ts))
             
-            # short label
             parts = field_name.split('_')
             short_label = f"{parts[2]}_{parts[3]}"
             ax.plot(t, ts, label=short_label, linewidth=0.8, alpha=0.7)
@@ -60,8 +54,9 @@ def plot_tasmax_pixel_42_ssp(
     
     ax.set_xlabel("time index (days)")
     ax.set_ylabel("tasmax (°C)")
-    ax.set_title(f"tasmax at [{x},{y}] - 42 SSP projections")
-    ax.legend(fontsize=7, ncol=5)
+    ax.set_title(f"tasmax [{x},{y}] - 42 SSP projections")
+    if ax.get_lines():
+        ax.legend(fontsize=7, ncol=5)
     ax.grid(True, alpha=0.3)
     plt.tight_layout()
     return fig, ax

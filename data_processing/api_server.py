@@ -5,6 +5,8 @@ import json
 import os
 import sys
 import traceback
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timedelta
 from typing import List, Literal, Optional
 
 import h5py
@@ -87,6 +89,27 @@ class PixelDataRequest(BaseModel):
     scenario: Optional[str] = None
     resolution: str = Field("medium", description="Spatial resolution level")
     step_days: int = Field(1, description="Time step in days")
+
+
+class PixelDataBatchCombo(BaseModel):
+    """One model/scenario combination inside a batch pixel-data request."""
+    model: str
+    scenario: Optional[str] = None
+    start_date: str
+    end_date: str
+
+
+class PixelDataBatchRequest(BaseModel):
+    """Batch pixel-data request: fetch a point time-series for many model/scenario
+    combinations in a single HTTP call so the server can parallelise all reads."""
+    variable: str
+    x0: int
+    x1: int
+    y0: int
+    y1: int
+    step_days: int = Field(1, ge=1)
+    resolution: str = Field("low", description="Spatial resolution level")
+    combinations: List[PixelDataBatchCombo]
 
 
 class OnDemandAggregateRequest(BaseModel):
@@ -486,6 +509,166 @@ def fetch_pixel_data_get(
     return fetch_pixel_data(request)
 
 
+@app.post("/pixel-data-batch")
+def fetch_pixel_data_batch(request: PixelDataBatchRequest):
+    """
+    Fetch point time-series for many model/scenario combinations in a single call.
+
+    Instead of the client making N separate /pixel-data calls sequentially, it
+    can send all N combinations here and the server fans them out across a large
+    thread pool, dramatically reducing total wall-clock time.
+
+    Returns:
+        {
+            "variable": str,
+            "unit": str,
+            "pixel": [cx, cy],
+            "window": [x0, x1, y0, y1],
+            "results": [
+                {"model": str, "scenario": str|null,
+                 "timestamps": [...], "values": [...],
+                 "valid_count": int, "nan_count": int},
+                ...  # same order as request.combinations
+            ]
+        }
+    """
+    import time as _time
+    _t0 = _time.perf_counter()
+    print(
+        f"[DEBUG /pixel-data-batch] {len(request.combinations)} combos "
+        f"variable={request.variable!r} resolution={request.resolution!r} "
+        f"step_days={request.step_days} box=({request.x0},{request.x1},{request.y0},{request.y1})",
+        flush=True,
+    )
+
+    try:
+        x0, x1, y0, y1 = _validate_logic_box(
+            request.x0, request.x1, request.y0, request.y1
+        )
+        center_x = (x0 + x1) // 2
+        center_y = (y0 + y1) // 2
+
+        # Generate & subsample date lists for every combination.
+        combo_dates: list = []
+        for combo in request.combinations:
+            try:
+                start = datetime.fromisoformat(combo.start_date)
+                end = datetime.fromisoformat(combo.end_date)
+                if end < start:
+                    combo_dates.append([])
+                    continue
+                dates = []
+                current = start
+                while current <= end:
+                    dates.append(current)
+                    current += timedelta(days=request.step_days)
+                dates = data_loader._evenly_subsample_dates(
+                    dates, config.MAX_TIME_SERIES_POINTS
+                )
+                combo_dates.append(dates)
+            except Exception:
+                combo_dates.append([])
+
+        # Flatten to a single task list for one shared thread pool.
+        tasks = [
+            (ci, di, request.combinations[ci], d)
+            for ci, dates in enumerate(combo_dates)
+            for di, d in enumerate(dates)
+        ]
+
+        # Storage keyed by (combo_idx, date_idx)
+        raw: dict = {}
+
+        def _load_one(ci, di, combo, date_obj):
+            result = data_loader.load_pixel_window(
+                variable=request.variable,
+                time=date_obj,
+                model=combo.model,
+                scenario=combo.scenario,
+                resolution=request.resolution,
+                window_box=(x0, x1, y0, y1),
+            )
+            return ci, di, result
+
+        n_workers = min(config.BATCH_WORKERS, len(tasks)) if tasks else 1
+        with ThreadPoolExecutor(max_workers=n_workers) as executor:
+            futures = {
+                executor.submit(_load_one, ci, di, combo, d): (ci, di)
+                for ci, di, combo, d in tasks
+            }
+            for future in as_completed(futures):
+                ci, di = futures[future]
+                try:
+                    r_ci, r_di, result = future.result()
+                    raw[(r_ci, r_di)] = result
+                except Exception as exc:
+                    print(
+                        f"[WARN /pixel-data-batch] combo={ci} date_idx={di}: {exc}",
+                        flush=True,
+                    )
+
+        # Assemble per-combo results in original order.
+        var_metadata = data_loader.get_available_metadata()
+        var_info = (
+            var_metadata.get("variable_metadata", {}).get(request.variable, {})
+        )
+        unit = var_info.get("unit", "")
+
+        results = []
+        for ci, (combo, dates) in enumerate(
+            zip(request.combinations, combo_dates)
+        ):
+            timestamps = []
+            values = []
+            for di, d in enumerate(dates):
+                timestamps.append(d.strftime("%Y-%m-%d"))
+                entry = raw.get((ci, di))
+                if entry is None:
+                    values.append(None)
+                    continue
+                arr = entry.get("data")
+                if arr is None:
+                    values.append(None)
+                    continue
+                local_x = min(arr.shape[1] - 1, center_x - x0)
+                local_y = min(arr.shape[0] - 1, center_y - y0)
+                val = float(arr[local_y, local_x])
+                values.append(val if np.isfinite(val) else None)
+
+            finite = [v for v in values if v is not None]
+            results.append(
+                {
+                    "model": combo.model,
+                    "scenario": combo.scenario,
+                    "timestamps": timestamps,
+                    "values": values,
+                    "valid_count": len(finite),
+                    "nan_count": len(values) - len(finite),
+                }
+            )
+
+        elapsed = _time.perf_counter() - _t0
+        total_valid = sum(r["valid_count"] for r in results)
+        print(
+            f"[DEBUG /pixel-data-batch] OK in {elapsed:.2f}s — "
+            f"{len(tasks)} reads, {total_valid} valid values across "
+            f"{len(results)} combos",
+            flush=True,
+        )
+        return {
+            "variable": request.variable,
+            "unit": unit,
+            "pixel": [center_x, center_y],
+            "window": [x0, x1, y0, y1],
+            "results": results,
+        }
+
+    except DataLoadingError as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=502, detail=str(e))
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/aggregate-on-demand")

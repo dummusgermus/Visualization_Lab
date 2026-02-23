@@ -125,6 +125,9 @@ export async function fetchClimateData(
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache",
+                "Expires": "0",
             },
             body: JSON.stringify({
                 ...request,
@@ -173,6 +176,9 @@ export async function fetchMetadata(options?: {
             method: "GET",
             headers: {
                 "Content-Type": "application/json",
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache",
+                "Expires": "0",
             },
         });
 
@@ -306,6 +312,91 @@ export interface AggregateOnDemandResponse {
     status: string;
 }
 
+export interface PixelDataBatchCombo {
+    model: string;
+    scenario?: string;
+    start_date: string;
+    end_date: string;
+}
+
+export interface PixelDataBatchRequest {
+    variable: string;
+    x0: number;
+    x1: number;
+    y0: number;
+    y1: number;
+    step_days?: number;
+    resolution?: Resolution;
+    combinations: PixelDataBatchCombo[];
+}
+
+export interface PixelDataBatchResult {
+    model: string;
+    scenario: string | null;
+    timestamps: string[];
+    values: (number | null)[];
+    valid_count: number;
+    nan_count: number;
+}
+
+export interface PixelDataBatchResponse {
+    variable: string;
+    unit: string;
+    pixel: [number, number];
+    window: [number, number, number, number];
+    results: PixelDataBatchResult[];
+}
+
+export async function fetchPixelDataBatch(
+    request: PixelDataBatchRequest,
+    options?: { apiUrl?: string },
+): Promise<PixelDataBatchResponse> {
+    const apiUrl = options?.apiUrl || API_BASE_URL;
+    const url = `${apiUrl}/pixel-data-batch`;
+
+    try {
+        const response = await fetch(url, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                Pragma: "no-cache",
+                Expires: "0",
+            },
+            body: JSON.stringify({
+                ...request,
+                resolution: request.resolution || "low",
+                step_days: request.step_days || 1,
+            }),
+        });
+
+        if (!response.ok) {
+            const error = await response
+                .json()
+                .catch(() => ({ detail: response.statusText }));
+            throw new DataClientError(
+                error.detail ||
+                    `HTTP ${response.status}: ${response.statusText}`,
+                response.status,
+                error,
+            );
+        }
+
+        return await response.json();
+    } catch (error) {
+        if (error instanceof DataClientError) {
+            throw error;
+        }
+        throw new DataClientError(
+            `Failed to fetch pixel batch data: ${
+                error instanceof Error ? error.message : String(error)
+            }`,
+            undefined,
+            error,
+        );
+    }
+}
+
 export async function fetchPixelData(
     request: PixelDataRequest,
     options?: { apiUrl?: string },
@@ -318,6 +409,9 @@ export async function fetchPixelData(
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache",
+                "Expires": "0",
             },
             body: JSON.stringify({
                 ...request,
@@ -368,6 +462,9 @@ export async function fetchAggregateOnDemand(
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache",
+                "Expires": "0",
             },
             body: JSON.stringify({
                 ...request,

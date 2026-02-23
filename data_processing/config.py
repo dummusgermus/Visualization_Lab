@@ -188,8 +188,14 @@ MEMORY_CACHE_MAXSIZE = int(os.environ.get("NEX_GDDP_MEMORY_CACHE", "32"))
 DISK_CACHE_ENABLED = os.environ.get("NEX_GDDP_DISABLE_DISK_CACHE", "0") != "1"
 
 # Maximum concurrent workers for high-level loaders.
-# Keep default conservative to prevent CPU saturation on local machines.
-MAX_WORKERS = int(os.environ.get("NEX_GDDP_MAX_WORKERS", "3"))
+# Each /pixel-data request fans its date list across this many threads.
+# Raised to 6 (from 3) since step_days=365 means ~150 reads per request —
+# much lighter than the previous daily step, so higher concurrency is safe.
+MAX_WORKERS = int(os.environ.get("NEX_GDDP_MAX_WORKERS", "6"))
+
+# Workers for the /pixel-data-batch endpoint which fans out many small
+# logic_box reads across all model/scenario combinations at once.
+BATCH_WORKERS = int(os.environ.get("NEX_GDDP_BATCH_WORKERS", "12"))
 
 # Hard cap for sampled timesteps returned by time-series style endpoints.
 # If the requested range has more timesteps, the loader subsamples evenly.

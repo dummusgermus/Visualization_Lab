@@ -68,10 +68,10 @@ import {
 const USE_TOY_RANGE_DATA = false;
 
 // Maximum simultaneous in-flight requests to the Python API server.
-// Each /pixel-data request spawns MAX_WORKERS (3) server threads, so
-// PARALLEL_REQUEST_LIMIT × 3 = peak concurrent OpenVisus reads.
-// Keep well below the server's thread-pool limit to avoid crashes.
-const PARALLEL_REQUEST_LIMIT = 4;
+// Each /pixel-data request runs up to MAX_WORKERS (6) server threads.
+// With step_days=365, each request is ~150 annual reads — much lighter
+// than the previous daily step, so we can safely run more in parallel.
+const PARALLEL_REQUEST_LIMIT = 8;
 
 /**
  * Minimal concurrency limiter: runs task factories with at most `limit` in-flight.
@@ -3192,40 +3192,53 @@ async function loadMapRangeData() {
             return;
         }
 
-        const totalRequests = activeScenarios.length * activeModels.length;
-        state.mapRangeLoadingProgress = { total: totalRequests, done: 0 };
-        render();
-
-        const samples: ChartSample[] = [];
         const useFixedAnnualSamples = shouldUseFixedAnnualSamples(
             range.start,
             range.end,
         );
         const fixedReferenceDate = range.start;
 
-        for (const model of activeModels) {
-            for (const scenario of activeScenarios) {
-                if (requestId !== mapRangeRequestId) return;
-                const pointSamples = await loadRangePointSamples({
-                    variable: rangeVariable,
-                    model,
-                    scenario,
-                    point: state.mapMarker,
-                    rangeStart: range.start,
-                    rangeEnd: range.end,
-                    useFixedAnnualSamples,
-                    fixedReferenceDate,
-                });
-                if (requestId !== mapRangeRequestId) return;
-                samples.push(...pointSamples);
+        const totalRequests = activeScenarios.length * activeModels.length;
+        state.mapRangeLoadingProgress = { total: totalRequests, done: 0 };
+        render();
 
-                state.mapRangeLoadingProgress = {
-                    total: totalRequests,
-                    done: state.mapRangeLoadingProgress.done + 1,
-                };
-                updateMapRangePreview(samples);
-            }
-        }
+        const samples: ChartSample[] = [];
+        let _mapRangeDone = 0;
+        const _marker = state.mapMarker!; // non-null: guarded by the early return above
+
+        await pLimit(
+            activeModels.flatMap((model) =>
+                activeScenarios.map((scenario) => async () => {
+                    if (requestId !== mapRangeRequestId) return;
+                    try {
+                        const pointSamples = await loadRangePointSamples({
+                            variable: rangeVariable,
+                            model,
+                            scenario,
+                            point: _marker,
+                            rangeStart: range.start,
+                            rangeEnd: range.end,
+                            useFixedAnnualSamples,
+                            fixedReferenceDate,
+                        });
+                        samples.push(...pointSamples);
+                    } catch (err) {
+                        console.warn(
+                            `Map range samples failed for ${model}/${scenario}:`,
+                            err,
+                        );
+                    } finally {
+                        _mapRangeDone++;
+                        state.mapRangeLoadingProgress = {
+                            total: totalRequests,
+                            done: _mapRangeDone,
+                        };
+                        updateMapRangePreview(samples);
+                    }
+                }),
+            ),
+            PARALLEL_REQUEST_LIMIT,
+        );
 
         if (requestId !== mapRangeRequestId) return;
         state.mapRangeSamples = samples;
@@ -5362,57 +5375,53 @@ async function loadChartData() {
                         state.chartPoint
                     ) {
                         // POINT – fire all model × scenario combos in parallel.
-                        // Each loadRangePointSamples call issues one /pixel-data request
-                        // covering the full date range, so parallelising them is safe.
+                        // Each loadRangePointSamples call issues one /pixel-data
+                        // request for the full date range; completing each one
+                        // triggers a live preview update via _onRangeTaskDone.
                         const _point = state.chartPoint;
                         const combinations = activeModels.flatMap((model) =>
                             activeScenarios
                                 .map((scenario) => {
-                                    const sr =
-                                        getTimeRangeForScenario(scenario);
-                                    const cs = clipDateToRange(
-                                        rangeStart,
-                                        sr,
-                                    );
+                                    const sr = getTimeRangeForScenario(scenario);
+                                    const cs = clipDateToRange(rangeStart, sr);
                                     const ce = clipDateToRange(rangeEnd, sr);
                                     return parseDate(cs) <= parseDate(ce)
                                         ? { model, scenario }
                                         : null;
                                 })
                                 .filter(
-                                    (
-                                        x,
-                                    ): x is {
-                                        model: string;
-                                        scenario: string;
-                                    } => x !== null,
+                                    (x): x is { model: string; scenario: string } =>
+                                        x !== null,
                                 ),
                         );
 
                         await pLimit(
-                            combinations.map(({ model, scenario }) => async () => {
-                                try {
-                                    const pointSamples =
-                                        await loadRangePointSamples({
-                                            variable: state.chartVariable,
-                                            model,
-                                            scenario,
-                                            point: _point,
-                                            rangeStart,
-                                            rangeEnd,
-                                            useFixedAnnualSamples,
-                                            fixedReferenceDate,
-                                        });
-                                    samples.push(...pointSamples);
-                                } catch (error) {
-                                    console.warn(
-                                        `Range samples failed for ${model}/${scenario}:`,
-                                        error,
-                                    );
-                                } finally {
-                                    _onRangeTaskDone();
-                                }
-                            }),
+                            combinations.map(
+                                ({ model, scenario }) =>
+                                    async () => {
+                                        try {
+                                            const pointSamples =
+                                                await loadRangePointSamples({
+                                                    variable: state.chartVariable,
+                                                    model,
+                                                    scenario,
+                                                    point: _point,
+                                                    rangeStart,
+                                                    rangeEnd,
+                                                    useFixedAnnualSamples,
+                                                    fixedReferenceDate,
+                                                });
+                                            samples.push(...pointSamples);
+                                        } catch (error) {
+                                            console.warn(
+                                                `Range samples failed for ${model}/${scenario}:`,
+                                                error,
+                                            );
+                                        } finally {
+                                            _onRangeTaskDone();
+                                        }
+                                    },
+                            ),
                             PARALLEL_REQUEST_LIMIT,
                         );
                     } else if (

@@ -249,7 +249,11 @@ def load_time_series(
         }
         for future in as_completed(future_map):
             idx = future_map[future]
-            ordered[idx] = future.result()
+            try:
+                ordered[idx] = future.result()
+            except DataLoadingError as exc:
+                print(f"[WARN load_time_series] skipping date at index {idx}: {exc}",
+                      flush=True)
     return ordered
 
 
@@ -275,16 +279,40 @@ def load_pixel_window(
 
     db = get_database_connection()
     x0, x1, y0, y1 = window_box
-    # OpenVisus expects ([x0,y0],[x1,y1]) in dataset logic coords
+
+    # DEBUG: log all resolved parameters before the OpenVisus read
+    print(
+        f"[DEBUG load_pixel_window] "
+        f"date={date.isoformat()} timestep_idx={timestep_idx} "
+        f"field={field!r} scenario={scenario!r} resolution={resolution!r} "
+        f"window_box=({x0},{x1},{y0},{y1}) "
+        f"logic_box=([{x0},{y0}],[{x1+1},{y1+1}])",
+        flush=True,
+    )
+
+    # Use OpenVisus windowed read for efficiency (only download requested pixels)
+    # Note: quality parameter not used with logic_box in this implementation
     try:
         data = db.read(
             time=timestep_idx,
             field=field,
-            quality=quality,
             logic_box=([x0, y0], [x1 + 1, y1 + 1]),  # upper bound exclusive
+        )
+        # DEBUG: confirm shape and whether the array is all-NaN
+        nan_count = int(np.isnan(data).sum()) if np.issubdtype(data.dtype, np.floating) else 0
+        print(
+            f"[DEBUG load_pixel_window] read OK shape={data.shape} dtype={data.dtype} "
+            f"nan_count={nan_count}/{data.size}",
+            flush=True,
         )
         data.setflags(write=False)
     except Exception as e:
+        import traceback as _tb
+        print(
+            f"[DEBUG load_pixel_window] EXCEPTION type={type(e).__name__} msg={e}\n"
+            + _tb.format_exc(),
+            flush=True,
+        )
         raise DataLoadingError(f"Failed to read window: {e}")
 
     return {
@@ -356,7 +384,11 @@ def load_pixel_time_series(
         }
         for future in as_completed(future_map):
             idx = future_map[future]
-            ordered[idx] = future.result()
+            try:
+                ordered[idx] = future.result()
+            except DataLoadingError as exc:
+                print(f"[WARN load_pixel_time_series] skipping date at index {idx}: {exc}",
+                      flush=True)
     return ordered
 
 

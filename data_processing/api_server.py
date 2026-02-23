@@ -4,11 +4,13 @@ import base64
 import json
 import os
 import sys
+import traceback
 from typing import List, Literal, Optional
 
 import h5py
 import llm_function_call
 import numpy as np
+import requests
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -193,6 +195,61 @@ def metadata():
     return data_loader.get_available_metadata()
 
 
+def _nominatim_headers() -> dict:
+    return {
+        "Accept": "application/json",
+        "User-Agent": "climate-visualization-app/1.0",
+    }
+
+
+@app.get("/geocode/search")
+def geocode_search(query: str, limit: int = 5):
+    """Proxy Nominatim search to avoid browser CORS issues."""
+    try:
+        response = requests.get(
+            "https://nominatim.openstreetmap.org/search",
+            params={
+                "format": "json",
+                "q": query,
+                "limit": limit,
+                "addressdetails": 1,
+            },
+            headers=_nominatim_headers(),
+            timeout=10,
+        )
+        response.raise_for_status()
+        return response.json()
+    except requests.RequestException as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Geocode search failed: {exc}",
+        ) from exc
+
+
+@app.get("/geocode/reverse")
+def geocode_reverse(lat: float, lon: float):
+    """Proxy Nominatim reverse geocode to avoid browser CORS issues."""
+    try:
+        response = requests.get(
+            "https://nominatim.openstreetmap.org/reverse",
+            params={
+                "format": "json",
+                "lat": lat,
+                "lon": lon,
+                "addressdetails": 1,
+            },
+            headers=_nominatim_headers(),
+            timeout=10,
+        )
+        response.raise_for_status()
+        return response.json()
+    except requests.RequestException as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Reverse geocode failed: {exc}",
+        ) from exc
+
+
 @app.post("/data")
 def fetch_data(request: DataRequest):
     try:
@@ -308,6 +365,15 @@ def fetch_pixel_data(request: PixelDataRequest):
             "metadata": {...}
         }
     """
+    import time as _time
+    _t0 = _time.perf_counter()
+    print(
+        f"[DEBUG /pixel-data] REQUEST variable={request.variable!r} model={request.model!r} "
+        f"scenario={request.scenario!r} start={request.start_date!r} end={request.end_date!r} "
+        f"resolution={request.resolution!r} step_days={request.step_days} "
+        f"box=({request.x0},{request.x1},{request.y0},{request.y1})",
+        flush=True,
+    )
     try:
         x0, x1, y0, y1 = _validate_logic_box(
             request.x0, request.x1, request.y0, request.y1
@@ -334,17 +400,18 @@ def fetch_pixel_data(request: PixelDataRequest):
         for entry in series:
             arr = entry.get("data")
             if arr is None:
-                values.append(float("nan"))
+                values.append(None)
                 continue
             try:
                 # arr shape is (window_height, window_width)
                 local_x = min(arr.shape[1] - 1, center_x - x0)
                 local_y = min(arr.shape[0] - 1, center_y - y0)
-                values.append(float(arr[local_y, local_x]))
+                val = float(arr[local_y, local_x])
+                values.append(val if np.isfinite(val) else None)
             except Exception:
-                values.append(float("nan"))
+                values.append(None)
 
-        finite_values = [v for v in values if np.isfinite(v)]
+        finite_values = [v for v in values if v is not None]
         valid_count = len(finite_values)
         nan_count = len(values) - valid_count
 
@@ -352,6 +419,12 @@ def fetch_pixel_data(request: PixelDataRequest):
         var_info = var_metadata.get("variable_metadata", {}).get(request.variable, {})
         unit = var_info.get("unit", "")
 
+        elapsed = _time.perf_counter() - _t0
+        print(
+            f"[DEBUG /pixel-data] OK in {elapsed:.2f}s — "
+            f"timestamps={len(timestamps)} valid={valid_count} nan={nan_count}",
+            flush=True,
+        )
         return {
             "pixel": [center_x, center_y],
             "window": [x0, x1, y0, y1],
@@ -371,8 +444,14 @@ def fetch_pixel_data(request: PixelDataRequest):
         }
 
     except DataLoadingError as e:
+        elapsed = _time.perf_counter() - _t0
+        print(f"[DEBUG /pixel-data] DataLoadingError after {elapsed:.2f}s: {e}", flush=True)
+        traceback.print_exc()
         raise HTTPException(status_code=502, detail=str(e))
     except Exception as e:
+        elapsed = _time.perf_counter() - _t0
+        print(f"[DEBUG /pixel-data] Exception after {elapsed:.2f}s: {e}", flush=True)
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 

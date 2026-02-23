@@ -67,6 +67,39 @@ import {
 // Toggle to switch between real API data and toy mock chart data (range mode)
 const USE_TOY_RANGE_DATA = false;
 
+// Maximum simultaneous in-flight requests to the Python API server.
+// Each /pixel-data request spawns MAX_WORKERS (3) server threads, so
+// PARALLEL_REQUEST_LIMIT × 3 = peak concurrent OpenVisus reads.
+// Keep well below the server's thread-pool limit to avoid crashes.
+const PARALLEL_REQUEST_LIMIT = 4;
+
+/**
+ * Minimal concurrency limiter: runs task factories with at most `limit` in-flight.
+ * Like the popular `p-limit` package but with no dependency.
+ */
+function pLimit<T>(
+    tasks: (() => Promise<T>)[],
+    limit: number,
+): Promise<PromiseSettledResult<T>[]> {
+    return new Promise((resolve) => {
+        const results: PromiseSettledResult<T>[] = new Array(tasks.length);
+        let started = 0;
+        let finished = 0;
+        function next() {
+            if (finished === tasks.length) { resolve(results); return; }
+            while (started - finished < limit && started < tasks.length) {
+                const idx = started++;
+                tasks[idx]()
+                    .then((value) => { results[idx] = { status: "fulfilled", value }; })
+                    .catch((reason) => { results[idx] = { status: "rejected", reason }; })
+                    .finally(() => { finished++; next(); });
+            }
+        }
+        next();
+    });
+}
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
+
 type Mode = "Explore" | "Compare" | "Ensemble";
 type PanelTab = "Manual" | "Chat";
 type CanvasView = "map" | "chart";
@@ -2710,13 +2743,12 @@ async function fetchLocationSuggestions(
     const trimmed = query.trim();
     if (!trimmed) return [];
 
-    const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(
+    const url = `${API_BASE_URL}/geocode/search?query=${encodeURIComponent(
         trimmed,
-    )}&limit=5&addressdetails=1`;
+    )}&limit=5`;
     const response = await fetch(url, {
         headers: {
             Accept: "application/json",
-            "User-Agent": "climate-visualization-app/1.0",
         },
     });
 
@@ -2745,11 +2777,10 @@ async function fetchReverseGeocode(
     lat: number,
     lon: number,
 ): Promise<string | null> {
-    const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&addressdetails=1`;
+    const url = `${API_BASE_URL}/geocode/reverse?lat=${lat}&lon=${lon}`;
     const response = await fetch(url, {
         headers: {
             Accept: "application/json",
-            "User-Agent": "climate-visualization-app/1.0",
         },
     });
 
@@ -3295,123 +3326,63 @@ async function loadMapInfoData() {
             );
 
             if (hasPoint && state.mapMarker) {
-                // Point selection - use pixel API
-                const [x, y] = latLonToGridIndices(
-                    state.mapMarker.lat,
-                    state.mapMarker.lon,
-                );
-
-                const pixelPromises = modelOptions.map((model) =>
-                    fetchPixelData({
-                        variable: mapVariable,
-                        model,
-                        x0: x,
-                        x1: x,
-                        y0: y,
-                        y1: y,
-                        start_date: dateForScenario,
-                        end_date: dateForScenario,
-                        scenario: normalizeScenario(scenario),
-                        resolution: "low",
-                        step_days: 1,
-                    }).catch((error) => {
-                        console.warn(
-                            `Pixel API failed for model ${model}, falling back:`,
-                            error,
-                        );
-                        const request = createDataRequest({
-                            variable: mapVariable,
-                            date: dateForScenario,
-                            model,
-                            scenario,
-                            resolution: 1,
-                        });
-                        return fetchClimateData(request).then((data) => {
-                            const arr = dataToArray(data);
-                            if (!arr) {
-                                throw new Error(
-                                    "No data returned for map info request.",
-                                );
-                            }
-                            const avg = valueAtPoint(
-                                arr,
-                                mapVariable,
-                                data.shape,
-                                {
-                                    lat: state.mapMarker!.lat,
-                                    lon: state.mapMarker!.lon,
-                                },
-                            );
-                            return {
+                // Point selection – fire all models in parallel (full raster; pixel-data
+                // endpoint returns 502 for single-date reads — see debug notes)
+                const _marker = state.mapMarker;
+                await Promise.allSettled(
+                    modelOptions.map(async (model) => {
+                        try {
+                            const request = createDataRequest({
+                                variable: mapVariable,
+                                date: dateForScenario,
                                 model,
-                                value: avg,
-                                fallback: true,
-                            } as {
-                                model: string;
-                                value: number;
-                                fallback: boolean;
-                            };
-                        });
-                    }),
-                );
-
-                const pixelResults = await Promise.allSettled(pixelPromises);
-                if (requestId !== mapInfoRequestId) return;
-
-                for (const result of pixelResults) {
-                    if (result.status === "fulfilled") {
-                        const data = result.value;
-                        if (
-                            typeof data === "object" &&
-                            "fallback" in data &&
-                            data.fallback
-                        ) {
-                            samples.push({
                                 scenario,
-                                model: data.model,
-                                rawValue: data.value,
-                                dateUsed: dateForScenario,
+                                resolution: 1,
                             });
-                        } else {
-                            const pixelData = data as any;
-                            const value = pixelData.values[0];
-                            if (value !== null && isFinite(value)) {
-                                const rawValue =
-                                    mapVariable === "hurs"
-                                        ? Math.min(value, 100)
-                                        : value;
+                            const data = await fetchClimateData(request);
+                            const arr = dataToArray(data);
+                            if (arr) {
+                                const avg = valueAtPoint(
+                                    arr,
+                                    mapVariable,
+                                    data.shape,
+                                    { lat: _marker.lat, lon: _marker.lon },
+                                );
                                 samples.push({
                                     scenario,
-                                    model: pixelData.model,
-                                    rawValue,
+                                    model,
+                                    rawValue: avg,
                                     dateUsed: dateForScenario,
                                 });
                             }
+                        } catch (error) {
+                            console.warn(
+                                `Map info request failed for model ${model}:`,
+                                error,
+                            );
                         }
-                    } else {
-                        console.warn(
-                            "Failed to fetch pixel data for map info:",
-                            result.reason,
-                        );
-                    }
-                }
-
-                state.mapInfoLoadingProgress = {
-                    total: totalRequests,
-                    done:
-                        state.mapInfoLoadingProgress.done + modelOptions.length,
-                };
-                updateMapInfoPreview(samples);
+                        state.mapInfoLoadingProgress = {
+                            total: totalRequests,
+                            done: state.mapInfoLoadingProgress.done + 1,
+                        };
+                        updateMapInfoPreview(samples);
+                    }),
+                );
             } else if (hasPolygon && state.mapPolygon) {
                 // Polygon selection - use aggregate API
-                const [x0, x1, y0, y1] = polygonToGridBounds(state.mapPolygon);
+                const [x0, x1, clientY0, clientY1] = polygonToGridBounds(state.mapPolygon);
+                // Flip y bounds: OpenVisus is south-up, polygonToGridBounds is north-down.
+                // North-down y0 (small = north) → large OV index; y1 (large = south) → small OV index.
+                const y0 = GRID_HEIGHT - 1 - clientY1;
+                const y1 = GRID_HEIGHT - 1 - clientY0;
+                // Mask rows were built north-to-south; reverse them to match south-up OV window.
                 const mask = createPolygonMask(
                     state.mapPolygon,
                     x0,
                     x1,
-                    y0,
-                    y1,
-                );
+                    clientY0,
+                    clientY1,
+                ).reverse();
 
                 try {
                     const aggregateData = await fetchAggregateOnDemand({
@@ -3863,30 +3834,36 @@ async function loadRangePointSamples(params: {
     }
 
     try {
-        const [x, y] = latLonToGridIndices(point.lat, point.lon);
+        const [x, clientY] = latLonToGridIndices(point.lat, point.lon);
+        // OpenVisus stores rows south-up (y=0 = -60°S); latLonToGridIndices
+        // returns north-down (y=0 = 90°N) — flip before sending to the API.
+        const ovY = GRID_HEIGHT - 1 - clientY;
+        // When showing annual samples (range ≥ 20 years), step by ~1 year so
+        // the server returns one point per year.  With step_days=1 and
+        // MAX_TIME_SERIES_POINTS=200 the 54 750 daily dates are subsampled to
+        // ~200 points spaced ~9 months apart; only ~0-1 of those would ever
+        // pass the isSameMonthDay check, leaving nearly-empty series.
         const pixelData = await fetchPixelData({
             variable,
             model,
             x0: x,
             x1: x,
-            y0: y,
-            y1: y,
+            y0: ovY,
+            y1: ovY,
             start_date: clippedStart,
             end_date: clippedEnd,
             scenario: normalizeScenario(scenario),
             resolution: "low",
-            step_days: 1,
+            step_days: useFixedAnnualSamples ? 365 : 1,
         });
 
         const samples: ChartSample[] = [];
         for (let i = 0; i < pixelData.timestamps.length; i++) {
             const timestamp = pixelData.timestamps[i];
-            if (
-                useFixedAnnualSamples &&
-                !isSameMonthDay(timestamp, fixedReferenceDate)
-            ) {
-                continue;
-            }
+            // When useFixedAnnualSamples the server already returns one point
+            // per year (step_days=365), so no additional date filtering is
+            // needed.  The old isSameMonthDay guard was causing ~0 matches
+            // because subsampled daily data rarely lands on the exact date.
             const value = pixelData.values[i];
             if (value !== null && isFinite(value)) {
                 const rawValue =
@@ -4987,23 +4964,26 @@ async function loadChartData() {
                             state.chartPoint
                         ) {
                             // Single point: parallelize pixel-data API requests for all models
-                            const [x, y] = latLonToGridIndices(
+                            const [x, _clientY] = latLonToGridIndices(
                                 state.chartPoint.lat,
                                 state.chartPoint.lon,
                             );
+                            // Flip y: OpenVisus is south-up, latLonToGridIndices is north-down
+                            const ovY = GRID_HEIGHT - 1 - _clientY;
                             console.log(
-                                `Fetching pixel data for point (${x}, ${y}) for ${activeModels.length} models`,
+                                `Fetching pixel data for point (${x}, ${ovY}) for ${activeModels.length} models`,
                             );
 
-                            // Parallelize requests for all models
-                            const pixelPromises = activeModels.map((model) =>
+                            // Parallelize requests for all models (rate-limited)
+                            const pixelResults = await pLimit(
+                                activeModels.map((model) => () =>
                                 fetchPixelData({
                                     variable: state.chartVariable,
                                     model,
                                     x0: x,
                                     x1: x,
-                                    y0: y,
-                                    y1: y,
+                                    y0: ovY,
+                                    y1: ovY,
                                     start_date: dateForScenario,
                                     end_date: dateForScenario,
                                     scenario: normalizeScenario(scenario),
@@ -5056,10 +5036,7 @@ async function loadChartData() {
                                         },
                                     );
                                 }),
-                            );
-
-                            const pixelResults =
-                                await Promise.allSettled(pixelPromises);
+                            ), PARALLEL_REQUEST_LIMIT);
 
                             // Process results
                             for (const result of pixelResults) {
@@ -5126,16 +5103,19 @@ async function loadChartData() {
                             state.chartPolygon.length >= 3
                         ) {
                             // Polygon: batch all models in a single aggregate-on-demand request
-                            const [x0, x1, y0, y1] = polygonToGridBounds(
+                            const [x0, x1, clientY0, clientY1] = polygonToGridBounds(
                                 state.chartPolygon,
                             );
+                            // Flip y: OpenVisus south-up vs north-down client convention
+                            const y0 = GRID_HEIGHT - 1 - clientY1;
+                            const y1 = GRID_HEIGHT - 1 - clientY0;
                             const mask = createPolygonMask(
                                 state.chartPolygon,
                                 x0,
                                 x1,
-                                y0,
-                                y1,
-                            );
+                                clientY0,
+                                clientY1,
+                            ).reverse();
 
                             console.log(
                                 `Fetching aggregate data for polygon window [${x0},${x1},${y0},${y1}] for ${activeModels.length} models`,
@@ -5357,76 +5337,133 @@ async function loadChartData() {
                     updateChartContainerDOM();
 
                     const samples: ChartSample[] = [];
-
-                    for (const model of activeModels) {
-                        for (const scenario of activeScenarios) {
-                            const scenarioRange =
-                                getTimeRangeForScenario(scenario);
-                            // Clip date range to scenario's valid range
-                            const clippedStart = clipDateToRange(
-                                rangeStart,
-                                scenarioRange,
-                            );
-                            const clippedEnd = clipDateToRange(
-                                rangeEnd,
-                                scenarioRange,
-                            );
-
-                            if (
-                                parseDate(clippedStart) > parseDate(clippedEnd)
-                            ) {
-                                continue; // Skip if no valid date range for this scenario
-                            }
-
-                            const done = state.chartLoadingProgress.done;
-                            setLoadingProgress(
-                                Math.min(
-                                    95,
-                                    Math.round(
-                                        ((done + 0.1) / totalRequests) * 100,
-                                    ),
+                    let _rangeProgressDone = 0;
+                    // Called by each parallel task as it completes; streams live preview
+                    const _onRangeTaskDone = () => {
+                        _rangeProgressDone++;
+                        state.chartLoadingProgress = {
+                            total: totalRequests,
+                            done: _rangeProgressDone,
+                        };
+                        setLoadingProgress(
+                            Math.min(
+                                98,
+                                Math.round(
+                                    (_rangeProgressDone / totalRequests) * 100,
                                 ),
-                            );
+                            ),
+                        );
+                        updateChartPreview(samples);
+                    };
 
-                            try {
-                                if (
-                                    (state.chartLocation === "Point" ||
-                                        state.chartLocation === "Search") &&
-                                    state.chartPoint
-                                ) {
+                    if (
+                        (state.chartLocation === "Point" ||
+                            state.chartLocation === "Search") &&
+                        state.chartPoint
+                    ) {
+                        // POINT – fire all model × scenario combos in parallel.
+                        // Each loadRangePointSamples call issues one /pixel-data request
+                        // covering the full date range, so parallelising them is safe.
+                        const _point = state.chartPoint;
+                        const combinations = activeModels.flatMap((model) =>
+                            activeScenarios
+                                .map((scenario) => {
+                                    const sr =
+                                        getTimeRangeForScenario(scenario);
+                                    const cs = clipDateToRange(
+                                        rangeStart,
+                                        sr,
+                                    );
+                                    const ce = clipDateToRange(rangeEnd, sr);
+                                    return parseDate(cs) <= parseDate(ce)
+                                        ? { model, scenario }
+                                        : null;
+                                })
+                                .filter(
+                                    (
+                                        x,
+                                    ): x is {
+                                        model: string;
+                                        scenario: string;
+                                    } => x !== null,
+                                ),
+                        );
+
+                        await pLimit(
+                            combinations.map(({ model, scenario }) => async () => {
+                                try {
                                     const pointSamples =
                                         await loadRangePointSamples({
                                             variable: state.chartVariable,
                                             model,
                                             scenario,
-                                            point: state.chartPoint,
+                                            point: _point,
                                             rangeStart,
                                             rangeEnd,
                                             useFixedAnnualSamples,
                                             fixedReferenceDate,
                                         });
                                     samples.push(...pointSamples);
-                                    updateChartPreview(samples);
-                                } else if (
-                                    state.chartLocation === "Draw" &&
-                                    state.chartPolygon &&
-                                    state.chartPolygon.length >= 3
-                                ) {
-                                    // Polygon: use aggregate-on-demand API with date range
-                                    const [x0, x1, y0, y1] =
-                                        polygonToGridBounds(state.chartPolygon);
-                                    const mask = createPolygonMask(
-                                        state.chartPolygon,
-                                        x0,
-                                        x1,
-                                        y0,
-                                        y1,
+                                } catch (error) {
+                                    console.warn(
+                                        `Range samples failed for ${model}/${scenario}:`,
+                                        error,
                                     );
+                                } finally {
+                                    _onRangeTaskDone();
+                                }
+                            }),
+                            PARALLEL_REQUEST_LIMIT,
+                        );
+                    } else if (
+                        state.chartLocation === "Draw" &&
+                        state.chartPolygon &&
+                        state.chartPolygon.length >= 3
+                    ) {
+                        // POLYGON – one aggregate-on-demand request per scenario batching
+                        // ALL models, then fire all scenarios in parallel.
+                        const _polygon = state.chartPolygon;
+                        const [x0, x1, _clientY0, _clientY1] =
+                            polygonToGridBounds(_polygon);
+                        // Flip y: OpenVisus south-up vs north-down client convention
+                        const y0 = GRID_HEIGHT - 1 - _clientY1;
+                        const y1 = GRID_HEIGHT - 1 - _clientY0;
+                        const mask = createPolygonMask(
+                            _polygon,
+                            x0,
+                            x1,
+                            _clientY0,
+                            _clientY1,
+                        ).reverse();
 
+                        await Promise.allSettled(
+                            activeScenarios.map(async (scenario) => {
+                                const scenarioRange =
+                                    getTimeRangeForScenario(scenario);
+                                const clippedStart = clipDateToRange(
+                                    rangeStart,
+                                    scenarioRange,
+                                );
+                                const clippedEnd = clipDateToRange(
+                                    rangeEnd,
+                                    scenarioRange,
+                                );
+                                if (
+                                    parseDate(clippedStart) >
+                                    parseDate(clippedEnd)
+                                ) {
+                                    // No valid date range for this scenario – count all models done
+                                    for (const _m of activeModels)
+                                        _onRangeTaskDone();
+                                    return;
+                                }
+
+                                try {
+                                    // Batch all models in a single server request
                                     const aggregateData =
                                         await fetchAggregateOnDemand({
                                             variable: state.chartVariable,
-                                            models: [model],
+                                            models: activeModels,
                                             x0,
                                             x1,
                                             y0,
@@ -5440,151 +5477,137 @@ async function loadChartData() {
                                             mask,
                                         });
 
-                                    const modelData =
-                                        aggregateData.models[model];
-                                    if (modelData) {
-                                        // Convert time series response to samples
-                                        for (
-                                            let i = 0;
-                                            i < modelData.timestamps.length;
-                                            i++
-                                        ) {
-                                            const timestamp =
-                                                modelData.timestamps[i];
-                                            if (
-                                                useFixedAnnualSamples &&
-                                                !isSameMonthDay(
-                                                    timestamp,
-                                                    fixedReferenceDate,
+                                    for (const model of activeModels) {
+                                        const modelData =
+                                            aggregateData.models[model];
+                                        if (modelData) {
+                                            for (
+                                                let i = 0;
+                                                i <
+                                                modelData.timestamps.length;
+                                                i++
+                                            ) {
+                                                const timestamp =
+                                                    modelData.timestamps[i];
+                                                if (
+                                                    useFixedAnnualSamples &&
+                                                    !isSameMonthDay(
+                                                        timestamp,
+                                                        fixedReferenceDate,
+                                                    )
                                                 )
-                                            ) {
-                                                continue;
-                                            }
-                                            const value = modelData.values[i];
-                                            if (
-                                                value !== null &&
-                                                isFinite(value)
-                                            ) {
-                                                const rawValue =
-                                                    state.chartVariable ===
-                                                    "hurs"
-                                                        ? Math.min(value, 100)
-                                                        : value;
-                                                samples.push({
-                                                    scenario,
-                                                    model,
-                                                    rawValue,
-                                                    dateUsed: timestamp,
-                                                });
+                                                    continue;
+                                                const value =
+                                                    modelData.values[i];
+                                                if (
+                                                    value !== null &&
+                                                    isFinite(value)
+                                                ) {
+                                                    const rawValue =
+                                                        state.chartVariable ===
+                                                        "hurs"
+                                                            ? Math.min(
+                                                                  value,
+                                                                  100,
+                                                              )
+                                                            : value;
+                                                    samples.push({
+                                                        scenario,
+                                                        model,
+                                                        rawValue,
+                                                        dateUsed: timestamp,
+                                                    });
+                                                }
                                             }
                                         }
+                                        _onRangeTaskDone();
                                     }
-                                    updateChartPreview(samples);
-                                }
-                            } catch (error) {
-                                // If pixel API fails, fall back to old method with sampled dates
-                                console.warn(
-                                    "Pixel API failed, falling back to full map load:",
-                                    error,
-                                );
-                                const sampledDates = useFixedAnnualSamples
-                                    ? buildFixedAnnualSampleDates(
-                                          fixedReferenceDate,
-                                          clippedStart,
-                                          clippedEnd,
-                                          50,
-                                      )
-                                    : buildRangeSampleDates(
-                                          clippedStart,
-                                          clippedEnd,
-                                          50,
-                                      );
-                                for (const dateCandidate of sampledDates) {
-                                    const dateForScenario =
-                                        useFixedAnnualSamples
-                                            ? dateCandidate
-                                            : clipDateToRange(
-                                                  dateCandidate,
-                                                  scenarioRange,
-                                              );
-                                    if (
-                                        useFixedAnnualSamples &&
-                                        !isDateWithinRange(
-                                            dateForScenario,
-                                            scenarioRange,
-                                        )
-                                    ) {
-                                        continue;
-                                    }
-                                    const request = createDataRequest({
-                                        variable: state.chartVariable,
-                                        date: dateForScenario,
-                                        model,
-                                        scenario,
-                                        resolution: 1,
-                                    });
-                                    let data: ClimateData | null = null;
-                                    try {
-                                        data = await fetchClimateData(request);
-                                    } catch (error) {
-                                        console.warn(
-                                            "Range fallback request failed, skipping date:",
-                                            error,
-                                        );
-                                        continue; // Skip failed dates
-                                    }
-                                    const arr = dataToArray(data);
-                                    if (!arr) {
-                                        continue; // Skip failed dates
-                                    }
-                                    const avg =
-                                        state.chartLocation === "Draw" &&
-                                        state.chartPolygon &&
-                                        state.chartPolygon.length >= 3
-                                            ? averageArrayInPolygon(
-                                                  arr,
-                                                  state.chartVariable,
-                                                  data.shape,
-                                                  state.chartPolygon,
-                                              )
-                                            : (state.chartLocation ===
-                                                    "Point" ||
-                                                    state.chartLocation ===
-                                                        "Search") &&
-                                                state.chartPoint
-                                              ? valueAtPoint(
-                                                    arr,
-                                                    state.chartVariable,
-                                                    data.shape,
-                                                    state.chartPoint,
+                                } catch (error) {
+                                    console.warn(
+                                        `Aggregate failed for scenario ${scenario}, falling back per-model:`,
+                                        error,
+                                    );
+                                    // Fallback: sequential sampled-date full-raster loads per model
+                                    for (const model of activeModels) {
+                                        try {
+                                            const sampledDates =
+                                                useFixedAnnualSamples
+                                                    ? buildFixedAnnualSampleDates(
+                                                          fixedReferenceDate,
+                                                          clippedStart,
+                                                          clippedEnd,
+                                                          50,
+                                                      )
+                                                    : buildRangeSampleDates(
+                                                          clippedStart,
+                                                          clippedEnd,
+                                                          50,
+                                                      );
+                                            for (const dateCandidate of sampledDates) {
+                                                const dateForScenario =
+                                                    useFixedAnnualSamples
+                                                        ? dateCandidate
+                                                        : clipDateToRange(
+                                                              dateCandidate,
+                                                              scenarioRange,
+                                                          );
+                                                if (
+                                                    useFixedAnnualSamples &&
+                                                    !isDateWithinRange(
+                                                        dateForScenario,
+                                                        scenarioRange,
+                                                    )
                                                 )
-                                              : averageArray(
-                                                    arr,
-                                                    state.chartVariable,
-                                                );
-                                    samples.push({
-                                        scenario,
-                                        model,
-                                        rawValue: avg,
-                                        dateUsed: dateForScenario,
-                                    });
+                                                    continue;
+                                                try {
+                                                    const data =
+                                                        await fetchClimateData(
+                                                            createDataRequest({
+                                                                variable:
+                                                                    state.chartVariable,
+                                                                date: dateForScenario,
+                                                                model,
+                                                                scenario,
+                                                                resolution: 1,
+                                                            }),
+                                                        );
+                                                    const arr =
+                                                        dataToArray(data);
+                                                    if (arr) {
+                                                        const avg =
+                                                            averageArrayInPolygon(
+                                                                arr,
+                                                                state.chartVariable,
+                                                                data.shape,
+                                                                _polygon,
+                                                            );
+                                                        samples.push({
+                                                            scenario,
+                                                            model,
+                                                            rawValue: avg,
+                                                            dateUsed:
+                                                                dateForScenario,
+                                                        });
+                                                    }
+                                                } catch (e) {
+                                                    console.warn(
+                                                        "Fallback date failed:",
+                                                        e,
+                                                    );
+                                                }
+                                            }
+                                        } catch (e) {
+                                            console.warn(
+                                                `Fallback failed for ${model}/${scenario}:`,
+                                                e,
+                                            );
+                                        }
+                                        _onRangeTaskDone();
+                                    }
                                 }
                                 updateChartPreview(samples);
-                            }
-
-                            const after = state.chartLoadingProgress.done + 1;
-                            state.chartLoadingProgress = {
-                                total: totalRequests,
-                                done: after,
-                            };
-                            setLoadingProgress(
-                                Math.min(
-                                    98,
-                                    Math.round((after / totalRequests) * 100),
-                                ),
-                            );
-                            updateChartPreview(samples);
-                        }
+                            }),
+                        );
                     }
 
                     state.chartSamples = samples;
@@ -5631,9 +5654,14 @@ async function loadChartData() {
                     updateChartContainerDOM();
 
                     const samples: ChartSample[] = [];
+                    let _worldProgressDone = 0;
 
-                    for (const model of activeModels) {
-                        for (const scenario of activeScenarios) {
+                    // Parallelise across model×scenario combos; within each combo
+                    // dates remain sequential so we don't flood the server with all
+                    // 1650 requests at once (wall time ≈ 50 requests instead of 1650).
+                    await Promise.allSettled(
+                      activeModels.flatMap((model) =>
+                        activeScenarios.map(async (scenario) => {
                             const scenarioRange =
                                 getTimeRangeForScenario(scenario);
                             for (const dateCandidate of sampledDates) {
@@ -5650,18 +5678,9 @@ async function loadChartData() {
                                         scenarioRange,
                                     )
                                 ) {
+                                    _worldProgressDone++;
                                     continue;
                                 }
-                                const done = state.chartLoadingProgress.done;
-                                setLoadingProgress(
-                                    Math.min(
-                                        95,
-                                        Math.round(
-                                            ((done + 0.1) / totalRequests) *
-                                                100,
-                                        ),
-                                    ),
-                                );
                                 const request = createDataRequest({
                                     variable: state.chartVariable,
                                     date: dateForScenario,
@@ -5677,29 +5696,24 @@ async function loadChartData() {
                                         "Range request failed, skipping date:",
                                         error,
                                     );
+                                    _worldProgressDone++;
                                     continue;
                                 }
-                                const after =
-                                    state.chartLoadingProgress.done + 1;
+                                _worldProgressDone++;
                                 state.chartLoadingProgress = {
                                     total: totalRequests,
-                                    done: after,
+                                    done: _worldProgressDone,
                                 };
                                 setLoadingProgress(
                                     Math.min(
                                         98,
                                         Math.round(
-                                            (after / totalRequests) * 100,
+                                            (_worldProgressDone / totalRequests) * 100,
                                         ),
                                     ),
                                 );
-                                updateChartPreview(samples);
                                 const arr = dataToArray(data);
-                                if (!arr) {
-                                    throw new Error(
-                                        "No data returned for chart request.",
-                                    );
-                                }
+                                if (!arr) continue;
                                 const avg =
                                     state.chartLocation === "Draw" &&
                                     state.chartPolygon &&
@@ -5730,9 +5744,11 @@ async function loadChartData() {
                                     rawValue: avg,
                                     dateUsed: dateForScenario,
                                 });
-                            }
-                        }
-                    }
+                                updateChartPreview(samples);
+                            } // end for dateCandidate
+                        }), // end scenario async fn
+                      ), // end activeScenarios.map
+                    ); // end Promise.allSettled
 
                     state.chartSamples = samples;
                     state.chartRangeSeries = buildChartRangeSeries(

@@ -194,5 +194,5 @@ MAX_WORKERS = int(os.environ.get("NEX_GDDP_MAX_WORKERS", "3"))
 # Hard cap for sampled timesteps returned by time-series style endpoints.
 # If the requested range has more timesteps, the loader subsamples evenly.
 MAX_TIME_SERIES_POINTS = int(
-    os.environ.get("NEX_GDDP_MAX_TIME_SERIES_POINTS", "600")
+    os.environ.get("NEX_GDDP_MAX_TIME_SERIES_POINTS", "200")
 )

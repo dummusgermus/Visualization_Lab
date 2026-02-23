@@ -122,17 +122,17 @@ def validate_all_parameters(variable: str, model: str, scenario: str,
 def date_to_timestep_index(date: datetime) -> int:
     """
     Convert datetime to OpenVisus timestep index.
-    
-    Formula: timestep = year * days_in_year + day_of_year
-    Accounts for leap years.
+
+    OpenVisus uses a fixed 365-day-per-year stride regardless of leap years,
+    i.e.  timestep = year * 365 + day_of_year.
+
+    Using the actual year length (366 for leap years) produces non-monotonic
+    indices: e.g. 2096-12-31 (leap) → 767,501  >  2100-12-31 (non-leap) → 766,864,
+    causing OpenVisus to reject any late-dataset date in a leap year as
+    "begin query failed wrong time".
     """
     day_of_year = (date - datetime(date.year, 1, 1)).days
-    
-    # Check leap year
-    is_leap = (date.year % 4 == 0 and date.year % 100 != 0) or (date.year % 400 == 0)
-    days_in_year = 366 if is_leap else 365
-    
-    return date.year * days_in_year + day_of_year
+    return date.year * 365 + day_of_year
 
 
 def timestep_index_to_date(timestep: int) -> datetime:

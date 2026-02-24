@@ -390,13 +390,13 @@ def fetch_pixel_data(request: PixelDataRequest):
     """
     import time as _time
     _t0 = _time.perf_counter()
-    print(
-        f"[DEBUG /pixel-data] REQUEST variable={request.variable!r} model={request.model!r} "
-        f"scenario={request.scenario!r} start={request.start_date!r} end={request.end_date!r} "
-        f"resolution={request.resolution!r} step_days={request.step_days} "
-        f"box=({request.x0},{request.x1},{request.y0},{request.y1})",
-        flush=True,
-    )
+    #print(
+    #    f"[DEBUG /pixel-data] REQUEST variable={request.variable!r} model={request.model!r} "
+    #    f"scenario={request.scenario!r} start={request.start_date!r} end={request.end_date!r} "
+    #    f"resolution={request.resolution!r} step_days={request.step_days} "
+    #    f"box=({request.x0},{request.x1},{request.y0},{request.y1})",
+    #    flush=True,
+    #)
     try:
         x0, x1, y0, y1 = _validate_logic_box(
             request.x0, request.x1, request.y0, request.y1
@@ -443,11 +443,11 @@ def fetch_pixel_data(request: PixelDataRequest):
         unit = var_info.get("unit", "")
 
         elapsed = _time.perf_counter() - _t0
-        print(
-            f"[DEBUG /pixel-data] OK in {elapsed:.2f}s — "
-            f"timestamps={len(timestamps)} valid={valid_count} nan={nan_count}",
-            flush=True,
-        )
+        #print(
+        #    f"[DEBUG /pixel-data] OK in {elapsed:.2f}s — "
+        #    f"timestamps={len(timestamps)} valid={valid_count} nan={nan_count}",
+        #    flush=True,
+        #)
         return {
             "pixel": [center_x, center_y],
             "window": [x0, x1, y0, y1],
@@ -468,13 +468,13 @@ def fetch_pixel_data(request: PixelDataRequest):
 
     except DataLoadingError as e:
         elapsed = _time.perf_counter() - _t0
-        print(f"[DEBUG /pixel-data] DataLoadingError after {elapsed:.2f}s: {e}", flush=True)
-        traceback.print_exc()
+        #print(f"[DEBUG /pixel-data] DataLoadingError after {elapsed:.2f}s: {e}", flush=True)
+        #traceback.print_exc()
         raise HTTPException(status_code=502, detail=str(e))
     except Exception as e:
         elapsed = _time.perf_counter() - _t0
         print(f"[DEBUG /pixel-data] Exception after {elapsed:.2f}s: {e}", flush=True)
-        traceback.print_exc()
+        #traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -534,12 +534,12 @@ def fetch_pixel_data_batch(request: PixelDataBatchRequest):
     """
     import time as _time
     _t0 = _time.perf_counter()
-    print(
-        f"[DEBUG /pixel-data-batch] {len(request.combinations)} combos "
-        f"variable={request.variable!r} resolution={request.resolution!r} "
-        f"step_days={request.step_days} box=({request.x0},{request.x1},{request.y0},{request.y1})",
-        flush=True,
-    )
+    #print(
+    #    f"[DEBUG /pixel-data-batch] {len(request.combinations)} combos "
+    #    f"variable={request.variable!r} resolution={request.resolution!r} "
+    #    f"step_days={request.step_days} box=({request.x0},{request.x1},{request.y0},{request.y1})",
+    #    flush=True,
+    #)
 
     try:
         x0, x1, y0, y1 = _validate_logic_box(
@@ -649,12 +649,12 @@ def fetch_pixel_data_batch(request: PixelDataBatchRequest):
 
         elapsed = _time.perf_counter() - _t0
         total_valid = sum(r["valid_count"] for r in results)
-        print(
-            f"[DEBUG /pixel-data-batch] OK in {elapsed:.2f}s — "
-            f"{len(tasks)} reads, {total_valid} valid values across "
-            f"{len(results)} combos",
-            flush=True,
-        )
+        #print(
+        #    f"[DEBUG /pixel-data-batch] OK in {elapsed:.2f}s — "
+        #    f"{len(tasks)} reads, {total_valid} valid values across "
+        #    f"{len(results)} combos",
+        #    flush=True,
+        #)
         return {
             "variable": request.variable,
             "unit": unit,
@@ -664,10 +664,10 @@ def fetch_pixel_data_batch(request: PixelDataBatchRequest):
         }
 
     except DataLoadingError as e:
-        traceback.print_exc()
+        #traceback.print_exc()
         raise HTTPException(status_code=502, detail=str(e))
     except Exception as e:
-        traceback.print_exc()
+        #traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 

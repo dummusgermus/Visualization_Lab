@@ -281,14 +281,14 @@ def load_pixel_window(
     x0, x1, y0, y1 = window_box
 
     # DEBUG: log all resolved parameters before the OpenVisus read
-    print(
-        f"[DEBUG load_pixel_window] "
-        f"date={date.isoformat()} timestep_idx={timestep_idx} "
-        f"field={field!r} scenario={scenario!r} resolution={resolution!r} "
-        f"window_box=({x0},{x1},{y0},{y1}) "
-        f"logic_box=([{x0},{y0}],[{x1+1},{y1+1}])",
-        flush=True,
-    )
+    #print(
+    #    f"[DEBUG load_pixel_window] "
+    #    f"date={date.isoformat()} timestep_idx={timestep_idx} "
+    #    f"field={field!r} scenario={scenario!r} resolution={resolution!r} "
+    #    f"window_box=({x0},{x1},{y0},{y1}) "
+    #    f"logic_box=([{x0},{y0}],[{x1+1},{y1+1}])",
+    #    flush=True,
+    #)
 
     # Use OpenVisus windowed read for efficiency (only download requested pixels)
     # Note: quality parameter not used with logic_box in this implementation
@@ -300,11 +300,11 @@ def load_pixel_window(
         )
         # DEBUG: confirm shape and whether the array is all-NaN
         nan_count = int(np.isnan(data).sum()) if np.issubdtype(data.dtype, np.floating) else 0
-        print(
-            f"[DEBUG load_pixel_window] read OK shape={data.shape} dtype={data.dtype} "
-            f"nan_count={nan_count}/{data.size}",
-            flush=True,
-        )
+        #print(
+        #    f"[DEBUG load_pixel_window] read OK shape={data.shape} dtype={data.dtype} "
+        #    f"nan_count={nan_count}/{data.size}",
+        #    flush=True,
+        #)
         data.setflags(write=False)
     except Exception as e:
         import traceback as _tb

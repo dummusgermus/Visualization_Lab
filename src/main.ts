@@ -1250,6 +1250,7 @@ export type AppState = {
     chatInput: string;
     chatMessages: ChatMessage[];
     chatIsLoading: boolean;
+    chatScreenshot?: string | null;
     availableModels: string[];
     compareMode: CompareMode;
     compareScenarioA: string;
@@ -6641,7 +6642,7 @@ function renderChartSvg(
                     return `
                     <g class="model-indicator" data-boxplot-idx="${idx}">
                       <line x1="${lineStartX}" x2="${lineEndX}" y1="${indicator.y}" y2="${indicator.y}" stroke="white" stroke-width="1" stroke-linecap="round" />
-                      <text x="${labelStartX}" y="${labelY + 4}" fill="white" font-size="10" font-weight="300" opacity="0.95">${indicator.model}</text>
+                      <text x="${labelStartX}" y="${labelY + 4}" fill="white" font-size="12" font-weight="300" opacity="0.95">${indicator.model}</text>
                     </g>
                   `;
                 })
@@ -6747,7 +6748,7 @@ function renderMiniChartSvg(
           }" y1="${y}" y2="${y}" stroke="rgba(255,255,255,0.06)" />
           <text x="${margin.left - 8}" y="${
               y + 3
-          }" fill="var(--text-secondary)" font-size="9" text-anchor="end">
+          }" fill="var(--text-secondary)" font-size="13" text-anchor="end">
             ${formatNumberCompact(tick)}
           </text>
         </g>
@@ -6785,12 +6786,12 @@ function renderMiniChartSvg(
           }" r="3.2" fill="${color}" stroke="rgba(0,0,0,0.55)" stroke-width="0.8" />
           <text x="${x}" y="${
               height - margin.bottom + 26
-          }" fill="var(--text-primary)" font-weight="700" font-size="10" text-anchor="middle">${
+          }" fill="var(--text-primary)" font-weight="700" font-size="12" text-anchor="middle">${
               box.scenario
           }</text>
           <text x="${x}" y="${
               height - margin.bottom + 40
-          }" fill="var(--text-secondary)" font-size="9" text-anchor="middle">${
+          }" fill="var(--text-secondary)" font-size="13" text-anchor="middle">${
               box.samples.length
           } model${box.samples.length === 1 ? "" : "s"}</text>
         </g>
@@ -6814,7 +6815,7 @@ function renderMiniChartSvg(
         ${axisLine}
         ${axisTicks}
         ${boxesMarkup}
-        <text x="${margin.left}" y="${margin.top - 6}" fill="var(--text-secondary)" font-size="9">${escapeHtml(
+        <text x="${margin.left}" y="${margin.top - 6}" fill="var(--text-secondary)" font-size="13">${escapeHtml(
             unitLabel,
         )}</text>
       </svg>

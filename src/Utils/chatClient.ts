@@ -57,6 +57,7 @@ export interface ChatRequest {
             lowerBound?: number | null;
             upperBound?: number | null;
         }[];
+        screenshot?: string | null; // ← neu: Base64-encoded PNG
         [key: string]: any;
     };
     history?: ChatMessage[];
@@ -111,7 +112,10 @@ export async function sendChatMessage(
 /**
  * Build context object from current application state
  */
-export function buildChatContext(state: AppState): ChatRequest["context"] {
+export function buildChatContext(
+    state: AppState,
+    screenshot?: string | null,  // ← neu
+): ChatRequest["context"] {
     const context: ChatRequest["context"] = {
         mode: state.mode,
         canvasView: state.canvasView,
@@ -194,6 +198,11 @@ export function buildChatContext(state: AppState): ChatRequest["context"] {
             lowerBound: mask.lowerBound,
             upperBound: mask.upperBound,
         }));
+    }
+
+    // Attach screenshot if provided
+    if (screenshot) {
+        context.screenshot = screenshot;
     }
 
     return context;

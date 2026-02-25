@@ -1,3 +1,4 @@
+import configparser
 import json
 import os
 from typing import Dict, List, Optional
@@ -226,6 +227,169 @@ def _build_system_prompt(context: Optional[dict] = None) -> str:
 
     return "\n".join(system_parts)
 
+
+class OpenAICompatibleClient:
+    """Client for OpenAI-compatible endpoints (e.g. KIconnect, Azure, OpenRouter)."""
+
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str,
+        model: str,
+        timeout: int = 120
+    ):
+        self.base_url = base_url.rstrip('/')
+        self.api_key = api_key
+        self.model = model
+        self.timeout = timeout
+
+    def chat(
+        self,
+        message: str,
+        context: Optional[dict] = None,
+        history: Optional[List[ChatMessage]] = None
+    ) -> ChatResponse:
+        """Send a chat message and get a response from an OpenAI-compatible endpoint."""
+
+        if history is None:
+            history = []
+
+        messages = [
+            {"role": "system", "content": _build_system_prompt(context)}
+        ]
+        for hist_msg in history:
+            messages.append({"role": hist_msg.role, "content": hist_msg.content})
+
+        # Build user message – with screenshot if provided
+        screenshot_b64 = context.pop("screenshot", None) if context else None
+
+        if screenshot_b64:
+            user_content = [
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/jpeg;base64,{screenshot_b64}",  # ← jpeg statt png
+                        "detail": "low"
+                    }
+                },
+                {
+                    "type": "text",
+                    "text": message
+                }
+            ]
+        else:
+            user_content = message
+
+        messages.append({"role": "user", "content": user_content})
+
+        tools = _get_state_control_functions(context)
+
+        # Debug: validate tool schema before sending
+        try:
+            tools_json = json.dumps(tools)
+        except Exception as e:
+            print(f"[ERROR] Tool schema serialization failed: {e}")
+            tools = []
+
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "tools": tools,
+            "stream": False
+        }
+
+        print(f"[DEBUG] Sending request to {self.base_url}/chat/completions")
+        print(f"[DEBUG] Payload size: {len(json.dumps(payload))} bytes")
+
+        try:
+            response = requests.post(
+                f"{self.base_url}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+                timeout=self.timeout
+            )
+
+            # Log response details before raising
+            print(f"[DEBUG] Response status: {response.status_code}")
+            if not response.ok:
+                print(f"[DEBUG] Error response body: {response.text[:1000]}")
+
+            response.raise_for_status()
+
+            result = response.json()
+            choice = result["choices"][0]
+            assistant_message = choice["message"].get("content", "") or ""
+            tool_calls_raw = choice["message"].get("tool_calls") or []
+
+            tool_calls = [
+                {
+                    "function": {
+                        "name": tc["function"]["name"],
+                        "arguments": tc["function"]["arguments"]
+                    }
+                }
+                for tc in tool_calls_raw
+            ]
+
+            new_state, errors = execute_function_calls(tool_calls, context)
+
+            if tool_calls:
+                if errors:
+                    return ChatResponse(
+                        message="; ".join(errors),
+                        success=False,
+                        error="Function call errors"
+                    )
+                if not assistant_message:
+                    assistant_message = "Changes applied."
+                return ChatResponse(
+                    message=assistant_message,
+                    new_state=new_state,
+                    success=True
+                )
+
+            if assistant_message:
+                return ChatResponse(message=assistant_message, success=True)
+
+            return ChatResponse(
+                message="Sorry, I couldn't generate a response.",
+                success=False,
+                error="Empty response from API"
+            )
+
+        except requests.exceptions.Timeout:
+            return ChatResponse(
+                message="The request took too long. Please try again.",
+                success=False,
+                error="Request timeout"
+            )
+        except requests.exceptions.RequestException as e:
+            error_detail = str(e)
+            if hasattr(e, 'response') and e.response is not None:
+                try:
+                    error_json = e.response.json()
+                    raw_error = error_json.get('error', str(e))
+                    # error field may be a dict instead of a string
+                    error_detail = raw_error if isinstance(raw_error, str) else json.dumps(raw_error)
+                    print(f"[DEBUG] API error response: {json.dumps(error_json, indent=2)}")
+                except Exception:
+                    error_detail = e.response.text[:500]
+            return ChatResponse(
+                message=f"Error communicating with API: {error_detail}",
+                success=False,
+                error=error_detail
+            )
+        except Exception as e:
+            return ChatResponse(
+                message=f"An unexpected error occurred: {str(e)}",
+                success=False,
+                error=str(e)
+            )
+
+
 class OllamaClient:
     """Client for RWTH Ollama server."""
 
@@ -347,17 +511,76 @@ class OllamaClient:
 
 _llm_client = None
 
+def _load_api_config(config_path: str = ".//data_processing//endpoint_config.ini") -> Optional[configparser.ConfigParser]:
+    """Load API configuration from ini file. Returns None if file does not exist."""
+    if not os.path.exists(config_path):
+        print(f"No config file found at {config_path}. Skipping API config loading.")
+        return None
+    cfg = configparser.ConfigParser()
+    cfg.read(config_path)
+    print(f"Loaded API config from {config_path}: sections={cfg.sections()}")
+    return cfg
+
+
 def get_llm_client():
-    """Get or create the global LLM client instance (Ollama only)."""
+    """
+    Get or create the global LLM client instance.
+    
+    Provider selection (in order of priority):
+    1. LLM_PROVIDER env var ("openai" or "ollama")
+    2. endpoint_config.ini present -> use OpenAI-compatible client
+    3. Fallback -> Ollama
+    """
+
     global _llm_client
-    if _llm_client is None:
-        # Always use Ollama
+    if _llm_client is not None:
+        return _llm_client
+
+    # Determine provider
+    provider = os.environ.get("LLM_PROVIDER", "").lower()
+    provider = "kiconnect"
+
+    print(f"LLM_PROVIDER env var: '{provider}'")
+
+    # Try to load config file if no explicit provider set
+    api_config = _load_api_config()
+
+    if provider == "kiconnect" or (provider == "" and api_config is not None):
+        # Use OpenAI-compatible client
+        if api_config:
+            base_url = api_config.get("api", "endpoint_url", fallback=None)
+            api_key  = api_config.get("api", "api_key",      fallback=None)
+            model    = api_config.get("api", "model",        fallback=None)
+
+            print(f"Loaded API config from endpoint_config.ini: endpoint_url={base_url}, model={model}")
+        else:
+            base_url = None
+            api_key  = None
+            model    = None
+
+        # Env vars override config file values
+        base_url = os.environ.get("OPENAI_BASE_URL", base_url)
+        api_key  = os.environ.get("OPENAI_API_KEY",  api_key)
+        model    = os.environ.get("OPENAI_MODEL",    model)
+
+        if not base_url or not api_key or not model:
+            raise ValueError(
+                "OpenAI-compatible client requires endpoint_url, api_key and model. "
+                "Set them in endpoint_config.ini or via OPENAI_BASE_URL / OPENAI_API_KEY / OPENAI_MODEL env vars."
+            )
+
+        _llm_client = OpenAICompatibleClient(base_url=base_url, api_key=api_key, model=model)
+        print(f"Using OpenAI-compatible endpoint at {base_url} with model {model}")
+
+    else:
+        # Fallback: Ollama
         base_url = os.environ.get("OLLAMA_URL", "http://ollama.warhol.informatik.rwth-aachen.de")
-        model = os.environ.get("OLLAMA_MODEL", "llama3.3:70b")
+        model    = os.environ.get("OLLAMA_MODEL", "llama3.3:70b")
         _llm_client = OllamaClient(base_url=base_url, model=model)
         print(f"Using Ollama at {base_url} with model {model}")
 
     return _llm_client
+
 
 def process_chat_message(
     message: str,
@@ -370,15 +593,21 @@ def process_chat_message(
     return client.chat(message, context, history)
 
 def _get_state_control_functions(context: Optional[dict] = None) -> List[dict]:
-    current_variable = context.get("variable") if context else None
+    current_variable = context.get("selectedVariable") if context else None  # fix: context uses 'selectedVariable' not 'variable'
     current_state = context if context else None
+
+    # Safe unit list helper
+    def _unit_enum() -> List[str]:
+        units = config.VARIABLE_UNIT_MAP.get(current_variable, [])
+        return units if isinstance(units, list) and len(units) > 0 else ["K"]
+
     """Define available functions for state manipulation."""
     return [
         {
             "type": "function",
             "function": {
                 "name": "update_color_palette",
-                "description": "Update the color palette used for visualization. Only use variables: viridis, thermal, magma, cividis.",
+                "description": "Update the color palette used for visualization.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -411,20 +640,20 @@ def _get_state_control_functions(context: Optional[dict] = None) -> List[dict]:
             }
         },
         {
-            "type":"funtion",
-            "function":{
-                "name":"update_unit",
-                "description":"Change the unit of the climate variable being displayed",
-                "parameters":{
-                    "type":"object",
-                    "properties":{
-                        "selectedUnit":{
-                            "type":"string",
-                            "enum": config.VARIABLE_UNIT_MAP.get(current_variable, []),
-                            "description":"The unit to display"
+            "type": "function",
+            "function": {
+                "name": "update_unit",
+                "description": "Change the unit of the climate variable being displayed",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "selectedUnit": {
+                            "type": "string",
+                            "enum": _unit_enum(),
+                            "description": "The unit to display"
                         }
                     },
-                    "required":["selectedUnit"] 
+                    "required": ["selectedUnit"]
                 }
             }
         },
@@ -432,7 +661,7 @@ def _get_state_control_functions(context: Optional[dict] = None) -> List[dict]:
             "type": "function",
             "function": {
                 "name": "switch_to_compare_mode",
-                "description": "Switch to comparison mode to compare TWO specific scenarios, models, or dates side-by-side on the MAP. Use this for visual comparison of two specific items WITHOUT aggregation. DO NOT use if location is mentioned or if comparing MORE than 2 items or if aggregating multiple models/scenarios.",
+                "description": "Switch to comparison mode to compare TWO specific scenarios, models, or dates side-by-side on the MAP.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -463,15 +692,15 @@ def _get_state_control_functions(context: Optional[dict] = None) -> List[dict]:
                         },
                         "date": {
                             "type": "string",
-                            "description": "Date in YYYY-MM-DD format (REQUIRED for Scenarios and Models mode). Examples: 2020-01-01, 2050-01-01, 1995-01-01. Use 4-digit year!"
+                            "description": "Date in YYYY-MM-DD format (REQUIRED for Scenarios and Models mode)."
                         },
                         "date_a": {
                             "type": "string",
-                            "description": "First date in YYYY-MM-DD format (REQUIRED for Dates mode). Examples: 2020-01-01, 2050-01-01. Use 4-digit year!"
+                            "description": "First date in YYYY-MM-DD format (REQUIRED for Dates mode)."
                         },
                         "date_b": {
                             "type": "string",
-                            "description": "Second date in YYYY-MM-DD format (REQUIRED for Dates mode). Examples: 2030-01-01, 2060-01-01. Use 4-digit year!"
+                            "description": "Second date in YYYY-MM-DD format (REQUIRED for Dates mode)."
                         }
                     },
                     "required": ["compare_mode"]
@@ -482,7 +711,7 @@ def _get_state_control_functions(context: Optional[dict] = None) -> List[dict]:
             "type": "function",
             "function": {
                 "name": "switch_to_explore_mode",
-                "description": "Switch to explore mode to view a SINGLE model/scenario/date combination on the MAP. Whenever possible use this view. DO NOT use if location is mentioned. IMPORTANT: When date is 2015 or later, scenario MUST be ssp245/ssp370/ssp585. When date is before 2015, scenario MUST be historical. Date format is YYYY-MM-DD (e.g., 2020-01-01 NOT 20-20-01).",
+                "description": "Switch to explore mode to view a SINGLE model/scenario/date combination on the MAP.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -498,16 +727,17 @@ def _get_state_control_functions(context: Optional[dict] = None) -> List[dict]:
                         },
                         "date": {
                             "type": "string",
-                            "description": "Date in YYYY-MM-DD format. Examples: 2020-01-01 (year 2020), 2050-01-01 (year 2050), 1995-01-01 (year 1995). ALWAYS use 4-digit year, 2-digit month, 2-digit day with hyphens. Year 2015+ requires ssp245/ssp370/ssp585 scenario, before 2015 requires historical scenario."
+                            "description": "Date in YYYY-MM-DD format."
                         }
                     },
                 }
             }
-        }, {
+        },
+        {
             "type": "function",
             "function": {
                 "name": "switch_to_ensemble_mode",
-                "description": "Switch to ensemble mode to view  a combination of MULTIPLE models and/or scenarios on the MAP. Use this to see aggregated statistics (mean/median/min/max/std) across models and/or scenarios. Always include at least one model and one scenario. DO NOT use if location is mentioned. IMPORTANT: When date is 2015 or later, scenarios MUST be ssp245/ssp370/ssp585. DO NOT USE scenario1 and scenario2. The scenarios parameter is an array of scenarios to include.",
+                "description": "Switch to ensemble mode to view a combination of MULTIPLE models and/or scenarios on the MAP.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -525,16 +755,16 @@ def _get_state_control_functions(context: Optional[dict] = None) -> List[dict]:
                                 "type": "string",
                                 "enum": list(config.SCENARIO_METADATA.keys())
                             },
-                            "description": "The scenarios to use. Insert as array of scenarios. (e.g., ['ssp245', 'ssp585'])"
+                            "description": "The scenarios to use."
                         },
                         "unit": {
                             "type": "string",
-                            "enum": config.VARIABLE_UNIT_MAP.get(current_variable, []),
+                            "enum": _unit_enum(),
                             "description": "The unit of measurement for the variable"
                         },
                         "date": {
                             "type": "string",
-                            "description": "Date in YYYY-MM-DD format. Examples: 2020-01-01 (year 2020), 2050-01-01 (year 2050), 1995-01-01 (year 1995). ALWAYS use 4-digit year, 2-digit month, 2-digit day with hyphens. Year 2015+ requires ssp245/ssp370/ssp585 scenario, before 2015 requires historical scenario."
+                            "description": "Date in YYYY-MM-DD format."
                         },
                         "variable": {
                             "type": "string",
@@ -550,123 +780,47 @@ def _get_state_control_functions(context: Optional[dict] = None) -> List[dict]:
             "type": "function",
             "function": {
                 "name": "update_masks",
-                "description": "Update the geographical masks applied to the visualization. Use this to highlight or focus on specific value ranges. Only those will be highlighted, others will be greyed out.",
+                "description": "Update the masks applied to the visualization to highlight specific value ranges.",
                 "parameters": {
                     "type": "object",
-                    "properties": { "masks": {
+                    "properties": {
+                        "masks": {
                             "type": "array",
-                            "description": "List of masks to apply to the data for filtering values.",
+                            "description": "List of masks to apply.",
                             "items": {
                                 "type": "object",
                                 "properties": {
                                     "id": {
                                         "type": "number",
-                                        "description": "ONLY use numbers. Unique identifier for the mask. Use a corresponding ID from the context if you're updating an existing mask, otherwise assign a new unique ID."
+                                        "description": "Unique identifier for the mask."
                                     },
                                     "lowerBound": {
-                                        "type": ["number", "null"],
-                                        "description": "The lower bound value for the mask filter. Use null for no lower bound."
+                                        "type": "number",  # ← kein ["number","null"] - manche Endpoints mögen das nicht
+                                        "description": "The lower bound value. Use a very small number for no lower bound."
                                     },
                                     "upperBound": {
-                                        "type": ["number", "null"],
-                                        "description": "The upper bound value for the mask filter. Use null for no upper bound."
+                                        "type": "number",
+                                        "description": "The upper bound value. Use a very large number for no upper bound."
                                     },
-                                    **(
-                                        {
-                                            "statistic": {
-                                                "type": "string",
-                                                "description": "The ensemble statistic type for this mask (ONLY used in ensemble mode). Examples: mean, median, min, max, std.",
-                                            }
-                                        }
-                                        if current_state
-                                        and current_state.get("mode") == "Ensemble"
-                                        else {}
-                                    ),
-                                    **({
-                                            "variable": {
-                                            "type": "string",
-                                            "enum": list(config.VARIABLE_METADATA.keys()),
-                                            "description": "The climate variable this mask applies to. Always specify the variable when not in Ensemble mode."
-                                            } 
-                                        }
-                                        if current_state
-                                        and current_state.get("mode") != "Ensemble"
-                                        else {}
-                                    ),
+                                    "variable": {
+                                        "type": "string",
+                                        "enum": list(config.VARIABLE_METADATA.keys()),
+                                        "description": "The climate variable this mask applies to."
+                                    },
                                     "unit": {
-                                        "type": config.VARIABLE_UNIT_MAP.get(current_variable, []),
+                                        "type": "string",           # ← KRITISCHER FIX: war eine Liste
+                                        "enum": _unit_enum(),       # ← enum separat
                                         "description": "The unit of measurement for the mask values."
                                     }
                                 },
-                                "required": (
-                                    ["id", "lowerBound", "upperBound", "statistic", "unit"]
-                                    if current_state
-                                    and current_state.get("mode") == "Ensemble"
-                                    else ["id", "lowerBound", "upperBound", "unit", "variable"]
-                                ),
+                                "required": ["id", "lowerBound", "upperBound", "unit", "variable"]
                             }
-                        },},
+                        }
+                    },
                     "required": ["masks"]
-                    }
+                }
             }
         },
-#         {
-#             "type": "function",
-#             "function": {
-#                 "name": "switch_to_chart_view",
-#                 "description": """Switch to CHART VIEW for time series and aggregations. Use this ONLY when:
-# DO NOT use for:
-# - Simple map viewing (use switch_to_explore_mode)
-# - Comparing only 2 specific items side-by-side on map (use switch_to_compare_mode)
-# Chart modes:
-# - 'single': Show data for a specific date with multiple models/scenarios
-# - 'range': Show data over a time range (requires start_date and end_date)""",
-#                 "parameters": {
-#                     "type": "object",
-#                     "properties": {
-#                         "location": {
-#                             "type": "string",
-#                             "enum": config.VALID_CHART_LOCATIONS,
-#                             "description": "Location for the chart (required if user mentions a location)"
-#                         },
-#                         "chart_mode": {
-#                             "type": "string",
-#                             "enum": config.VALID_CHART_MODES,
-#                             "description": "Chart mode: 'single' for one date, 'range' for time period"
-#                         },
-#                         "date": {
-#                             "type": "string",
-#                             "description": "Date in YYYY-MM-DD format (for Single mode). Examples: 2020-01-01, 2050-01-01. Use 4-digit year!"
-#                         },
-#                         "start_date": {
-#                             "type": "string",
-#                             "description": "Start date in YYYY-MM-DD format (for Range mode). Examples: 2020-01-01, 1990-01-01. Use 4-digit year!"
-#                         },
-#                         "end_date": {
-#                             "type": "string",
-#                             "description": "End date in YYYY-MM-DD format (for Range mode). Examples: 2050-01-01, 2099-01-01. Use 4-digit year!"
-#                         },
-#                         "models": {
-#                             "type": "array",
-#                             "items": {
-#                                 "type": "string",
-#                                 "enum": config.VALID_MODELS
-#                             },
-#                             "description": "List of models to include in chart. Use all models if user wants to see aggregation/comparison."
-#                         },
-#                         "scenarios": {
-#                             "type": "array",
-#                             "items": {
-#                                 "type": "string",
-#                                 "enum": list(config.SCENARIO_METADATA.keys())
-#                             },
-#                             "description": "List of scenarios to include in chart. Historical can ONLY be selected by itself"
-#                         }
-#                     },
-#                     "required": ["chart_mode","models","scenarios","location"]
-#               }
-#           }
-#       }
     ]
 
 

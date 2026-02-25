@@ -5,6 +5,7 @@ import {
     type ChatMessage as ChatClientMessage,
 } from "../Utils/chatClient";
 import { updateState } from "../Utils/stateUpdate";
+import { captureMapScreenshot } from "../Utils/screenshot";
 import "./agentChat.css";
 
 export type ChatMessage = {
@@ -154,6 +155,7 @@ export function renderChatSection(
     chatMessages: ChatMessage[],
     chatInput: string,
     chatIsLoading: boolean,
+    screenshotAttached: boolean = false,
 ): string {
     return `
     <div class="chat-stack">
@@ -169,12 +171,19 @@ export function renderChatSection(
         </div>
 
       <div class="chat-box">
+        <button
+          type="button"
+          data-action="chat-screenshot"
+          aria-label="Attach screenshot"
+          class="chat-screenshot-btn ${screenshotAttached ? "chat-screenshot-btn--active" : ""}"
+          title="${screenshotAttached ? "Screenshot attached – click to remove" : "Attach current view as screenshot"}"
+        >📷</button>
         <input
           type="text"
           value="${chatInput}"
           data-action="chat-input"
           class="chat-input"
-          placeholder="Ask a question"
+          placeholder="${screenshotAttached ? "Screenshot attached..." : "Ask a question"}"
         />
         <button 
           type="button" 
@@ -239,6 +248,39 @@ export function attachChatHandlers(
     chatSend?.addEventListener("click", () => {
         sendChat(root, appStateContext);
     });
+
+    // Screenshot button
+    const screenshotBtn = root.querySelector<HTMLButtonElement>(
+        '[data-action="chat-screenshot"]',
+    );
+    screenshotBtn?.addEventListener("click", async () => {
+        if (appStateContext.chatScreenshot) {
+            // Toggle off
+            appStateContext.chatScreenshot = null;
+            if (screenshotBtn) {
+                screenshotBtn.classList.remove("chat-screenshot-btn--active");
+                screenshotBtn.title = "Attach current view as screenshot";
+            }
+            const chatInput = root.querySelector<HTMLInputElement>('[data-action="chat-input"]');
+            if (chatInput) chatInput.placeholder = "Ask a question";
+            return;
+        }
+
+        // Capture canvas
+        const canvas = document.querySelector<HTMLCanvasElement>("canvas");
+        if (!canvas) {
+            console.warn("No canvas found for screenshot");
+            return;
+        }
+        const screenshot = await captureMapScreenshot(canvas);
+        if (screenshot) {
+            appStateContext.chatScreenshot = screenshot;
+            screenshotBtn.classList.add("chat-screenshot-btn--active");
+            screenshotBtn.title = "Screenshot attached – click to remove";
+            const chatInput = root.querySelector<HTMLInputElement>('[data-action="chat-input"]');
+            if (chatInput) chatInput.placeholder = "Screenshot attached...";
+        }
+    });
 }
 
 /**
@@ -276,8 +318,16 @@ async function sendChat(
             content: msg.text,
         }));
 
-    // Build current application context
-    const context = buildChatContext(appStateContext);
+    // Build context WITH screenshot if attached
+    const context = buildChatContext(appStateContext, appStateContext.chatScreenshot ?? null);
+
+    // Clear screenshot after sending
+    appStateContext.chatScreenshot = null;
+    const screenshotBtn = root.querySelector<HTMLButtonElement>('[data-action="chat-screenshot"]');
+    if (screenshotBtn) {
+        screenshotBtn.classList.remove("chat-screenshot-btn--active");
+        screenshotBtn.title = "Attach current view as screenshot";
+    }
 
     try {
         // Send request to chat API

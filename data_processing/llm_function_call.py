@@ -596,10 +596,24 @@ def _get_state_control_functions(context: Optional[dict] = None) -> List[dict]:
     current_variable = context.get("selectedVariable") if context else None  # fix: context uses 'selectedVariable' not 'variable'
     current_state = context if context else None
 
-    # Safe unit list helper
+    # Safe unit list helper (units for the currently selected variable)
     def _unit_enum() -> List[str]:
         units = config.VARIABLE_UNIT_MAP.get(current_variable, [])
-        return units if isinstance(units, list) and len(units) > 0 else ["K"]
+        if isinstance(units, list) and len(units) > 0:
+            return units
+        if isinstance(units, str) and units:
+            return [units]
+        return ["K"]
+
+    # All units across every variable (for tools that also accept a variable parameter)
+    def _all_units_enum() -> List[str]:
+        seen = []
+        for units in config.VARIABLE_UNIT_MAP.values():
+            items = units if isinstance(units, list) else [units]
+            for u in items:
+                if u not in seen:
+                    seen.append(u)
+        return seen
 
     """Define available functions for state manipulation."""
     return [
@@ -759,7 +773,7 @@ def _get_state_control_functions(context: Optional[dict] = None) -> List[dict]:
                         },
                         "unit": {
                             "type": "string",
-                            "enum": _unit_enum(),
+                            "enum": _all_units_enum(),
                             "description": "The unit of measurement for the variable"
                         },
                         "date": {
@@ -808,8 +822,8 @@ def _get_state_control_functions(context: Optional[dict] = None) -> List[dict]:
                                         "description": "The climate variable this mask applies to."
                                     },
                                     "unit": {
-                                        "type": "string",           # ← KRITISCHER FIX: war eine Liste
-                                        "enum": _unit_enum(),       # ← enum separat
+                                        "type": "string",
+                                        "enum": _all_units_enum(),
                                         "description": "The unit of measurement for the mask values."
                                     }
                                 },

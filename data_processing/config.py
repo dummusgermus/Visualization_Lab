@@ -14,8 +14,8 @@ VALID_VARIABLES = [
 ]
 
 VARIABLE_UNIT_MAP = {
-    "hurs": "%",
-    "huss": "%",
+    "hurs": ["%"],
+    "huss": ["%"],
     "pr": ["g m-2 s-1", "kg m-2 s-1"],
     "rlds": ["W/m²", "kW/m²"],
     "rsds": ["W/m²", "kW/m²"],

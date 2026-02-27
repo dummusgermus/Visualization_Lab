@@ -211,6 +211,37 @@ function clipDateToRange(date: string, range: { start: string; end: string }) {
     return date;
 }
 
+function buildMapRangeForPreset(
+    preset: string,
+    refDate: string,
+): { start: string; end: string } | null {
+    if (preset === "custom") return null;
+    const parsed = parseDate(refDate);
+    if (Number.isNaN(parsed.getTime())) return null;
+    const year = parsed.getFullYear();
+    const month = parsed.getMonth();
+    const pad = (n: number) => String(n).padStart(2, "0");
+    if (preset === "1month") {
+        const lastDay = new Date(year, month + 1, 0).getDate();
+        return {
+            start: `${year}-${pad(month + 1)}-01`,
+            end: `${year}-${pad(month + 1)}-${pad(lastDay)}`,
+        };
+    }
+    if (preset === "1year") {
+        return { start: `${year}-01-01`, end: `${year}-12-31` };
+    }
+    if (preset === "10years") {
+        const startYear = Math.max(1950, year - 5);
+        const endYear = Math.min(2099, year + 5);
+        return { start: `${startYear}-01-01`, end: `${endYear}-12-31` };
+    }
+    if (preset === "full") {
+        return { start: "1950-01-01", end: "2099-12-31" };
+    }
+    return null;
+}
+
 function buildMapRangeWindow(date: string): { start: string; end: string } {
     const parsed = parseDate(date);
     if (Number.isNaN(parsed.getTime())) {
@@ -597,7 +628,7 @@ const styles: Record<string, Style> = {
         left: 0,
         bottom: 0,
         right: 0,
-        height: "min(280px, 36vh)",
+        maxHeight: "min(360px, 50vh)",
         display: "flex",
         alignItems: "flex-end",
         pointerEvents: "none",
@@ -606,7 +637,6 @@ const styles: Record<string, Style> = {
     },
     mapRangePanel: {
         width: "100%",
-        height: "100%",
         padding: "12px 18px 12px",
         display: "flex",
         flexDirection: "column",
@@ -642,7 +672,6 @@ const styles: Record<string, Style> = {
         display: "flex",
         flexDirection: "column",
         gap: 10,
-        maxHeight: 220,
         overflow: "hidden",
     },
     mapRangeChartWrap: {
@@ -1236,6 +1265,7 @@ export type AppState = {
     mapRangeStart: string;
     mapRangeEnd: string;
     mapRangeNumSamples: number;
+    mapRangePreset: "1month" | "1year" | "10years" | "full" | "custom";
     mapPolygon: LatLon[] | null;
     chartPolygon: LatLon[] | null;
     chartPoint: LatLon | null;
@@ -1370,6 +1400,7 @@ const state: AppState = {
     mapRangeStart: "2015-01-01",
     mapRangeEnd: "2015-12-31",
     mapRangeNumSamples: 52,
+    mapRangePreset: "1year",
     mapPolygon: null,
     chartPolygon: null,
     chartPoint: null,
@@ -2425,6 +2456,19 @@ function renderMapInfoBody(): string {
     const hasPolygon =
         state.mapPolygon !== null && state.mapPolygon.length >= 3;
 
+    // Compute a stable y-domain from the full range dataset so that the axis
+    // doesn't jump when hovering over individual dates.
+    let rangeYDomain: [number, number] | undefined;
+    if (state.mapRangeSamples.length) {
+        const vals = state.mapRangeSamples.map(s => s.rawValue).filter(isFinite);
+        if (vals.length) {
+            const rMin = Math.min(...vals);
+            const rMax = Math.max(...vals);
+            const pad = Math.max(Math.abs(rMax - rMin) * 0.12, 1e-6);
+            rangeYDomain = [rMin - pad, rMax + pad];
+        }
+    }
+
     if (!hasPoint && !hasPolygon) {
         return `<div style="${styleAttr(
             styles.chartEmpty,
@@ -2443,6 +2487,7 @@ function renderMapInfoBody(): string {
                       state.mapInfoBoxes,
                       unit,
                       state.mapInfoPalette,
+                      rangeYDomain,
                   )
                 : `<div style="${styleAttr(
                       styles.chartEmpty,
@@ -2472,6 +2517,7 @@ function renderMapInfoBody(): string {
         state.mapInfoBoxes,
         getActiveMapVariable().unit,
         state.mapInfoPalette,
+        rangeYDomain,
     );
 }
 
@@ -2547,8 +2593,9 @@ function renderMapInfoWindow() {
     `;
 }
 
-function renderMapRangeBody(): string {
+function renderMapRangeBody(containerWidth?: number): string {
     const { unit } = getMapRangeVariable();
+    const cw = containerWidth ?? getRangeOverlayWidth();
     if (state.mapRangeLoading) {
         const progressText =
             state.mapRangeLoadingProgress.total > 0
@@ -2563,6 +2610,7 @@ function renderMapRangeBody(): string {
                           unitLabel: unit,
                           paletteName: state.mapRangePalette,
                           lightToDarkNoDarkest: true,
+                          containerWidth: cw,
                       },
                   )}</div>`
                 : `<div style="${styleAttr(
@@ -2596,6 +2644,7 @@ function renderMapRangeBody(): string {
             unitLabel: unit,
             paletteName: state.mapRangePalette,
             lightToDarkNoDarkest: true,
+            containerWidth: cw,
         },
     )}</div>`;
 }
@@ -2625,6 +2674,16 @@ function renderMapRangeOverlay() {
                   title,
               )}</div>
               <div style="display:flex;align-items:center;gap:5px;margin-top:5px;flex-wrap:wrap;">
+                <select
+                  data-action="map-range-preset"
+                  style="background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.15);border-radius:6px;color:var(--text-primary);font-size:12px;padding:3px 6px;outline:none;cursor:pointer;"
+                >
+                  ${(["1month","1year","10years","full","custom"] as const).map(p => {
+                      const labels: Record<string,string> = {"1month":"1 Month","1year":"1 Year","10years":"10 Years","full":"Full Range","custom":"Custom"};
+                      return `<option value="${p}" ${state.mapRangePreset===p?"selected":""}>${labels[p]}</option>`;
+                  }).join("")}
+                </select>
+                ${state.mapRangePreset === "custom" ? `
                 <input
                   type="date"
                   data-action="map-range-date-start"
@@ -2640,6 +2699,7 @@ function renderMapRangeOverlay() {
                   min="1950-01-02" max="2100-01-01"
                   style="color-scheme:dark;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.15);border-radius:6px;color:var(--text-primary);font-size:11.5px;padding:3px 5px;outline:none;"
                 />
+                ` : ""}
                 <input
                   type="number"
                   data-action="map-range-num-samples"
@@ -2675,7 +2735,7 @@ function renderMapRangeOverlay() {
             </div>
           </div>
           <div class="map-range-body" style="${styleAttr(styles.mapRangeBody)}">
-            ${renderMapRangeBody()}
+            ${renderMapRangeBody(window.innerWidth - rightOffset)}
           </div>
         </div>
       </div>
@@ -3068,6 +3128,40 @@ function closeMapInfoWindow() {
     render();
 }
 
+/**
+ * Reuse already-loaded range samples to immediately populate the map info
+ * panel for a given target date, without firing any API requests.
+ * Finds the nearest sampled date in mapRangeSamples and feeds those entries
+ * to updateMapInfoPreview.
+ * Returns true if samples were available and the panel was updated.
+ */
+function applyRangeSamplesAsMapInfo(targetDate: string): boolean {
+    if (!state.mapRangeSamples.length) return false;
+
+    const targetMs = parseDate(targetDate).getTime();
+
+    // Collect the unique set of sampled dates
+    const uniqueDates = Array.from(new Set(state.mapRangeSamples.map(s => s.dateUsed)));
+    if (!uniqueDates.length) return false;
+
+    // Find the closest sampled date to the target
+    let closestDate = uniqueDates[0];
+    let closestDiff = Math.abs(parseDate(uniqueDates[0]).getTime() - targetMs);
+    for (const d of uniqueDates) {
+        const diff = Math.abs(parseDate(d).getTime() - targetMs);
+        if (diff < closestDiff) { closestDiff = diff; closestDate = d; }
+    }
+
+    // Extract all (scenario, model) samples for that closest date
+    const nearest = state.mapRangeSamples.filter(s => s.dateUsed === closestDate);
+    if (!nearest.length) return false;
+
+    // Stamp the samples with the actual selected date so the panel label matches
+    const stamped: ChartSample[] = nearest.map(s => ({ ...s, dateUsed: targetDate }));
+    updateMapInfoPreview(stamped);
+    return true;
+}
+
 function updateMapInfoPreview(samples: ChartSample[]) {
     state.mapInfoSamples = samples;
     try {
@@ -3107,7 +3201,7 @@ function openMapRangeOverlay(delayMs = 560) {
     mapRangeDelayTimer = window.setTimeout(() => {
         mapRangeDelayTimer = null;
         if (!state.mapMarker || state.mapPolygon) return;
-        const range = buildMapRangeWindow(state.date);
+        const range = buildMapRangeForPreset(state.mapRangePreset, state.date) ?? buildMapRangeWindow(state.date);
         state.mapRangeStart = range.start;
         state.mapRangeEnd = range.end;
         state.mapRangeOpen = true;
@@ -6749,6 +6843,7 @@ function renderMiniChartSvg(
     boxes: ChartBox[],
     unitLabel: string,
     paletteName: string,
+    yDomain?: [number, number],
 ): string {
     if (!boxes.length) {
         return `<div style="${styleAttr(
@@ -6775,9 +6870,9 @@ function renderMiniChartSvg(
     const plotHeight = height - margin.top - margin.bottom;
 
     const allExtrema = sortedBoxes.flatMap((b) => [b.stats.min, b.stats.max]);
-    const minVal = Math.min(...allExtrema);
-    const maxVal = Math.max(...allExtrema);
-    const pad = Math.max(Math.abs(maxVal - minVal) * 0.12, 1e-6);
+    const minVal = yDomain ? yDomain[0] : Math.min(...allExtrema);
+    const maxVal = yDomain ? yDomain[1] : Math.max(...allExtrema);
+    const pad = yDomain ? 0 : Math.max(Math.abs(maxVal - minVal) * 0.12, 1e-6);
 
     const yScale = d3
         .scaleLinear()
@@ -6871,6 +6966,16 @@ function renderMiniChartSvg(
     `;
 }
 
+function getRangeOverlayWidth(): number {
+    const el = document.getElementById('map-range-overlay');
+    if (el) {
+        const w = el.getBoundingClientRect().width;
+        if (w > 0) return Math.round(w);
+    }
+    const rightOffset = state.sidebarOpen ? SIDEBAR_WIDTH : 0;
+    return Math.round(window.innerWidth - rightOffset);
+}
+
 function renderChartRangeSvg(
     series: ChartSeries[],
     options?: {
@@ -6878,6 +6983,7 @@ function renderChartRangeSvg(
         unitLabel?: string;
         paletteName?: string;
         lightToDarkNoDarkest?: boolean;
+        containerWidth?: number;
     },
 ): string {
     if (!series.length) {
@@ -6900,7 +7006,7 @@ function renderChartRangeSvg(
     const compact = options?.compact ?? false;
     const unitLabel = options?.unitLabel ?? state.chartUnit;
 
-    const width = 960;
+    const width = (compact && options?.containerWidth) ? options.containerWidth : 960;
     const height = compact ? 220 : 460;
     const margin = compact
         ? { top: 24, right: 26, bottom: 64, left: 70 }
@@ -7093,7 +7199,7 @@ function renderChartRangeSvg(
               data-margin-top="${margin.top}" data-margin-bottom="${margin.bottom}"
               data-domain-start="${domainStart.getTime()}" data-domain-end="${domainEnd.getTime()}"
               data-plot-width="${plotWidth}" data-plot-height="${plotHeight}"` : ""}
-            viewBox="0 0 ${width} ${height}" role="img" aria-label="Distribution over time" preserveAspectRatio="xMidYMid meet" style="width:100%; height:${compact ? "100%" : "auto"}; ${compact ? "cursor:crosshair;" : ""}">
+            viewBox="0 0 ${width} ${height}" role="img" aria-label="Distribution over time" preserveAspectRatio="xMidYMid meet" style="width:100%; height:${compact ? "220px" : "auto"}; display:block; ${compact ? "cursor:crosshair;" : ""}">
             ${axisTicksY}
             ${axisTicksX}
             <path
@@ -9973,7 +10079,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         "masks",
         "mapShowBorders", "mapShowCities",
         "mapPolygon", "chartPolygon", "mapMarker",
-        "mapRangeStart", "mapRangeEnd",
+        "mapRangeStart", "mapRangeEnd", "mapRangeNumSamples", "mapRangePreset",
     ];
 
     const exportBtn = root.querySelector<HTMLButtonElement>(
@@ -11926,28 +12032,55 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         closeMapRangeOverlay();
     });
 
+    const mapRangePresetSelect = root.querySelector<HTMLSelectElement>(
+        '[data-action="map-range-preset"]',
+    );
+    mapRangePresetSelect?.addEventListener("change", () => {
+        const preset = mapRangePresetSelect.value as AppState["mapRangePreset"];
+        state.mapRangePreset = preset;
+        if (preset !== "custom") {
+            const range = buildMapRangeForPreset(preset, state.date);
+            if (range) {
+                state.mapRangeStart = range.start;
+                state.mapRangeEnd = range.end;
+                void loadMapRangeData();
+            }
+        } else {
+            // Just re-render to reveal the custom date inputs, don't reload yet
+            render();
+        }
+    });
+
     const mapRangeApplyBtn = root.querySelector<HTMLButtonElement>(
         '[data-action="map-range-apply"]',
     );
     mapRangeApplyBtn?.addEventListener("click", () => {
-        const startInput = root.querySelector<HTMLInputElement>(
-            '[data-action="map-range-date-start"]',
-        );
-        const endInput = root.querySelector<HTMLInputElement>(
-            '[data-action="map-range-date-end"]',
-        );
         const samplesInput = root.querySelector<HTMLInputElement>(
             '[data-action="map-range-num-samples"]',
         );
-        if (!startInput || !endInput) return;
-        const startVal = startInput.value;
-        const endVal = endInput.value;
-        if (!startVal || !endVal || startVal >= endVal) return;
-        state.mapRangeStart = startVal;
-        state.mapRangeEnd = endVal;
         if (samplesInput) {
             const n = parseInt(samplesInput.value, 10);
             if (!isNaN(n) && n >= 2) state.mapRangeNumSamples = n;
+        }
+        if (state.mapRangePreset === "custom") {
+            const startInput = root.querySelector<HTMLInputElement>(
+                '[data-action="map-range-date-start"]',
+            );
+            const endInput = root.querySelector<HTMLInputElement>(
+                '[data-action="map-range-date-end"]',
+            );
+            if (!startInput || !endInput) return;
+            const startVal = startInput.value;
+            const endVal = endInput.value;
+            if (!startVal || !endVal || startVal >= endVal) return;
+            state.mapRangeStart = startVal;
+            state.mapRangeEnd = endVal;
+        } else {
+            const range = buildMapRangeForPreset(state.mapRangePreset, state.date);
+            if (range) {
+                state.mapRangeStart = range.start;
+                state.mapRangeEnd = range.end;
+            }
         }
         void loadMapRangeData();
     });
@@ -12235,7 +12368,8 @@ async function init() {
                         state.ensembleDate = newDate;
                         render();
                         loadClimateData();
-                        void loadMapInfoData();
+                        // Reuse already-loaded range data instead of re-querying
+                        applyRangeSamplesAsMapInfo(newDate);
                     }
                 }
             }
@@ -12404,6 +12538,7 @@ async function init() {
         }
     });
 
+    let rangeHoverThrottle = 0;
     appRoot.addEventListener("mousemove", (e) => {
         const svgEl = (e.target as Element)?.closest<SVGSVGElement>('#map-range-svg');
         if (!svgEl) return;
@@ -12442,14 +12577,31 @@ async function init() {
         txt.setAttribute('y', String(mt - 7));
         txt.textContent = dateStr;
         hoverG.setAttribute('opacity', '1');
+        // Throttle info-panel updates to ~60fps
+        const now = Date.now();
+        if (now - rangeHoverThrottle > 16) {
+            rangeHoverThrottle = now;
+            applyRangeSamplesAsMapInfo(dateStr);
+        }
     });
 
     appRoot.addEventListener("mouseleave", (e) => {
         const target = e.target as Element;
         if (target?.id === 'map-range-svg') {
             (target as SVGSVGElement).querySelector<SVGGElement>('.mrh')?.setAttribute('opacity', '0');
+            // Restore info panel to the actual selected date
+            applyRangeSamplesAsMapInfo(state.date);
         }
     }, true);
+
+    // Re-render range chart on window resize so SVG width matches container
+    const rangeResizeObserver = new ResizeObserver(() => {
+        const overlay = appRoot?.querySelector<HTMLElement>('#map-range-overlay');
+        if (!overlay) return;
+        const body = overlay.querySelector<HTMLElement>('.map-range-body');
+        if (body) body.innerHTML = renderMapRangeBody();
+    });
+    rangeResizeObserver.observe(document.documentElement);
 }
 
 if (document.readyState === "loading") {

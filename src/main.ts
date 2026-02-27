@@ -557,6 +557,22 @@ const styles: Record<string, Style> = {
         transition: "opacity 160ms ease",
         zIndex: 12,
     },
+    mapInfoResizeHandle: {
+        position: "absolute",
+        right: 0,
+        bottom: 0,
+        width: 20,
+        height: 20,
+        cursor: "se-resize",
+        display: "flex",
+        alignItems: "flex-end",
+        justifyContent: "flex-end",
+        padding: "4",
+        opacity: "0.4",
+        zIndex: 2,
+        pointerEvents: "auto",
+        touchAction: "none",
+    },
     mapInfoHeader: {
         display: "flex",
         alignItems: "flex-start",
@@ -1493,6 +1509,23 @@ let mapInfoDragState: {
     pointerId: null,
     offsetX: 0,
     offsetY: 0,
+};
+let mapInfoSize: { width: number; height: number } | null = null;
+let mapInfoNaturalSize: { width: number; height: number } | null = null;
+let mapInfoResizeState: {
+    active: boolean;
+    pointerId: number | null;
+    startX: number;
+    startY: number;
+    startWidth: number;
+    startHeight: number;
+} = {
+    active: false,
+    pointerId: null,
+    startX: 0,
+    startY: 0,
+    startWidth: 0,
+    startHeight: 0,
 };
 const LOCATION_SEARCH_DEBOUNCE_MS = 500;
 
@@ -2543,10 +2576,13 @@ function renderMapInfoWindow() {
     const variableLabel = getVariableLabel(variable, state.metaData);
     const title = `${locationLabel} · ${variableLabel}`;
     const subtitle = `${formatDisplayDate(state.date)} · ${unit}`;
+    const panelSizeStyle = mapInfoSize
+        ? `; width:${mapInfoSize.width}px; max-width:none; height:${mapInfoSize.height}px;`
+        : "";
     return `
       <div id="map-info-panel" class="custom-select-info-panel map-info-panel" style="${styleAttr(
           styles.mapInfoPanel,
-      )}">
+      )}${panelSizeStyle}">
         <div class="map-info-header" style="${styleAttr(
             styles.mapInfoHeader,
         )}">
@@ -2595,6 +2631,17 @@ function renderMapInfoWindow() {
             <path d="M15 19h4v-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
         </button>
+        <div
+          class="map-info-resize-handle"
+          aria-hidden="true"
+          style="${styleAttr(styles.mapInfoResizeHandle)}"
+          title="Resize"
+        >
+          <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true" style="display:block;">
+            <line x1="3" y1="10" x2="10" y2="3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            <line x1="6" y1="10" x2="10" y2="6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+        </div>
       </div>
     `;
 }
@@ -3146,6 +3193,8 @@ function closeMapInfoWindow() {
     mapInfoRequestId += 1;
     state.mapInfoOpen = false;
     state.mapInfoLoading = false;
+    mapInfoSize = null;
+    mapInfoNaturalSize = null;
     render();
 }
 
@@ -3205,6 +3254,7 @@ function updateMapInfoPreview(samples: ChartSample[]) {
         if (bodyElement) {
             // Update only the body content without triggering a full render
             bodyElement.innerHTML = renderMapInfoBody();
+            setTimeout(() => { attachMapInfoBoxplotHoverListeners(); }, 0);
             return;
         }
     }
@@ -3215,6 +3265,7 @@ function updateMapInfoPreview(samples: ChartSample[]) {
 
     // Fallback to full render if elements not found
     render();
+    setTimeout(() => { attachMapInfoBoxplotHoverListeners(); }, 0);
 }
 
 function openMapRangeOverlay(delayMs = 560) {
@@ -4978,6 +5029,48 @@ function attachBoxplotHoverListeners() {
     });
 }
 
+function attachMapInfoBoxplotHoverListeners() {
+    const hoverOverlay = document.querySelector(
+        "#map-info-panel .boxplot-hover-overlay",
+    ) as SVGElement | null;
+    if (!hoverOverlay) return;
+    const svg = hoverOverlay.closest("svg") as SVGElement | null;
+    if (!svg) return;
+
+    const hoverAreas = svg.querySelectorAll(".boxplot-hover-area");
+    const modelIndicators = svg.querySelectorAll(".model-indicator");
+
+    if (hoverAreas.length === 0) return;
+
+    modelIndicators.forEach((ind) => {
+        (ind as SVGElement).style.opacity = "0";
+    });
+
+    hoverAreas.forEach((area) => {
+        const boxplotGroup = area.closest(".boxplot-group") as SVGElement;
+        if (!boxplotGroup) return;
+        const boxplotIdx = boxplotGroup.getAttribute("data-boxplot-idx");
+        if (boxplotIdx === null) return;
+
+        area.addEventListener("mouseenter", () => {
+            hoverOverlay.style.opacity = "1";
+            hoverOverlay.style.pointerEvents = "auto";
+            modelIndicators.forEach((ind) => {
+                const el = ind as SVGElement;
+                el.style.opacity = el.getAttribute("data-boxplot-idx") === boxplotIdx ? "1" : "0";
+            });
+        });
+
+        area.addEventListener("mouseleave", () => {
+            hoverOverlay.style.opacity = "0";
+            hoverOverlay.style.pointerEvents = "none";
+            modelIndicators.forEach((ind) => {
+                (ind as SVGElement).style.opacity = "0";
+            });
+        });
+    });
+}
+
 async function loadChartData() {
     if (state.canvasView !== "chart") return;
     const updateChartPreview = (samples: ChartSample[]) => {
@@ -6607,6 +6700,11 @@ function render() {
     if (state.canvasView === "chart") {
         updateChartContainerDOM();
     }
+
+    // Re-attach hover listeners for map info boxplots whenever the panel is visible
+    if (state.mapInfoOpen && state.mapInfoBoxes?.length) {
+        setTimeout(() => { attachMapInfoBoxplotHoverListeners(); }, 0);
+    }
 }
 
 function renderLoadingIndicator() {
@@ -6938,7 +7036,7 @@ function renderMiniChartSvg(
             const boxBottom = yScale(q1) + margin.top;
             const rectHeight = Math.max(2, boxBottom - boxTop);
             return `
-        <g>
+        <g data-boxplot-idx="${idx}" class="boxplot-group">
           <line x1="${x}" x2="${x}" y1="${yScale(min) + margin.top}" y2="${
               yScale(max) + margin.top
           }" stroke="${color}" stroke-width="1.6" stroke-linecap="round" />
@@ -6963,8 +7061,45 @@ function renderMiniChartSvg(
           }" fill="var(--text-secondary)" font-size="9" text-anchor="middle">${
               box.samples.length
           } model${box.samples.length === 1 ? "" : "s"}</text>
+          <rect x="${x - 28}" y="${margin.top}" width="56" height="${plotHeight}" fill="transparent" class="boxplot-hover-area" style="cursor: default; pointer-events: all;" />
         </g>
       `;
+        })
+        .join("");
+
+    // Hover overlay: one model-indicator per sample, shown on hover
+    const hoverOverlayMarkup = sortedBoxes
+        .map((box, idx) => {
+            const x = margin.left + xStep * (idx + 1);
+            const lineStartX = x + 20;
+            const lineEndX = lineStartX + 5;
+            const labelStartX = lineEndX + 4;
+
+            const modelIndicators = box.samples
+                .map((sample) => ({
+                    model: sample.model,
+                    value: sample.value,
+                    y: yScale(sample.value) + margin.top,
+                }))
+                .sort((a, b) => a.y - b.y);
+
+            const minSpacing = 11;
+            const adjusted: Array<{ model: string; value: number; y: number; adjustedY: number }> = [];
+            modelIndicators.forEach((ind, i) => {
+                if (i === 0) {
+                    adjusted.push({ ...ind, adjustedY: ind.y });
+                } else {
+                    const prevY = adjusted[i - 1].adjustedY;
+                    adjusted.push({ ...ind, adjustedY: Math.max(ind.y, prevY + minSpacing) });
+                }
+            });
+
+            return adjusted.map((ind) => `
+                <g class="model-indicator" data-boxplot-idx="${idx}">
+                  <line x1="${lineStartX}" x2="${lineEndX}" y1="${ind.y}" y2="${ind.y}" stroke="rgba(255,255,255,0.7)" stroke-width="1" stroke-linecap="round" />
+                  <text x="${labelStartX}" y="${ind.adjustedY + 4}" fill="rgba(255,255,255,0.9)" font-size="9" font-weight="300">${escapeHtml(ind.model)}</text>
+                </g>
+            `).join("");
         })
         .join("");
 
@@ -6980,10 +7115,13 @@ function renderMiniChartSvg(
     `;
 
     return `
-      <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Mini box plots" preserveAspectRatio="xMidYMid meet" style="width:100%; height:auto;">
+      <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Mini box plots" preserveAspectRatio="xMidYMid meet" style="width:100%; height:auto; overflow: visible;">
         ${axisLine}
         ${axisTicks}
         ${boxesMarkup}
+        <g class="boxplot-hover-overlay" style="opacity: 0; pointer-events: none;">
+          ${hoverOverlayMarkup}
+        </g>
         <text x="${margin.left}" y="${margin.top - 6}" fill="var(--text-secondary)" font-size="9">${escapeHtml(
             unitLabel,
         )}</text>
@@ -12093,6 +12231,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                 void loadMapInfoData();
             }
             render();
+            setTimeout(() => { attachMapInfoBoxplotHoverListeners(); }, 0);
         }
     });
 
@@ -12303,6 +12442,80 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             document.body.style.userSelect = "none";
             window.addEventListener("pointermove", onDragMove);
             window.addEventListener("pointerup", onDragEnd);
+        });
+    }
+
+    // Resize handle
+    const mapInfoResizeHandle = root.querySelector<HTMLElement>(
+        "#map-info-panel .map-info-resize-handle",
+    );
+    if (mapInfoPanel && mapInfoResizeHandle) {
+        const onResizeMove = (e: PointerEvent) => {
+            if (!mapInfoResizeState.active) return;
+            if (
+                mapInfoResizeState.pointerId !== null &&
+                e.pointerId !== mapInfoResizeState.pointerId
+            ) return;
+            e.preventDefault();
+            const dx = e.clientX - mapInfoResizeState.startX;
+            const dy = e.clientY - mapInfoResizeState.startY;
+            const legendH = (document.querySelector('.map-legend') as HTMLElement | null)?.offsetHeight ?? 300;
+            const minW = mapInfoNaturalSize?.width ?? mapInfoResizeState.startWidth;
+            const minH = Math.max(mapInfoNaturalSize?.height ?? mapInfoResizeState.startHeight, legendH);
+            const maxW = Math.round(window.innerWidth * 0.85);
+            const maxH = Math.round(window.innerHeight * 0.85);
+            const newW = Math.max(minW, Math.min(maxW, mapInfoResizeState.startWidth + dx));
+            const newH = Math.max(minH, Math.min(maxH, mapInfoResizeState.startHeight + dy));
+            mapInfoSize = { width: newW, height: newH };
+            mapInfoPanel.style.width = `${newW}px`;
+            mapInfoPanel.style.maxWidth = "none";
+            mapInfoPanel.style.height = `${newH}px`;
+        };
+
+        const onResizeEnd = (e: PointerEvent) => {
+            if (!mapInfoResizeState.active) return;
+            if (
+                mapInfoResizeState.pointerId !== null &&
+                e.pointerId !== mapInfoResizeState.pointerId
+            ) return;
+            mapInfoResizeState.active = false;
+            mapInfoResizeState.pointerId = null;
+            mapInfoResizeHandle.style.opacity = "0.4";
+            mapInfoPanel.releasePointerCapture?.(e.pointerId);
+            document.body.style.userSelect = "";
+            window.removeEventListener("pointermove", onResizeMove);
+            window.removeEventListener("pointerup", onResizeEnd);
+        };
+
+        mapInfoResizeHandle.addEventListener("pointerdown", (e) => {
+            if (e.button !== 0) return;
+            e.preventDefault();
+            e.stopPropagation();
+            const panelRect = mapInfoPanel.getBoundingClientRect();
+            const sw = panelRect.width || mapInfoSize?.width || 360;
+            const sh = panelRect.height || mapInfoSize?.height || 300;
+            // Capture the natural (pre-resize) size as the minimum on first resize
+            if (!mapInfoNaturalSize && !mapInfoSize) {
+                mapInfoNaturalSize = { width: sw, height: sh };
+            }
+            mapInfoResizeState.active = true;
+            mapInfoResizeState.pointerId = e.pointerId;
+            mapInfoResizeState.startX = e.clientX;
+            mapInfoResizeState.startY = e.clientY;
+            mapInfoResizeState.startWidth = sw;
+            mapInfoResizeState.startHeight = sh;
+            mapInfoResizeHandle.style.opacity = "0.9";
+            mapInfoPanel.setPointerCapture?.(e.pointerId);
+            document.body.style.userSelect = "none";
+            window.addEventListener("pointermove", onResizeMove);
+            window.addEventListener("pointerup", onResizeEnd);
+        });
+
+        mapInfoResizeHandle.addEventListener("mouseover", () => {
+            if (!mapInfoResizeState.active) mapInfoResizeHandle.style.opacity = "0.8";
+        });
+        mapInfoResizeHandle.addEventListener("mouseout", () => {
+            if (!mapInfoResizeState.active) mapInfoResizeHandle.style.opacity = "0.4";
         });
     }
 

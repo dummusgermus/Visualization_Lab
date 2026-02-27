@@ -10101,6 +10101,21 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             const scale = state.sidebarOpen ? 1 : 0.9;
             applyChartLayoutOffset(right + 8, scale);
             updateMapSearchPosition();
+            // Shift the range overlay to fill or vacate sidebar space
+            const rangeOverlay = appRoot?.querySelector<HTMLElement>('#map-range-overlay');
+            if (rangeOverlay) {
+                const newRight = state.sidebarOpen ? SIDEBAR_WIDTH : 0;
+                rangeOverlay.style.right = `${newRight}px`;
+                // Re-render chart body with updated container width,
+                // and once more after the CSS transition finishes (220ms)
+                const newContainerWidth = window.innerWidth - newRight;
+                const body = rangeOverlay.querySelector<HTMLElement>('.map-range-body');
+                if (body) body.innerHTML = renderMapRangeBody(newContainerWidth);
+                setTimeout(() => {
+                    const b = rangeOverlay.querySelector<HTMLElement>('.map-range-body');
+                    if (b) b.innerHTML = renderMapRangeBody(window.innerWidth - newRight);
+                }, 240);
+            }
         },
     });
 

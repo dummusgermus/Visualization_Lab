@@ -118,6 +118,7 @@
     overflow-x: hidden;
     padding-right: 12px;
     padding-left: 0;
+    padding-bottom: 60px;
     min-height: 0;
     max-height: 100%;
     box-sizing: border-box;
@@ -175,4 +176,37 @@
 
 .mode-pane-scrollable {
     margin-right: 0;
+}
+
+.sidebar-footer {
+    display: flex;
+    gap: 8px;
+    padding: 10px 14px;
+    border-top: 1px solid var(--border-subtle);
+    background: var(--dark-bg-alt);
+    flex-shrink: 0;
+}
+
+.sidebar-footer-btn {
+    flex: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 8px 10px;
+    border-radius: 10px;
+    border: 1px solid var(--border-subtle);
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.sidebar-footer-btn:hover {
+    background: rgba(255, 255, 255, 0.09);
+    border-color: var(--border-medium);
+    color: var(--text-primary);
 }

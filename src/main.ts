@@ -214,19 +214,12 @@ function clipDateToRange(date: string, range: { start: string; end: string }) {
 function buildMapRangeWindow(date: string): { start: string; end: string } {
     const parsed = parseDate(date);
     if (Number.isNaN(parsed.getTime())) {
-        return { start: "2015-01-01", end: "2099-01-01" };
+        return { start: "2015-01-01", end: "2015-12-31" };
     }
-    const month = parsed.getMonth();
-    const day = parsed.getDate();
-    const clampDay = (year: number) => {
-        const lastDay = new Date(year, month + 1, 0).getDate();
-        return Math.min(day, lastDay);
-    };
-    const start = new Date(2015, month, clampDay(2015));
-    const end = new Date(2099, month, clampDay(2099));
+    const year = parsed.getFullYear();
     return {
-        start: start.toISOString().slice(0, 10),
-        end: end.toISOString().slice(0, 10),
+        start: `${year}-01-01`,
+        end: `${year}-12-31`,
     };
 }
 
@@ -1242,6 +1235,7 @@ export type AppState = {
     mapRangeOpen: boolean;
     mapRangeStart: string;
     mapRangeEnd: string;
+    mapRangeNumSamples: number;
     mapPolygon: LatLon[] | null;
     chartPolygon: LatLon[] | null;
     chartPoint: LatLon | null;
@@ -1250,9 +1244,8 @@ export type AppState = {
     chatInput: string;
     chatMessages: ChatMessage[];
     chatIsLoading: boolean;
-    chatScreenshot?: string | null;
+    selectedChatModel: string;
     availableModels: string[];
-    selectedChatModel: string;          // ← NEU
     compareMode: CompareMode;
     compareScenarioA: string;
     compareScenarioB: string;
@@ -1375,7 +1368,8 @@ const state: AppState = {
     mapRangeLoadingProgress: { total: 0, done: 0 },
     mapRangeOpen: false,
     mapRangeStart: "2015-01-01",
-    mapRangeEnd: "2099-01-01",
+    mapRangeEnd: "2015-12-31",
+    mapRangeNumSamples: 52,
     mapPolygon: null,
     chartPolygon: null,
     chartPoint: null,
@@ -1384,9 +1378,9 @@ const state: AppState = {
     chatInput: "",
     chatMessages: [],
     chatIsLoading: false,
+    selectedChatModel: "gpt-4o",
     compareMode: "Scenarios",
     availableModels: [],
-    selectedChatModel: "gpt-4o",        // ← NEU
     compareScenarioA: "SSP245",
     compareScenarioB: "SSP585",
     compareModelA: models[0],
@@ -2630,6 +2624,36 @@ function renderMapRangeOverlay() {
               <div class="map-range-title" style="${styleAttr(styles.mapRangeTitle)}">${escapeHtml(
                   title,
               )}</div>
+              <div style="display:flex;align-items:center;gap:5px;margin-top:5px;flex-wrap:wrap;">
+                <input
+                  type="date"
+                  data-action="map-range-date-start"
+                  value="${state.mapRangeStart}"
+                  min="1950-01-01" max="2099-12-31"
+                  style="color-scheme:dark;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.15);border-radius:6px;color:var(--text-primary);font-size:11.5px;padding:3px 5px;outline:none;"
+                />
+                <span style="color:var(--text-secondary);font-size:12px;">–</span>
+                <input
+                  type="date"
+                  data-action="map-range-date-end"
+                  value="${state.mapRangeEnd}"
+                  min="1950-01-02" max="2100-01-01"
+                  style="color-scheme:dark;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.15);border-radius:6px;color:var(--text-primary);font-size:11.5px;padding:3px 5px;outline:none;"
+                />
+                <input
+                  type="number"
+                  data-action="map-range-num-samples"
+                  value="${state.mapRangeNumSamples}"
+                  min="2" max="3650" step="1"
+                  title="Number of data points"
+                  style="width:52px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.15);border-radius:6px;color:var(--text-primary);font-size:12px;padding:3px 5px;outline:none;text-align:center;"
+                />
+                <button
+                  type="button"
+                  data-action="map-range-apply"
+                  style="padding:3px 9px;border-radius:6px;border:1px solid rgba(125,211,252,0.4);background:rgba(125,211,252,0.12);color:var(--text-primary);font-size:11.5px;font-weight:700;cursor:pointer;letter-spacing:0.2px;"
+                >Apply</button>
+              </div>
             </div>
             <div style="${styleAttr(styles.mapInfoActions)}">
               ${renderOverlayPaletteSelect(
@@ -3153,10 +3177,8 @@ async function loadMapRangeData() {
     }
 
     const requestId = ++mapRangeRequestId;
-    const range = buildMapRangeWindow(state.date);
     const { variable: rangeVariable, unit: rangeUnit } = getMapRangeVariable();
-    state.mapRangeStart = range.start;
-    state.mapRangeEnd = range.end;
+    const range = { start: state.mapRangeStart, end: state.mapRangeEnd };
     state.mapRangeLoading = true;
     state.mapRangeError = null;
     state.mapRangeSamples = [];
@@ -3200,6 +3222,10 @@ async function loadMapRangeData() {
             range.end,
         );
         const fixedReferenceDate = range.start;
+        const spanDays = Math.max(1, Math.round(
+            (parseDate(range.end).getTime() - parseDate(range.start).getTime()) / (24 * 60 * 60 * 1000)
+        ));
+        const computedStepDays = Math.max(1, Math.round(spanDays / state.mapRangeNumSamples));
 
         const totalRequests = activeScenarios.length * activeModels.length;
         state.mapRangeLoadingProgress = { total: totalRequests, done: 0 };
@@ -3223,6 +3249,7 @@ async function loadMapRangeData() {
                             rangeEnd: range.end,
                             useFixedAnnualSamples,
                             fixedReferenceDate,
+                            stepDays: computedStepDays,
                         });
                         samples.push(...pointSamples);
                     } catch (err) {
@@ -3830,6 +3857,7 @@ async function loadRangePointSamples(params: {
     rangeEnd: string;
     useFixedAnnualSamples: boolean;
     fixedReferenceDate: string;
+    stepDays?: number;
 }): Promise<ChartSample[]> {
     const {
         variable,
@@ -3840,6 +3868,7 @@ async function loadRangePointSamples(params: {
         rangeEnd,
         useFixedAnnualSamples,
         fixedReferenceDate,
+        stepDays,
     } = params;
     const scenarioRange = getTimeRangeForScenario(scenario);
     const clippedStart = clipDateToRange(rangeStart, scenarioRange);
@@ -3870,7 +3899,7 @@ async function loadRangePointSamples(params: {
             end_date: clippedEnd,
             scenario: normalizeScenario(scenario),
             resolution: "low",
-            step_days: useFixedAnnualSamples ? 365 : 1,
+            step_days: stepDays ?? (useFixedAnnualSamples ? 365 : 1),
         });
 
         const samples: ChartSample[] = [];
@@ -6248,6 +6277,24 @@ function render() {
             </div>
           </div>
         </div>
+        <div class="sidebar-footer">
+          <button type="button" class="sidebar-footer-btn" data-action="export-state" title="Export current settings to a JSON file">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/>
+              <line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+            Export
+          </button>
+          <button type="button" class="sidebar-footer-btn" data-action="import-state" title="Load settings from a JSON file">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="17 8 12 3 7 8"/>
+              <line x1="12" y1="3" x2="12" y2="15"/>
+            </svg>
+            Load
+          </button>
+        </div>
       </aside>
 
       <div data-role="canvas-toggle" style="${styleAttr({
@@ -6644,7 +6691,7 @@ function renderChartSvg(
                     return `
                     <g class="model-indicator" data-boxplot-idx="${idx}">
                       <line x1="${lineStartX}" x2="${lineEndX}" y1="${indicator.y}" y2="${indicator.y}" stroke="white" stroke-width="1" stroke-linecap="round" />
-                      <text x="${labelStartX}" y="${labelY + 4}" fill="white" font-size="12" font-weight="300" opacity="0.95">${indicator.model}</text>
+                      <text x="${labelStartX}" y="${labelY + 4}" fill="white" font-size="10" font-weight="300" opacity="0.95">${indicator.model}</text>
                     </g>
                   `;
                 })
@@ -6750,7 +6797,7 @@ function renderMiniChartSvg(
           }" y1="${y}" y2="${y}" stroke="rgba(255,255,255,0.06)" />
           <text x="${margin.left - 8}" y="${
               y + 3
-          }" fill="var(--text-secondary)" font-size="13" text-anchor="end">
+          }" fill="var(--text-secondary)" font-size="9" text-anchor="end">
             ${formatNumberCompact(tick)}
           </text>
         </g>
@@ -6788,12 +6835,12 @@ function renderMiniChartSvg(
           }" r="3.2" fill="${color}" stroke="rgba(0,0,0,0.55)" stroke-width="0.8" />
           <text x="${x}" y="${
               height - margin.bottom + 26
-          }" fill="var(--text-primary)" font-weight="700" font-size="12" text-anchor="middle">${
+          }" fill="var(--text-primary)" font-weight="700" font-size="10" text-anchor="middle">${
               box.scenario
           }</text>
           <text x="${x}" y="${
               height - margin.bottom + 40
-          }" fill="var(--text-secondary)" font-size="13" text-anchor="middle">${
+          }" fill="var(--text-secondary)" font-size="9" text-anchor="middle">${
               box.samples.length
           } model${box.samples.length === 1 ? "" : "s"}</text>
         </g>
@@ -6817,7 +6864,7 @@ function renderMiniChartSvg(
         ${axisLine}
         ${axisTicks}
         ${boxesMarkup}
-        <text x="${margin.left}" y="${margin.top - 6}" fill="var(--text-secondary)" font-size="13">${escapeHtml(
+        <text x="${margin.left}" y="${margin.top - 6}" fill="var(--text-secondary)" font-size="9">${escapeHtml(
             unitLabel,
         )}</text>
       </svg>
@@ -7040,7 +7087,13 @@ function renderChartRangeSvg(
               <span>Mean</span>
             </div>
           </div>
-          <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Distribution over time" preserveAspectRatio="xMidYMid meet" style="width:100%; height:${compact ? "100%" : "auto"};">
+          <svg
+            ${compact ? `id="map-range-svg"
+              data-margin-left="${margin.left}" data-margin-right="${margin.right}"
+              data-margin-top="${margin.top}" data-margin-bottom="${margin.bottom}"
+              data-domain-start="${domainStart.getTime()}" data-domain-end="${domainEnd.getTime()}"
+              data-plot-width="${plotWidth}" data-plot-height="${plotHeight}"` : ""}
+            viewBox="0 0 ${width} ${height}" role="img" aria-label="Distribution over time" preserveAspectRatio="xMidYMid meet" style="width:100%; height:${compact ? "100%" : "auto"}; ${compact ? "cursor:crosshair;" : ""}">
             ${axisTicksY}
             ${axisTicksX}
             <path
@@ -7052,6 +7105,13 @@ function renderChartRangeSvg(
             />
             ${seriesMarkup}
             ${yLabel}
+            ${compact ? `
+            <g class="mrh" opacity="0" pointer-events="none">
+              <line class="mrh-line" x1="0" x2="0" y1="${margin.top}" y2="${height - margin.bottom}" stroke="rgba(255,255,255,0.75)" stroke-width="1.2" stroke-dasharray="5 3"/>
+              <rect class="mrh-bg" x="0" y="${margin.top - 20}" width="74" height="16" rx="3" fill="rgba(0,0,0,0.72)"/>
+              <text class="mrh-text" fill="rgba(255,255,255,0.9)" font-size="10" text-anchor="middle" x="0" y="${margin.top - 7}"></text>
+            </g>
+            ` : ""}
           </svg>
         </div>
         ${
@@ -9606,6 +9666,8 @@ function renderChatSectionWrapper() {
           state.chatMessages,
           state.chatInput,
           state.chatIsLoading,
+          false,
+          state.selectedChatModel,
       )}
     </div>
   `;
@@ -9895,6 +9957,81 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             updateMapSearchPosition();
         },
     });
+
+    // ── Export / Load state ──────────────────────────────────────
+    const SAVEABLE_KEYS: (keyof AppState)[] = [
+        "mode", "canvasView", "panelTab",
+        "scenario", "model", "variable", "date", "selectedUnit",
+        "mapPalette", "mapInfoPalette", "mapRangePalette", "chartPalette",
+        "compareMode", "compareScenarioA", "compareScenarioB",
+        "compareModelA", "compareModelB", "compareDateStart", "compareDateEnd",
+        "ensembleScenarios", "ensembleModels", "ensembleStatistic",
+        "ensembleDate", "ensembleVariable", "ensembleUnit",
+        "chartMode", "chartDate", "chartRangeStart", "chartRangeEnd",
+        "chartVariable", "chartUnit", "chartScenarios", "chartModels",
+        "chartLocation", "chartLocationName", "chartPoint",
+        "masks",
+        "mapShowBorders", "mapShowCities",
+        "mapPolygon", "chartPolygon", "mapMarker",
+        "mapRangeStart", "mapRangeEnd",
+    ];
+
+    const exportBtn = root.querySelector<HTMLButtonElement>(
+        '[data-action="export-state"]',
+    );
+    exportBtn?.addEventListener("click", () => {
+        const saveData: Record<string, any> = { __version: 1 };
+        for (const key of SAVEABLE_KEYS) {
+            saveData[key] = (state as any)[key];
+        }
+        const blob = new Blob([JSON.stringify(saveData, null, 2)], {
+            type: "application/json",
+        });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `polyoracle-${new Date().toISOString().slice(0, 10)}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    });
+
+    const importBtn = root.querySelector<HTMLButtonElement>(
+        '[data-action="import-state"]',
+    );
+    importBtn?.addEventListener("click", () => {
+        const fileInput = document.createElement("input");
+        fileInput.type = "file";
+        fileInput.accept = ".json,application/json";
+        fileInput.addEventListener("change", () => {
+            const file = fileInput.files?.[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+                try {
+                    const data = JSON.parse(ev.target?.result as string);
+                    // Only apply known saveable keys to avoid stomping runtime state
+                    for (const key of SAVEABLE_KEYS) {
+                        if (key in data) {
+                            (state as any)[key] = data[key];
+                        }
+                    }
+                    render();
+                    if (state.canvasView === "map") {
+                        loadClimateData();
+                    } else {
+                        loadChartData();
+                    }
+                } catch {
+                    console.error("Failed to parse state file");
+                }
+            };
+            reader.readAsText(file);
+        });
+        fileInput.click();
+    });
+    // ─────────────────────────────────────────────────────────────
 
     const canvasButtons = root.querySelectorAll<HTMLButtonElement>(
         '[data-action="set-canvas"]',
@@ -11789,6 +11926,32 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         closeMapRangeOverlay();
     });
 
+    const mapRangeApplyBtn = root.querySelector<HTMLButtonElement>(
+        '[data-action="map-range-apply"]',
+    );
+    mapRangeApplyBtn?.addEventListener("click", () => {
+        const startInput = root.querySelector<HTMLInputElement>(
+            '[data-action="map-range-date-start"]',
+        );
+        const endInput = root.querySelector<HTMLInputElement>(
+            '[data-action="map-range-date-end"]',
+        );
+        const samplesInput = root.querySelector<HTMLInputElement>(
+            '[data-action="map-range-num-samples"]',
+        );
+        if (!startInput || !endInput) return;
+        const startVal = startInput.value;
+        const endVal = endInput.value;
+        if (!startVal || !endVal || startVal >= endVal) return;
+        state.mapRangeStart = startVal;
+        state.mapRangeEnd = endVal;
+        if (samplesInput) {
+            const n = parseInt(samplesInput.value, 10);
+            if (!isNaN(n) && n >= 2) state.mapRangeNumSamples = n;
+        }
+        void loadMapRangeData();
+    });
+
     const mapInfoExpandBtn = root.querySelector<HTMLButtonElement>(
         '[data-action="open-map-info-chart"]',
     );
@@ -12049,6 +12212,36 @@ async function init() {
     appRoot.addEventListener("click", (e) => {
         const target = e.target as HTMLElement;
 
+        // Map range chart click → jump to that date
+        const mapRangeSvgEl = (target as Element).closest<SVGSVGElement>('#map-range-svg');
+        if (mapRangeSvgEl) {
+            const vb = mapRangeSvgEl.viewBox.baseVal;
+            const bbox = mapRangeSvgEl.getBoundingClientRect();
+            if (vb.width && bbox.width) {
+                const scaleX = vb.width / bbox.width;
+                const ml = parseFloat(mapRangeSvgEl.dataset.marginLeft ?? '70');
+                const plotW = parseFloat(mapRangeSvgEl.dataset.plotWidth ?? '864');
+                const domainStartTs = parseFloat(mapRangeSvgEl.dataset.domainStart ?? '0');
+                const domainEndTs = parseFloat(mapRangeSvgEl.dataset.domainEnd ?? '0');
+                const plotX = (e.clientX - bbox.left) * scaleX - ml;
+                if (plotX >= 0 && plotX <= plotW) {
+                    const t = Math.max(0, Math.min(1, plotX / plotW));
+                    const newDate = clipDateToScenarioRange(
+                        new Date(domainStartTs + t * (domainEndTs - domainStartTs)).toISOString().slice(0, 10),
+                        state.scenario,
+                    );
+                    if (newDate !== state.date) {
+                        state.date = newDate;
+                        state.ensembleDate = newDate;
+                        render();
+                        loadClimateData();
+                        void loadMapInfoData();
+                    }
+                }
+            }
+            return;
+        }
+
         // Use closest to find the element with data-action, even if a child is clicked
         const actionElement = target.closest(
             "[data-action]",
@@ -12210,6 +12403,53 @@ async function init() {
             // No-op: tutorial progression for date happens on valid change (blur/enter)
         }
     });
+
+    appRoot.addEventListener("mousemove", (e) => {
+        const svgEl = (e.target as Element)?.closest<SVGSVGElement>('#map-range-svg');
+        if (!svgEl) return;
+        const vb = svgEl.viewBox.baseVal;
+        const bbox = svgEl.getBoundingClientRect();
+        if (!vb.width || !bbox.width) return;
+        const scaleX = vb.width / bbox.width;
+        const ml   = parseFloat(svgEl.dataset.marginLeft   ?? '70');
+        const mt   = parseFloat(svgEl.dataset.marginTop    ?? '24');
+        const plotW = parseFloat(svgEl.dataset.plotWidth   ?? '864');
+        const plotH = parseFloat(svgEl.dataset.plotHeight  ?? '132');
+        const domainStartTs = parseFloat(svgEl.dataset.domainStart ?? '0');
+        const domainEndTs   = parseFloat(svgEl.dataset.domainEnd   ?? '0');
+        const plotX = (e.clientX - bbox.left) * scaleX - ml;
+        const hoverG = svgEl.querySelector<SVGGElement>('.mrh');
+        if (!hoverG) return;
+        if (plotX < 0 || plotX > plotW) {
+            hoverG.setAttribute('opacity', '0');
+            return;
+        }
+        const t = Math.max(0, Math.min(1, plotX / plotW));
+        const dateStr = new Date(domainStartTs + t * (domainEndTs - domainStartTs)).toISOString().slice(0, 10);
+        const absX = ml + plotX;
+        const bgW = 72;
+        const bgX = Math.max(ml, Math.min(absX - bgW / 2, ml + plotW - bgW));
+        const line = hoverG.querySelector<SVGLineElement>('.mrh-line')!;
+        const bg   = hoverG.querySelector<SVGRectElement>('.mrh-bg')!;
+        const txt  = hoverG.querySelector<SVGTextElement>('.mrh-text')!;
+        line.setAttribute('x1', String(absX));
+        line.setAttribute('x2', String(absX));
+        line.setAttribute('y1', String(mt));
+        line.setAttribute('y2', String(mt + plotH));
+        bg.setAttribute('x', String(bgX));
+        bg.setAttribute('y', String(mt - 20));
+        txt.setAttribute('x', String(bgX + bgW / 2));
+        txt.setAttribute('y', String(mt - 7));
+        txt.textContent = dateStr;
+        hoverG.setAttribute('opacity', '1');
+    });
+
+    appRoot.addEventListener("mouseleave", (e) => {
+        const target = e.target as Element;
+        if (target?.id === 'map-range-svg') {
+            (target as SVGSVGElement).querySelector<SVGGElement>('.mrh')?.setAttribute('opacity', '0');
+        }
+    }, true);
 }
 
 if (document.readyState === "loading") {

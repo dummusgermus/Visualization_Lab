@@ -445,6 +445,24 @@ function redrawCachedMap(canvas: HTMLCanvasElement): void {
     );
 }
 
+/**
+ * Resize the canvas pixel buffer to match its current CSS size and redraw.
+ * Call this from a ResizeObserver whenever the canvas changes size.
+ */
+export function resizeMapCanvas(canvas: HTMLCanvasElement): void {
+    if (!cachedMapCanvas) return; // nothing rendered yet
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
+    // Re-apply DPR scale — resizing resets all context state
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.scale(dpr, dpr);
+    redrawCachedMap(canvas);
+}
+
 export function renderMapData(
     data: ClimateData,
     mapCanvas: HTMLCanvasElement | null,

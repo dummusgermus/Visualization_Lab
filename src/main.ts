@@ -23,6 +23,7 @@ import {
     getCurrentZoomLevel,
     projectLonLatToCanvas,
     renderMapData,
+    resizeMapCanvas,
     setMapOverlayVisibility,
     setupMapInteractions,
     zoomToLocation,
@@ -2458,9 +2459,14 @@ function renderMapInfoBody(): string {
 
     // Compute a stable y-domain from the full range dataset so that the axis
     // doesn't jump when hovering over individual dates.
+    // Use the same unit-converted values as buildChartBoxes so the domain
+    // stays correct when the user switches units.
     let rangeYDomain: [number, number] | undefined;
     if (state.mapRangeSamples.length) {
-        const vals = state.mapRangeSamples.map(s => s.rawValue).filter(isFinite);
+        const { variable: rv, unit: ru } = getActiveMapVariable();
+        const vals = state.mapRangeSamples
+            .map(s => convertValue(s.rawValue, rv, ru))
+            .filter(isFinite);
         if (vals.length) {
             const rMin = Math.min(...vals);
             const rMax = Math.max(...vals);
@@ -2716,6 +2722,21 @@ function renderMapRangeOverlay() {
               </div>
             </div>
             <div style="${styleAttr(styles.mapInfoActions)}">
+              <button
+                type="button"
+                data-action="toggle-map-info"
+                aria-label="${state.mapInfoOpen ? "Hide" : "Show"} boxplot panel"
+                title="${state.mapInfoOpen ? "Hide" : "Show"} boxplot panel"
+                style="${styleAttr({...styles.mapInfoActionBtn, color: state.mapInfoOpen ? "var(--text-primary)" : "var(--text-secondary)", background: state.mapInfoOpen ? "rgba(255,255,255,0.08)" : "transparent"})}"
+                onmouseover="this.style.color='var(--text-primary)';this.style.background='rgba(15,23,42,0.85)';"
+                onmouseout="this.style.color='${state.mapInfoOpen ? "var(--text-primary)" : "var(--text-secondary)"}';"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="2" y="3" width="5" height="18" rx="1"/>
+                  <rect x="9.5" y="8" width="5" height="13" rx="1"/>
+                  <rect x="17" y="12" width="5" height="9" rx="1"/>
+                </svg>
+              </button>
               ${renderOverlayPaletteSelect(
                   "mapRangePalette",
                   state.mapRangePalette,
@@ -3187,6 +3208,10 @@ function updateMapInfoPreview(samples: ChartSample[]) {
             return;
         }
     }
+
+    // If the panel is intentionally closed, don't trigger a full render —
+    // that would recreate the range SVG and kill the hover crosshair.
+    if (!state.mapInfoOpen) return;
 
     // Fallback to full render if elements not found
     render();
@@ -12039,6 +12064,23 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         closeMapInfoWindow();
     });
 
+    const mapInfoToggleBtn = root.querySelector<HTMLButtonElement>(
+        '[data-action="toggle-map-info"]',
+    );
+    mapInfoToggleBtn?.addEventListener("click", (e) => {
+        e.preventDefault();
+        if (state.mapInfoOpen) {
+            closeMapInfoWindow();
+        } else {
+            state.mapInfoOpen = true;
+            // Populate from range samples if available, otherwise fetch
+            if (!applyRangeSamplesAsMapInfo(state.date)) {
+                void loadMapInfoData();
+            }
+            render();
+        }
+    });
+
     const mapRangeCloseBtn = root.querySelector<HTMLButtonElement>(
         '[data-action="close-map-range"]',
     );
@@ -12610,11 +12652,15 @@ async function init() {
     }, true);
 
     // Re-render range chart on window resize so SVG width matches container
+    // Also resize the map canvas pixel buffer to match its new CSS dimensions
     const rangeResizeObserver = new ResizeObserver(() => {
         const overlay = appRoot?.querySelector<HTMLElement>('#map-range-overlay');
-        if (!overlay) return;
-        const body = overlay.querySelector<HTMLElement>('.map-range-body');
-        if (body) body.innerHTML = renderMapRangeBody();
+        if (overlay) {
+            const body = overlay.querySelector<HTMLElement>('.map-range-body');
+            if (body) body.innerHTML = renderMapRangeBody();
+        }
+        const canvas = appRoot?.querySelector<HTMLCanvasElement>('#map-canvas');
+        if (canvas) resizeMapCanvas(canvas);
     });
     rangeResizeObserver.observe(document.documentElement);
 }

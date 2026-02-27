@@ -556,6 +556,7 @@ const styles: Record<string, Style> = {
         transform: "translate(-9999px, -9999px)",
         transition: "opacity 160ms ease",
         zIndex: 12,
+        overflow: "hidden",
     },
     mapInfoResizeHandle: {
         position: "absolute",
@@ -623,6 +624,7 @@ const styles: Record<string, Style> = {
         flexDirection: "column",
         gap: 10,
         paddingBottom: 36,
+        overflow: "hidden",
     },
     mapInfoLoadingRow: {
         display: "flex",

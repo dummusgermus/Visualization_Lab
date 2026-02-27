@@ -7211,13 +7211,28 @@ function renderChartRangeSvg(
             />
             ${seriesMarkup}
             ${yLabel}
-            ${compact ? `
+            ${compact ? (() => {
+                const selDate = parseDate(state.date);
+                const selTs = selDate.getTime();
+                const inDomain = selTs >= domainStart.getTime() && selTs <= domainEnd.getTime();
+                const sx = inDomain ? Math.round(xScale(selDate) + margin.left) : -999;
+                const bgW = 74;
+                const bgX = Math.max(margin.left, Math.min(sx - bgW / 2, margin.left + plotWidth - bgW));
+                return `
+            ${inDomain ? `
+            <g class="mrd" pointer-events="none">
+              <line x1="${sx}" x2="${sx}" y1="${margin.top}" y2="${height - margin.bottom}" stroke="rgba(255,255,255,0.9)" stroke-width="1.5"/>
+              <rect x="${bgX}" y="${margin.top - 20}" width="${bgW}" height="16" rx="3" fill="rgba(0,0,0,0.72)"/>
+              <text fill="rgba(255,255,255,0.9)" font-size="10" text-anchor="middle" x="${bgX + bgW / 2}" y="${margin.top - 7}">${state.date}</text>
+            </g>
+            ` : ""}
             <g class="mrh" opacity="0" pointer-events="none">
               <line class="mrh-line" x1="0" x2="0" y1="${margin.top}" y2="${height - margin.bottom}" stroke="rgba(255,255,255,0.75)" stroke-width="1.2" stroke-dasharray="5 3"/>
               <rect class="mrh-bg" x="0" y="${margin.top - 20}" width="74" height="16" rx="3" fill="rgba(0,0,0,0.72)"/>
               <text class="mrh-text" fill="rgba(255,255,255,0.9)" font-size="10" text-anchor="middle" x="0" y="${margin.top - 7}"></text>
             </g>
-            ` : ""}
+            `;
+            })() : ""}
           </svg>
         </div>
         ${

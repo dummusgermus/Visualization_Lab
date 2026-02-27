@@ -129,6 +129,23 @@ class OnDemandAggregateRequest(BaseModel):
         description="Optional 2D mask array matching the logic_box dimensions",
     )
 
+
+class SetModelRequest(BaseModel):
+    model: str = Field(..., description="Model name to switch to")
+
+
+ALLOWED_CHAT_MODELS = {
+    "gpt-4.1",
+    "gpt-4o",
+    "gpt-4o-mini",
+    "gpt-5.1",
+    "gpt-oss-120b",
+    "mistral-small-3.2-24B-instruct-2506",
+    "mixtral-8x22B",
+    "e5-mistral-7b-instruct",
+}
+
+
 def _allowed_origins() -> List[str]:
     """
     Parse allowed origins from env so that the Vite dev server can connect.
@@ -362,6 +379,18 @@ def chat(request: llm_chat.ChatRequest):
             status_code=500,
             detail=f"Chat processing failed: {str(exc)}"
         ) from exc
+
+
+@app.post("/set-model")
+def set_model(request: SetModelRequest):
+    """Hot-swap the LLM model used for chat without restarting the server."""
+    if request.model not in ALLOWED_CHAT_MODELS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Model '{request.model}' is not allowed. Valid models: {sorted(ALLOWED_CHAT_MODELS)}"
+        )
+    llm_function_call.set_model(request.model)
+    return {"success": True, "model": request.model}
 
 
 @app.post("/pixel-data")

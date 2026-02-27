@@ -1252,6 +1252,7 @@ export type AppState = {
     chatIsLoading: boolean;
     chatScreenshot?: string | null;
     availableModels: string[];
+    selectedChatModel: string;          // ← NEU
     compareMode: CompareMode;
     compareScenarioA: string;
     compareScenarioB: string;
@@ -1385,6 +1386,7 @@ const state: AppState = {
     chatIsLoading: false,
     compareMode: "Scenarios",
     availableModels: [],
+    selectedChatModel: "gpt-4o",        // ← NEU
     compareScenarioA: "SSP245",
     compareScenarioB: "SSP585",
     compareModelA: models[0],

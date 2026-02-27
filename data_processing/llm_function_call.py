@@ -582,6 +582,17 @@ def get_llm_client():
     return _llm_client
 
 
+def set_model(new_model: str) -> None:
+    """Hot-swap the model used by the global LLM client."""
+    global _llm_client
+    client = get_llm_client()
+    if hasattr(client, "model"):
+        print(f"[INFO] Switching model from '{client.model}' to '{new_model}'")
+        client.model = new_model
+    else:
+        print("[WARN] Current client does not support model switching.")
+
+
 def process_chat_message(
     message: str,
     context: Optional[dict] = None,

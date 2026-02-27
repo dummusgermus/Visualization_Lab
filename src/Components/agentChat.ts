@@ -20,6 +20,15 @@ export type ChatState = {
     chatMessages: ChatMessage[];
 };
 
+const AVAILABLE_CHAT_MODELS = [
+    "gpt-4.1",
+    "gpt-4o",
+    "gpt-4o-mini",
+    "gpt-5.1",
+    "gpt-oss-120b",
+    "mistral-small-3.2-24B-instruct-2506",
+];
+
 /**
  * Formats a chat message with markdown-like syntax (bold, code, lists)
  */
@@ -156,7 +165,13 @@ export function renderChatSection(
     chatInput: string,
     chatIsLoading: boolean,
     screenshotAttached: boolean = false,
+    selectedChatModel: string = "gpt-4o",
 ): string {
+    const modelOptions = AVAILABLE_CHAT_MODELS.map(
+        (m) =>
+            `<option value="${m}" ${m === selectedChatModel ? "selected" : ""}>${m}</option>`,
+    ).join("");
+
     return `
     <div class="chat-stack">
       <div class="chat-lead">Discuss the data with an agent, or ask questions.</div>
@@ -193,6 +208,17 @@ export function renderChatSection(
         >
           ➤
         </button>
+      </div>
+
+      <div class="chat-model-row">
+        <span class="chat-model-label">Model</span>
+        <select
+          id="chat-model-select"
+          data-action="chat-model-select"
+          class="chat-model-select"
+        >
+          ${modelOptions}
+        </select>
       </div>
     </div>
   `;
@@ -279,6 +305,28 @@ export function attachChatHandlers(
             screenshotBtn.title = "Screenshot attached – click to remove";
             const chatInput = root.querySelector<HTMLInputElement>('[data-action="chat-input"]');
             if (chatInput) chatInput.placeholder = "Screenshot attached...";
+        }
+    });
+
+    // Model selector
+    const modelSelect = root.querySelector<HTMLSelectElement>(
+        '[data-action="chat-model-select"]',
+    );
+    modelSelect?.addEventListener("change", async (e: Event) => {
+        const selectedModel = (e.target as HTMLSelectElement).value;
+        appStateContext.selectedChatModel = selectedModel;
+
+        // Notify backend about model change
+        try {
+            const apiBaseUrl =
+                import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
+            await fetch(`${apiBaseUrl}/set-model`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ model: selectedModel }),
+            });
+        } catch (err) {
+            console.warn("Could not update model on backend:", err);
         }
     });
 }

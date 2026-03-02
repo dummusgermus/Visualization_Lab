@@ -7504,7 +7504,7 @@ function renderChartRangeSvg(
     const width = (compact && options?.containerWidth) ? options.containerWidth : 960;
     const height = compact ? 220 : 460;
     const margin = compact
-        ? { top: 24, right: 26, bottom: 64, left: 70 }
+        ? { top: 24, right: 26, bottom: 40, left: 70 }
         : { top: 28, right: 32, bottom: 82, left: 86 };
     const plotWidth = width - margin.left - margin.right;
     const plotHeight = height - margin.top - margin.bottom;

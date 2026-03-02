@@ -21,11 +21,15 @@ import {
 import { drawLegendGradient, renderMapLegend } from "./MapView/legend";
 import {
     getCurrentZoomLevel,
+    isW2CacheReady,
     projectLonLatToCanvas,
     renderMapData,
+    renderMapDataWindow2,
     resizeMapCanvas,
+    resizeWindow2Canvas,
     setMapOverlayVisibility,
     setupMapInteractions,
+    setupWindow2Interactions,
     zoomToLocation,
 } from "./MapView/map";
 import {
@@ -1354,6 +1358,26 @@ export type AppState = {
         unit?: string; // Unit for this mask (explore + ensemble)
     }>;
     chartRequestId: number;
+    splitView: boolean;
+    window2: Window2State;
+};
+
+export type Window2State = {
+    scenario: string;
+    model: string;
+    variable: string;
+    date: string;
+    mapPalette: string;
+    selectedUnit: string;
+    mode: Mode;
+    resolution: number;
+    isLoading: boolean;
+    loadingProgress: number;
+    dataError: string | null;
+    currentData: ClimateData | null;
+    dataMin: number | null;
+    dataMax: number | null;
+    timeRange: { start: string; end: string } | null;
 };
 
 //TODO set 0 from available models to active model and so on
@@ -1479,10 +1503,31 @@ const state: AppState = {
     maskVariableData: new Map<string, ClimateData>(),
     maskVariableRanges: new Map<string, { min: number; max: number }>(),
     chartRequestId: 0,
+    splitView: false,
+    window2: {
+        scenario: "SSP245",
+        model: models[0],
+        variable: variables[0],
+        date: getDateForScenario("SSP245"),
+        mapPalette: paletteOptions[0].name,
+        selectedUnit: getDefaultUnitOption(variables[0]).label,
+        mode: "Explore",
+        resolution: 2,
+        isLoading: false,
+        loadingProgress: 0,
+        dataError: null,
+        currentData: null,
+        dataMin: null,
+        dataMax: null,
+        timeRange: null,
+    },
 };
 
 let nextMaskId = 1;
 let mapCanvas: HTMLCanvasElement | null = null;
+// Persistent canvas-2: created once when split view opens, never destroyed by render().
+// D3 zoom stays attached across re-renders so drag gestures are never interrupted.
+let persistentCanvas2: HTMLCanvasElement | null = null;
 let drawKeyHandler: ((e: KeyboardEvent) => void) | null = null;
 
 let appRoot: HTMLDivElement | null = null;
@@ -2423,7 +2468,9 @@ function updateMapSearchPosition() {
         '[data-role="map-location-search"]',
     );
     if (!wrapper) return;
-    const shift = state.sidebarOpen ? -SIDEBAR_WIDTH / 2 : 0;
+    // In split view the search bar lives inside the window-1 relative container,
+    // so it is already centred within that pane and needs no sidebar shift.
+    const shift = (!state.splitView && state.sidebarOpen) ? -SIDEBAR_WIDTH / 2 : 0;
     wrapper.style.transform = `translateX(calc(-50% + ${shift}px))`;
 }
 
@@ -6265,6 +6312,175 @@ async function loadClimateData() {
     }
 }
 
+// ---- Window 2 data loading -----------------------------------------------
+let window2DataRequestId = 0;
+
+async function loadClimateDataWindow2() {
+    if (state.canvasView !== "map" || !state.splitView) return;
+    const requestId = ++window2DataRequestId;
+
+    state.window2.isLoading = true;
+    state.window2.loadingProgress = 5;
+    state.window2.dataError = null;
+    render();
+
+    try {
+        if (!state.metaData) await fetchMetadata();
+        if (requestId !== window2DataRequestId) return;
+        const w2 = state.window2;
+        const clippedDate = clipDateToScenarioRange(w2.date, w2.scenario);
+        if (clippedDate !== w2.date) w2.date = clippedDate;
+
+        state.window2.timeRange = getTimeRangeForScenario(w2.scenario);
+        state.window2.loadingProgress = 40;
+
+        const request = createDataRequest({
+            variable: w2.variable,
+            date: clippedDate,
+            model: w2.model,
+            scenario: w2.scenario,
+            resolution: w2.resolution,
+        });
+
+        const result = await fetchClimateData(request);
+        if (requestId !== window2DataRequestId) return;
+
+        const arr = dataToArray(result);
+        if (arr) {
+            const finite = Array.from(arr).filter(Number.isFinite) as number[];
+            if (finite.length) {
+                const [mn, mx] = [Math.min(...finite), Math.max(...finite)];
+                const { min: cMin, max: cMax } = convertMinMax(mn, mx, w2.variable, w2.selectedUnit);
+                state.window2.dataMin = cMin;
+                state.window2.dataMax = cMax;
+            }
+        }
+
+        state.window2.currentData = result;
+        state.window2.isLoading = false;
+        state.window2.loadingProgress = 100;
+
+        render(); // creates / swaps persistentCanvas2 into DOM
+
+        // Full pixel render onto the persistent canvas (already in DOM after render()).
+        if (
+            persistentCanvas2 &&
+            state.window2.currentData &&
+            state.window2.dataMin !== null &&
+            state.window2.dataMax !== null
+        ) {
+            renderMapDataWindow2(
+                state.window2.currentData,
+                persistentCanvas2,
+                paletteOptions,
+                state.window2.mapPalette,
+                state.window2.dataMin,
+                state.window2.dataMax,
+                state.window2.variable,
+                state.window2.selectedUnit,
+            );
+            // Re-attach to pick up any unit change in the tooltip handler.
+            setupWindow2Interactions(persistentCanvas2, state.window2.selectedUnit ?? "");
+        }
+    } catch (err) {
+        if (requestId !== window2DataRequestId) return;
+        state.window2.isLoading = false;
+        state.window2.dataError =
+            err instanceof Error ? err.message : "Failed to load data";
+        render();
+    }
+}
+
+// ---- Window 2 rendering ---------------------------------------------------
+function renderWindow2Pane(vpW: number, vpH: number): string {
+    const w2 = state.window2;
+    // Canvas same pixel size as the single-view canvas, centered and clipped by pane overflow:hidden
+    const canvasStyle = `position:absolute;top:0;left:50%;transform:translateX(-50%);width:${vpW}px;height:${vpH}px;cursor:grab;`;
+
+    const makeSelect = (key: string, selected: string, options: string[]) =>
+        `<select data-action="w2-update-select" data-key="${key}" style="
+            background: rgba(15,23,42,0.85);
+            border: 1px solid rgba(148,163,184,0.3);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-size: 12px;
+            padding: 4px 8px;
+            cursor: pointer;
+            max-width: 130px;
+        ">${options.map(o => `<option value="${o}" ${o === selected ? "selected" : ""}>${o}</option>`).join("")}</select>`;
+
+    const loadingHtml = w2.isLoading ? `
+        <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:5;pointer-events:none;">
+            <div style="width:32px;height:32px;border-radius:50%;border:3px solid rgba(255,255,255,0.18);border-top:3px solid #34d399;animation:sv-spin 1s linear infinite;margin-bottom:10px;"></div>
+            <div style="font-size:12px;color:var(--text-secondary);">Loading…</div>
+        </div>` : "";
+
+    const errorHtml = w2.dataError ? `
+        <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.7);z-index:10;">
+            <div style="text-align:center;padding:20px;color:#f87171;font-size:13px;">${w2.dataError}</div>
+        </div>` : "";
+
+    const noDataHtml = !w2.isLoading && !w2.dataError && !w2.currentData ? `
+        <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.4);z-index:5;pointer-events:none;">
+            <div style="text-align:center;">
+                <div style="font-size:14px;font-weight:600;color:var(--text-primary);">No data loaded</div>
+                <div style="font-size:12px;color:var(--text-secondary);margin-top:6px;">Adjust settings to load climate data</div>
+            </div>
+        </div>` : "";
+
+    return `
+        <div style="flex:1;position:relative;overflow:hidden;border-left:1px solid rgba(148,163,184,0.15);">
+            <div style="position:absolute;inset:0;pointer-events:none;">
+                <canvas id="map-canvas-2" style="${canvasStyle}pointer-events:auto;"></canvas>
+                ${loadingHtml}${errorHtml}${noDataHtml}
+                <!-- Mini header -->
+                <div style="
+                    position:absolute;top:12px;left:50%;transform:translateX(-50%);
+                    display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+                    background:rgba(9,14,26,0.82);border:1px solid rgba(148,163,184,0.2);
+                    border-radius:10px;padding:7px 10px;z-index:15;pointer-events:auto;
+                    backdrop-filter:blur(8px);box-shadow:0 4px 18px rgba(0,0,0,0.45);
+                ">
+                    <span style="font-size:11px;font-weight:700;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.5px;white-space:nowrap;">View 2</span>
+                    ${makeSelect("w2scenario", w2.scenario, scenarios)}
+                    ${makeSelect("w2model", w2.model, models)}
+                    ${makeSelect("w2variable", w2.variable, variables)}
+                    <input
+                        type="text"
+                        data-action="w2-update-input"
+                        data-key="w2date"
+                        value="${w2.date}"
+                        style="
+                            background:rgba(15,23,42,0.85);
+                            border:1px solid rgba(148,163,184,0.3);
+                            border-radius:6px;color:var(--text-primary);
+                            font-size:12px;padding:4px 8px;width:100px;
+                        "
+                        placeholder="YYYY-MM-DD"
+                    />
+                    <button
+                        type="button"
+                        data-action="close-split-view"
+                        aria-label="Close second window"
+                        title="Close second window"
+                        style="
+                            display:flex;align-items:center;justify-content:center;
+                            width:28px;height:28px;padding:0;
+                            border:1px solid rgba(148,163,184,0.3);border-radius:6px;
+                            background:rgba(239,68,68,0.12);color:#f87171;cursor:pointer;
+                            flex-shrink:0;
+                        "
+                    >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+                            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
 function renderBranding() {
     return `
       <div style="${styleAttr(styles.branding)}">
@@ -6384,10 +6600,70 @@ function render() {
                   )
                 : ""
         }
-      <div style="${styleAttr(styles.mapArea)}">
+      <div style="${styleAttr(state.splitView && state.canvasView === 'map'
+        ? { ...styles.mapArea, flexDirection: 'row', alignItems: 'stretch', gap: 0, padding: 0 }
+        : styles.mapArea)}">
         ${
             state.canvasView === "map"
-                ? `
+                ? state.splitView
+                    ? (() => {
+                        // Each pane is flex:1 wide × full viewport height.
+                        // To preserve the same map projection as the single view, make
+                        // each canvas exactly window.innerWidth × window.innerHeight px,
+                        // centered inside its pane. The pane clips (overflow:hidden) the
+                        // horizontal overflow, revealing the center of each map at full height.
+                        const vpW = window.innerWidth;
+                        const vpH = window.innerHeight;
+                        const canvasStyle = `position:absolute;top:0;left:50%;transform:translateX(-50%);width:${vpW}px;height:${vpH}px;pointer-events:auto;`;
+                        const paneInner = `
+              <div style="position:absolute;inset:0;">
+                <canvas
+                  id="map-canvas"
+                  style="${canvasStyle}"
+                ></canvas>
+                <!-- View 1 badge -->
+                <div style="
+                    position:absolute;top:12px;left:12px;z-index:15;
+                    background:rgba(9,14,26,0.82);border:1px solid rgba(148,163,184,0.2);
+                    border-radius:8px;padding:5px 10px;pointer-events:none;
+                    backdrop-filter:blur(8px);
+                ">
+                    <span style="font-size:11px;font-weight:700;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.5px;">View 1 · Sidebar</span>
+                </div>
+                ${renderMapSearchBar()}
+                ${renderDrawOverlay()}
+                ${renderPointOverlay()}
+                ${renderMapMarkerOverlay()}
+                ${renderMapInfoWindow()}
+                ${renderLoadingIndicator()}
+                ${
+                    state.dataError
+                        ? `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.8);z-index:10;">
+                        <div style="text-align:center;max-width:400px;padding:20px;">
+                          <div style="${styleAttr(styles.mapTitle)}">Error loading data</div>
+                          <div style="${styleAttr(styles.mapSubtitle)}">${state.dataError}</div>
+                        </div>
+                      </div>`
+                        : ""
+                }
+                ${
+                    !state.isLoading && !state.dataError && !state.currentData
+                        ? `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.5);z-index:5;">
+                        <div style="text-align:center;">
+                          <div style="${styleAttr(styles.mapTitle)}">No data loaded</div>
+                          <div style="${styleAttr(styles.mapSubtitle)}">Adjust parameters to load climate data</div>
+                        </div>
+                      </div>`
+                        : ""
+                }
+              </div>
+            `;
+                        return `
+              <div style="flex:1;position:relative;overflow:hidden;">${paneInner}</div>
+              ${renderWindow2Pane(vpW, vpH)}
+            `;
+                    })()
+                    : `
               <canvas
                 id="map-canvas"
                 style="position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; pointer-events: auto;"
@@ -6689,6 +6965,33 @@ function render() {
                     mapErr,
                 );
             }
+        }
+    }
+
+    // Persist canvas-2 across re-renders so D3 zoom is never torn down.
+    if (state.splitView && state.canvasView === "map") {
+        const vpW = window.innerWidth;
+        const vpH = window.innerHeight;
+        const isNew = !persistentCanvas2;
+        if (!persistentCanvas2) {
+            persistentCanvas2 = document.createElement("canvas");
+            persistentCanvas2.id = "map-canvas-2";
+        }
+        persistentCanvas2.style.cssText =
+            `position:absolute;top:0;left:50%;transform:translateX(-50%);` +
+            `width:${vpW}px;height:${vpH}px;cursor:grab;pointer-events:auto;`;
+        // Swap the innerHTML-generated placeholder with our persistent element.
+        const placeholder = root.querySelector<HTMLCanvasElement>("#map-canvas-2");
+        if (placeholder && placeholder !== persistentCanvas2) {
+            placeholder.parentElement?.replaceChild(persistentCanvas2, placeholder);
+        }
+        // Wire D3 zoom only once (keeps same listener across re-renders).
+        if (isNew) {
+            setupWindow2Interactions(persistentCanvas2, state.window2.selectedUnit ?? "");
+        }
+        // Redraw from cache if data is already loaded (e.g. sidebar toggle).
+        if (isW2CacheReady()) {
+            resizeWindow2Canvas(persistentCanvas2);
         }
     }
 
@@ -9540,7 +9843,9 @@ function renderMapSearchBar() {
     const showResultsPanel = Boolean(
         results || (statusMessage && !state.mapLocationSearchLoading),
     );
-    const shift = state.sidebarOpen ? -SIDEBAR_WIDTH / 2 : 0;
+    // In split view the search bar lives in window-1's relative container,
+    // so no sidebar shift is necessary.
+    const shift = (!state.splitView && state.sidebarOpen) ? -SIDEBAR_WIDTH / 2 : 0;
     const wrapStyle = mergeStyles(styles.mapSearchWrap, {
         top: 18,
         transform: `translateX(calc(-50% + ${shift}px))`,
@@ -9648,6 +9953,38 @@ function renderMapSearchBar() {
           </div>`
                   : ""
           }
+          ${!state.splitView ? `
+          <button
+            type="button"
+            data-action="toggle-split-view"
+            aria-label="Add second view"
+            title="Add second view"
+            style="
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              width: 36px;
+              height: 36px;
+              padding: 0;
+              border: 1px solid rgba(148, 163, 184, 0.3);
+              border-radius: 6px;
+              background: rgba(15, 23, 42, 0.85);
+              color: var(--text-secondary);
+              cursor: pointer;
+              transition: all 0.2s ease;
+              flex-shrink: 0;
+            "
+            onmouseover="this.style.background='rgba(52,211,153,0.15)';this.style.color='#34d399';this.style.borderColor='rgba(52,211,153,0.4)';"
+            onmouseout="this.style.background='rgba(15,23,42,0.85)';this.style.color='var(--text-secondary)';this.style.borderColor='rgba(148,163,184,0.3)';"
+          >
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="3" width="18" height="18" rx="2"/>
+              <line x1="12" y1="3" x2="12" y2="21"/>
+              <line x1="12" y1="12" x2="21" y2="12"/>
+              <line x1="15" y1="9" x2="18" y2="12" stroke-width="1.5"/>
+              <line x1="15" y1="15" x2="18" y2="12" stroke-width="1.5"/>
+            </svg>
+          </button>` : ""}
         </div>
         ${state.mapLocationSearchLoading ? statusMessage : ""}
         ${
@@ -12565,6 +12902,51 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
     });
 
     attachChatHandlers(root, state);
+
+    // ── Window 2 select/input handlers ─────────────────────────────────────
+    const w2Selects = root.querySelectorAll<HTMLSelectElement>('[data-action="w2-update-select"]');
+    w2Selects.forEach((sel) => {
+        sel.addEventListener("change", () => {
+            const key = sel.dataset.key;
+            const val = sel.value;
+            if (!key) return;
+            const w2 = state.window2;
+            if (key === "w2scenario") {
+                w2.scenario = val;
+                w2.date = getDateForScenario(val);
+                w2.timeRange = getTimeRangeForScenario(val);
+            } else if (key === "w2model") {
+                w2.model = val;
+            } else if (key === "w2variable") {
+                w2.variable = val;
+                w2.selectedUnit = getDefaultUnitOption(val).label;
+            }
+            loadClimateDataWindow2();
+        });
+    });
+
+    const w2Inputs = root.querySelectorAll<HTMLInputElement>('[data-action="w2-update-input"]');
+    w2Inputs.forEach((input) => {
+        const commit = () => {
+            const key = input.dataset.key;
+            const val = input.value;
+            if (!key) return;
+            const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+            if (!dateRegex.test(val) || isNaN(new Date(val).getTime())) {
+                // Restore valid value
+                input.value = state.window2.date;
+                return;
+            }
+            if (key === "w2date") {
+                state.window2.date = val;
+                loadClimateDataWindow2();
+            }
+        };
+        input.addEventListener("blur", commit);
+        input.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") { e.preventDefault(); commit(); }
+        });
+    });
 }
 
 async function init() {
@@ -12710,6 +13092,25 @@ async function init() {
                 showBorders: state.mapShowBorders,
                 showLabels: state.mapShowCities,
             });
+            render();
+            return;
+        }
+
+        if (action === "toggle-split-view") {
+            e.preventDefault();
+            e.stopPropagation();
+            state.splitView = true;
+            render();
+            loadClimateDataWindow2();
+            return;
+        }
+
+        if (action === "close-split-view") {
+            e.preventDefault();
+            e.stopPropagation();
+            state.splitView = false;
+            persistentCanvas2?.remove();
+            persistentCanvas2 = null;
             render();
             return;
         }
@@ -12891,6 +13292,7 @@ async function init() {
         }
         const canvas = appRoot?.querySelector<HTMLCanvasElement>('#map-canvas');
         if (canvas) resizeMapCanvas(canvas);
+        if (persistentCanvas2) resizeWindow2Canvas(persistentCanvas2);
     });
     rangeResizeObserver.observe(document.documentElement);
 }

@@ -4,6 +4,7 @@ import { dataToArray, type ClimateData } from "../Utils/dataClient";
 import { convertMinMax, convertValue } from "../Utils/unitConverter";
 import { hideTooltip, setDataRange, showTooltip } from "./tooltip";
 import {
+    addBaseMapOverlayInvalidationCallback,
     drawBaseMapOverlay,
     setBaseMapOverlayInvalidationCallback,
     setBaseMapOverlayVisibility,
@@ -31,6 +32,16 @@ let cachedSelectedUnit: string | undefined = undefined;
 let drawMode = false;
 let drawCallbacks: DrawCallbacks | null = null;
 let transformCallback: (() => void) | null = null;
+
+// ── Window 2 independent state ──────────────────────────────────────────────
+let w2Transform = d3.zoomIdentity;
+let w2ZoomBehavior: d3.ZoomBehavior<HTMLCanvasElement, unknown> | null = null;
+let w2CachedMapCanvas: HTMLCanvasElement | null = null;
+let w2CachedData: ClimateData | null = null;
+let w2CachedIsDifference = false;
+let w2CachedValueLookup: (Float32Array | Float64Array | null)[] | null = null;
+let w2CachedVariable: string | undefined = undefined;
+let w2CachedSelectedUnit: string | undefined = undefined;
 
 function isDifferenceEnsembleStatistic(
     stat: "mean" | "std" | "median" | "iqr" | "percentile" | "extremes",
@@ -463,6 +474,108 @@ export function resizeMapCanvas(canvas: HTMLCanvasElement): void {
     redrawCachedMap(canvas);
 }
 
+/** Returns true when Window 2 has a rendered cache to draw from. */
+export function isW2CacheReady(): boolean {
+    return w2CachedMapCanvas !== null;
+}
+
+// ── Window 2: fast redraw ────────────────────────────────────────────────────
+function redrawW2CachedMap(canvas: HTMLCanvasElement): void {
+    if (!w2CachedMapCanvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const rect = canvas.getBoundingClientRect();
+    ctx.clearRect(0, 0, rect.width, rect.height);
+    ctx.save();
+    ctx.translate(w2Transform.x, w2Transform.y);
+    ctx.scale(w2Transform.k, w2Transform.k);
+    ctx.imageSmoothingEnabled = false;
+    const mapWidth = w2CachedMapCanvas.width;
+    const viewLeft = -w2Transform.x / w2Transform.k;
+    const viewRight = (rect.width - w2Transform.x) / w2Transform.k;
+    const startTile = Math.floor(viewLeft / mapWidth) - 1;
+    const endTile = Math.ceil(viewRight / mapWidth) + 1;
+    for (let i = startTile; i <= endTile; i++) {
+        ctx.drawImage(w2CachedMapCanvas, i * mapWidth, 0);
+    }
+    ctx.restore();
+    drawBaseMapOverlay(
+        ctx,
+        rect.width,
+        rect.height,
+        w2CachedMapCanvas.width,
+        w2CachedMapCanvas.height,
+        { x: w2Transform.x, y: w2Transform.y, k: w2Transform.k },
+    );
+}
+
+/** Resize Window 2 canvas buffer on layout change. */
+export function resizeWindow2Canvas(canvas: HTMLCanvasElement): void {
+    if (!w2CachedMapCanvas) return;
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.scale(dpr, dpr);
+    redrawW2CachedMap(canvas);
+}
+
+/** Attach independent pan/zoom interactions to the Window 2 canvas. */
+export function setupWindow2Interactions(
+    canvas: HTMLCanvasElement,
+    unit: string,
+): void {
+    const selection = d3.select(canvas);
+
+    w2ZoomBehavior = d3
+        .zoom<HTMLCanvasElement, unknown>()
+        .scaleExtent([0.8, 10.0])
+        .filter((e: any) => !e.ctrlKey && !e.button)
+        .on("zoom", (e: d3.D3ZoomEvent<HTMLCanvasElement, unknown>) => {
+            w2Transform = e.transform;
+            redrawW2CachedMap(canvas);
+        })
+        .on("start", () => {
+            canvas.style.cursor = "grabbing";
+        })
+        .on("end", () => {
+            canvas.style.cursor = "grab";
+        });
+
+    selection.call(w2ZoomBehavior);
+    selection.call(w2ZoomBehavior.transform, w2Transform);
+
+    selection.on("pointermove.w2tooltip", (e: PointerEvent) => {
+        if (
+            e.buttons === 0 &&
+            w2CachedData &&
+            w2CachedValueLookup &&
+            w2CachedMapCanvas
+        ) {
+            const [mouseX, mouseY] = d3.pointer(e, canvas);
+            updateW2Tooltip(
+                e.clientX,
+                e.clientY,
+                mouseX,
+                mouseY,
+                unit,
+                w2CachedVariable,
+                w2CachedSelectedUnit,
+                w2CachedIsDifference,
+            );
+        }
+    });
+
+    selection.on("pointerleave.w2tooltip", () => {
+        hideTooltip();
+    });
+
+    canvas.style.cursor = "grab";
+}
+
 export function renderMapData(
     data: ClimateData,
     mapCanvas: HTMLCanvasElement | null,
@@ -519,6 +632,41 @@ export function renderMapData(
     }
 }
 
+/** Render climate data into Window 2's canvas without touching Window 1's cached state. */
+export function renderMapDataWindow2(
+    data: ClimateData,
+    mapCanvas: HTMLCanvasElement | null,
+    paletteOptions: Array<{ name: string; colors: string[] }>,
+    currentPalette: string,
+    min: number,
+    max: number,
+    variable?: string,
+    selectedUnit?: string,
+): void {
+    if (!mapCanvas) return;
+    try {
+        runRenderMapData(
+            data,
+            mapCanvas,
+            paletteOptions,
+            currentPalette,
+            min,
+            max,
+            variable,
+            selectedUnit,
+            [],
+            null,
+            false,
+            undefined,
+            null,
+            null,
+            true, // isW2
+        );
+    } catch (err) {
+        console.error("renderMapDataWindow2 failed:", err);
+    }
+}
+
 function runRenderMapData(
     data: ClimateData,
     mapCanvas: HTMLCanvasElement,
@@ -549,6 +697,7 @@ function runRenderMapData(
         string,
         Array<Float32Array | Float64Array>
     > | null,
+    isW2 = false,
 ): void {
     const arrayData = dataToArray(data);
     if (!arrayData) {
@@ -578,10 +727,17 @@ function runRenderMapData(
         Boolean((data as any)?.metadata?.comparison) ||
         (typeof data.model === "string" && data.model.includes(" minus "));
 
-    cachedData = data;
-    cachedVariable = variable;
-    cachedSelectedUnit = selectedUnit;
-    cachedIsDifference = isDifference;
+    if (isW2) {
+        w2CachedData = data;
+        w2CachedVariable = variable;
+        w2CachedSelectedUnit = selectedUnit;
+        w2CachedIsDifference = isDifference;
+    } else {
+        cachedData = data;
+        cachedVariable = variable;
+        cachedSelectedUnit = selectedUnit;
+        cachedIsDifference = isDifference;
+    }
     const valueLookup = new Array(viewHeight)
         .fill(null)
         .map(() => new Float32Array(viewWidth).fill(NaN));
@@ -987,13 +1143,22 @@ function runRenderMapData(
     }
 
     offscreenCtx.putImageData(imageData, 0, 0);
-    cachedMapCanvas = offscreen;
-    cachedValueLookup = valueLookup;
     // Trigger redraw once the border dataset is loaded.
-    setBaseMapOverlayInvalidationCallback(() => {
+    if (isW2) {
+        w2CachedMapCanvas = offscreen;
+        w2CachedValueLookup = valueLookup;
+        addBaseMapOverlayInvalidationCallback(() => {
+            redrawW2CachedMap(mapCanvas);
+        });
+        redrawW2CachedMap(mapCanvas);
+    } else {
+        cachedMapCanvas = offscreen;
+        cachedValueLookup = valueLookup;
+        setBaseMapOverlayInvalidationCallback(() => {
+            redrawCachedMap(mapCanvas);
+        });
         redrawCachedMap(mapCanvas);
-    });
-    redrawCachedMap(mapCanvas);
+    }
 }
 
 export function zoomToLocation(
@@ -1090,6 +1255,42 @@ function updateTooltip(
                 unit,
                 isDifference,
             );
+        } else {
+            hideTooltip();
+        }
+    } else {
+        hideTooltip();
+    }
+}
+
+function updateW2Tooltip(
+    clientX: number,
+    clientY: number,
+    mouseX: number,
+    mouseY: number,
+    unit: string,
+    _variable?: string,
+    _selectedUnit?: string,
+    isDifference?: boolean,
+): void {
+    if (!w2CachedValueLookup || !w2CachedMapCanvas) return;
+
+    let worldX = (mouseX - w2Transform.x) / w2Transform.k;
+    const worldY = (mouseY - w2Transform.y) / w2Transform.k;
+
+    const mapWidth = w2CachedMapCanvas.width;
+    const mapHeight = w2CachedMapCanvas.height;
+    worldX = ((worldX % mapWidth) + mapWidth) % mapWidth;
+
+    const px = Math.floor(worldX);
+    const py = Math.floor(worldY);
+
+    if (px >= 0 && px < mapWidth && py >= 0 && py < mapHeight) {
+        const rawValue = w2CachedValueLookup?.[py]?.[px] ?? 0;
+        if (isFinite(rawValue)) {
+            const lon = (worldX / mapWidth) * 360 - 180;
+            const lat = 90 - (worldY / mapHeight) * 150;
+            showTooltip(clientX, clientY, lat, lon, rawValue, unit, isDifference);
         } else {
             hideTooltip();
         }

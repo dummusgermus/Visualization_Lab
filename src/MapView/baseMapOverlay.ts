@@ -42,7 +42,7 @@ const LABELS: ZoomLabel[] = (mapLabels as RawZoomLabel[])
 
 let borderData: BorderBundle | null = null;
 let borderDataPromise: Promise<BorderBundle> | null = null;
-let invalidateMapRender: (() => void) | null = null;
+let invalidateMapRenderCallbacks: (() => void)[] = [];
 let showBorders = true;
 let showLabels = true;
 
@@ -114,7 +114,7 @@ function ensureBorderDataLoaded() {
     ])
         .then(([low, high]) => {
             borderData = { low, high };
-            invalidateMapRender?.();
+            invalidateMapRenderCallbacks.forEach((cb) => cb());
             return borderData;
         })
         .catch((err) => {
@@ -275,7 +275,13 @@ function drawLabels(
 export function setBaseMapOverlayInvalidationCallback(
     callback: (() => void) | null,
 ) {
-    invalidateMapRender = callback;
+    invalidateMapRenderCallbacks = callback ? [callback] : [];
+}
+
+export function addBaseMapOverlayInvalidationCallback(
+    callback: () => void,
+) {
+    invalidateMapRenderCallbacks.push(callback);
 }
 
 export function setBaseMapOverlayVisibility(options: {

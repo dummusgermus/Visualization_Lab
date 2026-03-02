@@ -1238,6 +1238,7 @@ export type AppState = {
     mapPalette: string;
     mapInfoPalette: string;
     mapRangePalette: string;
+    mapRangeHiddenScenarios: string[];
     chartPalette: string;
     resolution: number;
     selectedUnit: string; // Unit label (e.g., "Kelvin (K)", "Celsius (°C)")
@@ -1393,6 +1394,7 @@ const state: AppState = {
     mapPalette: paletteOptions[0].name,
     mapInfoPalette: paletteOptions[0].name,
     mapRangePalette: paletteOptions[0].name,
+    mapRangeHiddenScenarios: [],
     chartPalette: paletteOptions[0].name,
     resolution: 2,
     selectedUnit: getDefaultUnitOption(variables[0]).label,
@@ -2713,6 +2715,7 @@ function renderMapRangeBody(containerWidth?: number): string {
                           paletteName: state.mapRangePalette,
                           lightToDarkNoDarkest: true,
                           containerWidth: cw,
+                          hiddenScenarios: state.mapRangeHiddenScenarios,
                       },
                   )}</div>`
                 : `<div style="${styleAttr(
@@ -2739,6 +2742,27 @@ function renderMapRangeBody(containerWidth?: number): string {
         )}">Click a location to load the range view.</div>`;
     }
 
+    const palette = paletteOptions.find(p => p.name === state.mapRangePalette) || paletteOptions[0];
+    const overlayColors = palette.colors.length > 2
+        ? palette.colors.slice(1).reverse()
+        : [...palette.colors].reverse();
+    const seriesColors = overlayColors.length ? overlayColors : palette.colors;
+
+    const toggleButtons = state.mapRangeSeries.map((entry, idx) => {
+        const color = seriesColors[idx % seriesColors.length];
+        const isHidden = state.mapRangeHiddenScenarios.includes(entry.scenario);
+        const circleFill = isHidden ? "none" : color;
+        return `<button
+            data-action="map-range-toggle-scenario"
+            data-scenario="${escapeHtml(entry.scenario)}"
+            style="display:flex;align-items:center;gap:5px;background:none;border:none;cursor:pointer;padding:2px 6px 2px 2px;color:var(--text-secondary);font-size:11px;border-radius:4px;opacity:${isHidden ? "0.45" : "1"};">
+            <svg width="10" height="10" style="flex-shrink:0;overflow:visible;">
+              <circle cx="5" cy="5" r="4" fill="${circleFill}" stroke="${color}" stroke-width="1.5"/>
+            </svg>
+            <span>${escapeHtml(entry.scenario)}</span>
+        </button>`;
+    }).join("");
+
     return `<div style="${styleAttr(styles.mapRangeChartWrap)}">${renderChartRangeSvg(
         state.mapRangeSeries,
         {
@@ -2747,8 +2771,10 @@ function renderMapRangeBody(containerWidth?: number): string {
             paletteName: state.mapRangePalette,
             lightToDarkNoDarkest: true,
             containerWidth: cw,
+            hiddenScenarios: state.mapRangeHiddenScenarios,
         },
-    )}</div>`;
+    )}</div>
+    <div style="display:flex;flex-wrap:wrap;gap:2px 4px;padding:4px 6px 2px 6px;">${toggleButtons}</div>`;
 }
 
 function renderMapRangeOverlay() {
@@ -7452,6 +7478,7 @@ function renderChartRangeSvg(
         paletteName?: string;
         lightToDarkNoDarkest?: boolean;
         containerWidth?: number;
+        hiddenScenarios?: string[];
     },
 ): string {
     if (!series.length) {
@@ -7558,6 +7585,7 @@ function renderChartRangeSvg(
         .map((entry, idx) => {
             if (!entry.points.length) return "";
             const color = colors[idx % colors.length];
+            if (options?.hiddenScenarios?.includes(entry.scenario)) return "";
 
             // Precompute evenly spaced levels between min and max for each point
             const pointLevels = entry.points.map((p) => {
@@ -12633,6 +12661,17 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             }
         }
         void loadMapRangeData();
+    });
+
+    root.querySelectorAll<HTMLButtonElement>('[data-action="map-range-toggle-scenario"]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const scenario = btn.getAttribute('data-scenario');
+            if (!scenario) return;
+            const hiddenIdx = state.mapRangeHiddenScenarios.indexOf(scenario);
+            if (hiddenIdx === -1) state.mapRangeHiddenScenarios.push(scenario);
+            else state.mapRangeHiddenScenarios.splice(hiddenIdx, 1);
+            render();
+        });
     });
 
     const mapInfoExpandBtn = root.querySelector<HTMLButtonElement>(

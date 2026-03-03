@@ -18,8 +18,9 @@ export type VariableUnitConfig = {
 const kelvinToCelsius = (k: number) => k - 273.15;
 const kelvinToFahrenheit = (k: number) => (k - 273.15) * (9 / 5) + 32;
 
-// Precipitation conversions (kg m-2 s-1 to g m-2 s-1)
-const kgToG = (kg: number) => kg * 1000;
+// Precipitation conversions (kg m-2 s-1)
+const kgToG = (kg: number) => kg * 1000;            // → g m⁻² s⁻¹
+const kgToMmDay = (kg: number) => kg * 86400;       // → mm/day  (1 kg m⁻² s⁻¹ = 86400 mm/day)
 
 // Wind speed conversions (m s-1 to km/h and mph)
 const msToKmh = (ms: number) => ms * 3.6;
@@ -59,17 +60,22 @@ export function getUnitOptions(variable: string): UnitOption[] {
             ];
 
         case "pr":
-            // Precipitation - g m⁻² s⁻¹ is now the default
+            // Precipitation – default is mm/day (most intuitive for users)
             return [
+                {
+                    label: "mm/day",
+                    unit: "mm/day",
+                    convert: kgToMmDay, // kg m⁻² s⁻¹ → mm/day
+                },
                 {
                     label: "g m⁻² s⁻¹",
                     unit: "g m⁻² s⁻¹",
-                    convert: kgToG, // Convert from kg to g
+                    convert: kgToG,
                 },
                 {
                     label: "kg m⁻² s⁻¹",
                     unit: "kg m⁻² s⁻¹",
-                    convert: identity, // No conversion (original unit)
+                    convert: identity,
                 },
             ];
 

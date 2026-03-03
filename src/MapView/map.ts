@@ -75,8 +75,6 @@ function computeGaussianRangeProbabilityAtIndex(
     unit: string | undefined,
     lowerBound: number | null,
     upperBound: number | null,
-    lowerEdited: boolean,
-    upperEdited: boolean,
 ): number {
     let count = 0;
     let mean = 0;
@@ -95,8 +93,11 @@ function computeGaussianRangeProbabilityAtIndex(
     }
     if (count === 0) return NaN;
 
-    const lower = lowerEdited && lowerBound !== null ? lowerBound : -Infinity;
-    const upper = upperEdited && upperBound !== null ? upperBound : Infinity;
+    // For probability masks the bounds represent the VALUE CONDITION (always concrete).
+    // Respect them whether or not the lowerEdited/upperEdited flags are set — the flags
+    // are meant for the manual-entry UI, but agent-set bounds must always be honoured.
+    const lower = lowerBound !== null && lowerBound !== undefined ? lowerBound : -Infinity;
+    const upper = upperBound !== null && upperBound !== undefined ? upperBound : Infinity;
     if (lower > upper) return 0;
 
     const variance = m2 / count;
@@ -1080,8 +1081,6 @@ function runRenderMapData(
                         maskUnit,
                         mask.lowerBound,
                         mask.upperBound,
-                        mask.lowerEdited,
-                        mask.upperEdited,
                     );
                     if (!Number.isFinite(p)) {
                         probabilityMaskFails = true;

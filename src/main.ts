@@ -11830,33 +11830,40 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                         index < state.masks.length
                     ) {
                         const m = state.masks[index];
+                        const prevVariable = m.variable;
+                        const variableChanged = val !== prevVariable;
                         m.variable = val;
-                        m.unit = getDefaultUnitOption(val).label;
-                        if (state.mode === "Ensemble") {
-                            const stat = m.statistic || "mean";
-                            const range =
-                                m.kind === "probability"
-                                    ? getEnsembleProbabilityMaskRange(
-                                          m.variable,
-                                          m.unit,
-                                      )
-                                    : getEnsembleMaskRange(
-                                          stat,
-                                          m.variable,
-                                          m.unit,
-                                      );
-                            m.lowerBound = range.min;
-                            m.upperBound = range.max;
-                            m.lowerEdited = false;
-                            m.upperEdited = false;
-                        } else {
-                            // Reset bounds to unrestricted – old bounds were for the previous variable
-                            // (e.g. temp K); applying them to the new variable (e.g. humidity %)
-                            // would fail every pixel. Unrestricted = "full range" until user sets bounds.
-                            m.lowerBound = null;
-                            m.upperBound = null;
-                            m.lowerEdited = false;
-                            m.upperEdited = false;
+                        // Only update unit and reset bounds when the variable actually changes.
+                        // Reselecting the same variable (e.g. to force a data reload) must
+                        // NOT erase agent-set or user-set bounds.
+                        if (variableChanged) {
+                            m.unit = getDefaultUnitOption(val).label;
+                            if (state.mode === "Ensemble") {
+                                const stat = m.statistic || "mean";
+                                const range =
+                                    m.kind === "probability"
+                                        ? getEnsembleProbabilityMaskRange(
+                                              m.variable,
+                                              m.unit,
+                                          )
+                                        : getEnsembleMaskRange(
+                                              stat,
+                                              m.variable,
+                                              m.unit,
+                                          );
+                                m.lowerBound = range.min;
+                                m.upperBound = range.max;
+                                m.lowerEdited = false;
+                                m.upperEdited = false;
+                            } else {
+                                // Reset bounds to unrestricted – old bounds were for the previous variable
+                                // (e.g. temp K); applying them to the new variable (e.g. humidity %)
+                                // would fail every pixel. Unrestricted = "full range" until user sets bounds.
+                                m.lowerBound = null;
+                                m.upperBound = null;
+                                m.lowerEdited = false;
+                                m.upperEdited = false;
+                            }
                         }
                         render();
                         if (
@@ -13302,7 +13309,13 @@ async function init() {
         Object.assign(state, updates);
         render();
 
-        // Reload data if necessary
+        // Reload data if necessary.
+        // Deferred via setTimeout(0) so it runs AFTER any blur-events triggered by
+        // the render() call above (DOM replacement fires blur on focused mask inputs,
+        // which temporarily sets __updatingMask = true and clears it in a later
+        // setTimeout(0)). By deferring here we ensure that clearing setTimeout has
+        // already fired before loadClimateData checks __updatingMask.
+        setTimeout(() => {
         if (state.canvasView === "map") {
             const exploreChanged =
                 updates.date ||
@@ -13315,7 +13328,8 @@ async function init() {
                 updates.ensembleScenarios ||
                 updates.ensembleVariable ||
                 updates.ensembleUnit ||
-                updates.mode === "Ensemble";
+                updates.mode === "Ensemble" ||
+                updates.masks;
             const compareChanged =
                 updates.compareMode ||
                 updates.compareScenarioA ||
@@ -13344,6 +13358,7 @@ async function init() {
         ) {
             loadChartData();
         }
+        }, 0);
     });
 
     render();

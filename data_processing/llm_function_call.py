@@ -211,7 +211,11 @@ def _build_system_prompt(context: Optional[dict] = None) -> str:
         "  * lowerBound/upperBound define the VALUE CONDITION (e.g., temperature > 10°C → lowerBound=10, upperBound=1e9).",
         "  * probabilityThreshold (0.0-1.0) is the MINIMUM FRACTION of ensemble members that must satisfy the condition for the pixel to be shown. E.g. 0.2 = at least 20% of models.",
         "  * MULTIPLE probability masks with DIFFERENT variables are supported — each is checked independently, a pixel is shown only if ALL pass their threshold (AND logic).",
-        "- Use values that make sense for the variable (e.g., °C for tas, mm/day for pr).",
+        "- Use values that make sense for the variable. IMPORTANT unit hints:",
+        "  * tas/tasmin/tasmax: use 'Celsius (°C)', typical range -40 to +50 °C.",
+        "  * pr (precipitation): use 'mm/day', typical range 0 to 20 mm/day. NEVER use 'kg', 'kg/m2', 'kg m-2 s-1' or 'mm/day' variants with spaces.",
+        "  * sfcWind: use 'm/s', typical range 0 to 20 m/s.",
+        "  * hurs: use 'Percent (%)', range 0 to 100.",
         "",
         "== DATE & SCENARIO RULES (when setting/choosing dates) ==",
         "- Dates must be YYYY-MM-DD.",
@@ -234,7 +238,7 @@ def _build_system_prompt(context: Optional[dict] = None) -> str:
         "User: 'Show tas and pr simultaneously' -> tool call toggle_split_view(enable=True, variable='pr') (Window 1 keeps current variable, Window 2 shows pr).",
         "User: 'Close the split view' -> tool call toggle_split_view(enable=False).",
         "User: 'Where is there a 30% chance of temperature above 35°C in 2060?' -> switch_to_ensemble_mode(models=[all], scenarios=['ssp585'], date='2060-01-01', variable='tas', unit='Celsius (°C)', masks=[{id:1, kind:'probability', variable:'tas', unit:'Celsius (°C)', lowerBound:35, upperBound:1000000, probabilityThreshold:0.3}]).",
-        "User: 'Find areas where potatoes can grow in 30 years, worst-case, 20% probability, temperature and precipitation' -> switch_to_ensemble_mode(models=[all], scenarios=['ssp585'], date='2055-07-01', variable='tas', unit='Celsius (°C)', masks=[{id:1, kind:'probability', variable:'tas', unit:'Celsius (°C)', lowerBound:10, upperBound:25, probabilityThreshold:0.2}, {id:2, kind:'probability', variable:'pr', unit:'mm/day', lowerBound:1.4, upperBound:6.0, probabilityThreshold:0.2}]).",
+        "User: 'Find areas where potatoes can grow in 30 years, worst-case, 20% probability, temperature and precipitation' -> switch_to_ensemble_mode(models=[all], scenarios=['ssp585'], date='2055-07-01', variable='tas', unit='°C', masks=[{id:1, kind:'probability', variable:'tas', unit:'°C', lowerBound:10, upperBound:25, probabilityThreshold:0.2}, {id:2, kind:'probability', variable:'pr', unit:'mm/day', lowerBound:1.4, upperBound:6.0, probabilityThreshold:0.2}]). NOTE: for precipitation use 'mm/day' (typical range 0–20 mm/day), NOT 'kg m⁻² s⁻¹'.",
         "User: 'Show uncertainty in precipitation for 2050' -> switch_to_ensemble_mode(statistic='std', variable='pr', ...) (std deviation = uncertainty, no masks needed).",
     ]
 

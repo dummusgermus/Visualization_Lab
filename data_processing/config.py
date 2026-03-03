@@ -14,15 +14,15 @@ VALID_VARIABLES = [
 ]
 
 VARIABLE_UNIT_MAP = {
-    "hurs": ["%"],
-    "huss": ["%"],
-    "pr": ["g m-2 s-1", "kg m-2 s-1"],
+    "hurs": ["Percent (%)"],
+    "huss": ["Percent (%)"],
+    "pr": ["mm/day", "g m⁻² s⁻¹", "kg m⁻² s⁻¹"],
     "rlds": ["W/m²", "kW/m²"],
     "rsds": ["W/m²", "kW/m²"],
-    "sfcWind": ["m s-1", "km h-1", "mph"],
-    "tas": ["K", "°C", "°F"],
-    "tasmax": ["K", "°C", "°F"],
-    "tasmin": ["K", "°C", "°F"],
+    "sfcWind": ["m/s", "km/h", "mph"],
+    "tas": ["Celsius (°C)", "Kelvin (K)", "Fahrenheit (°F)"],
+    "tasmax": ["Celsius (°C)", "Kelvin (K)", "Fahrenheit (°F)"],
+    "tasmin": ["Celsius (°C)", "Kelvin (K)", "Fahrenheit (°F)"],
 }
 
 

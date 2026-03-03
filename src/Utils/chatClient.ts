@@ -113,10 +113,37 @@ export async function sendChatMessage(
  * Ask the LLM to describe a screenshot for use in reports.
  * Returns a plain-text description, or null on failure.
  */
+async function resizeBase64Image(
+    base64: string,
+    maxDim = 768,
+    quality = 0.7,
+): Promise<string> {
+    return new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+            const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+            const w = Math.round(img.width * scale);
+            const h = Math.round(img.height * scale);
+            const canvas = document.createElement("canvas");
+            canvas.width = w;
+            canvas.height = h;
+            const ctx = canvas.getContext("2d");
+            if (!ctx) { resolve(base64); return; }
+            ctx.drawImage(img, 0, 0, w, h);
+            // Strip the data URL prefix if present, return raw base64
+            const dataUrl = canvas.toDataURL("image/jpeg", quality);
+            resolve(dataUrl.replace(/^data:[^,]+,/, ""));
+        };
+        img.onerror = () => resolve(base64);
+        img.src = base64.startsWith("data:") ? base64 : `data:image/png;base64,${base64}`;
+    });
+}
+
 export async function describeScreenshotForReport(
     screenshotBase64: string,
     label?: string,
 ): Promise<string | null> {
+    screenshotBase64 = await resizeBase64Image(screenshotBase64);
     const prompt =
         `You are analyzing a climate data visualization screenshot${label ? ` (${label})` : ""}. ` +
         "Describe concisely what is shown: the climate variable displayed, the approximate value range and color scale, " +

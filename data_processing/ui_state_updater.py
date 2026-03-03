@@ -87,6 +87,7 @@ def switch_to_ensemble_mode(**kwargs) -> dict:
     date = kwargs.get('date')
     variable = kwargs.get('variable')
     statistic = kwargs.get('statistic')
+    masks = kwargs.get('masks')
 
     scenarios = None if scenarios in ('None', 'null', None) else scenarios
     models = None if models in ('None', 'null', None) else models
@@ -94,6 +95,7 @@ def switch_to_ensemble_mode(**kwargs) -> dict:
     unit = None if unit in ('None', 'null', None) else unit
     variable = None if variable in ('None', 'null', None) else variable
     statistic = None if statistic in ('None', 'null', None) else statistic
+    masks = None if masks in ('None', 'null', None) else masks
 
     if not scenarios:
         scenarios = current_state.get('selectedScenarios') or current_state.get('scenarios')
@@ -123,7 +125,6 @@ def switch_to_ensemble_mode(**kwargs) -> dict:
     for scenario in scenarios:
         validate_date_for_scenario(date, scenario)
 
-
     result = {
         "canvasView": "map",
         "mode": "Ensemble",
@@ -135,6 +136,18 @@ def switch_to_ensemble_mode(**kwargs) -> dict:
     }
     if statistic:
         result["ensembleStatistic"] = statistic
+    # Process inline masks (probability masks passed directly to this call)
+    if masks:
+        curr_masks = current_state.get('masks', [])
+        mask_index = {m.get("id"): i for i, m in enumerate(curr_masks)}
+        for mask in masks:
+            mask_id = mask.get("id")
+            if mask_id in mask_index:
+                curr_masks[mask_index[mask_id]] = mask
+            else:
+                curr_masks.append(mask)
+                mask_index[mask_id] = len(curr_masks) - 1
+        result["masks"] = curr_masks
     return result
 
 class CompareMode(Enum):

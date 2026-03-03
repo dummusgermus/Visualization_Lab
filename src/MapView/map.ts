@@ -1048,24 +1048,28 @@ function runRenderMapData(
                 passesMask = true;
             }
 
+            // Probability rendering: compute per-mask probability and apply individual thresholds.
+            // A pixel passes only if EVERY probability mask's probability >= its own threshold (AND logic).
+            // The display color uses the minimum probability across all masks (weakest-link).
             let probabilityValue = 1;
+            let probabilityMaskFails = false;
             if (
                 useProbabilityRendering &&
                 probabilityMasks.length > 0 &&
                 isEnsembleMode
             ) {
                 const idx = (height - 1 - y) * width + x;
-                probabilityValue = 1;
+                let minP = 1;
                 for (const mask of probabilityMasks) {
                     const maskVar = mask.variable || variable;
                     if (!maskVar) {
-                        probabilityValue = NaN;
+                        probabilityMaskFails = true;
                         break;
                     }
                     const sampleArrays =
                         ensembleRawSamplesByVariable?.get(maskVar);
                     if (!sampleArrays || sampleArrays.length === 0) {
-                        probabilityValue = NaN;
+                        probabilityMaskFails = true;
                         break;
                     }
                     const maskUnit = mask.unit || selectedUnit;
@@ -1080,28 +1084,18 @@ function runRenderMapData(
                         mask.upperEdited,
                     );
                     if (!Number.isFinite(p)) {
-                        probabilityValue = NaN;
+                        probabilityMaskFails = true;
                         break;
                     }
-                    probabilityValue *= p;
+                    // Each mask is checked individually against its own threshold (AND logic)
+                    const maskThreshold = mask.probabilityThreshold ?? 0.5;
+                    if (p < maskThreshold) {
+                        probabilityMaskFails = true;
+                    }
+                    minP = Math.min(minP, p);
                 }
-                if (!Number.isFinite(probabilityValue)) {
-                    probabilityValue = 0;
-                } else {
-                    probabilityValue = Math.max(0, Math.min(1, probabilityValue));
-                }
-            }
-
-            // Check if pixel falls below any probability mask's minimum probability threshold
-            let probabilityMaskFails = false;
-            if (useProbabilityRendering && Number.isFinite(probabilityValue)) {
-                const maxThreshold = probabilityMasks.reduce(
-                    (acc, m) => Math.max(acc, m.probabilityThreshold ?? 0),
-                    0,
-                );
-                if (probabilityValue < maxThreshold) {
-                    probabilityMaskFails = true;
-                }
+                // Use minimum probability across all masks for colorizing (weakest-link)
+                probabilityValue = probabilityMaskFails ? 0 : Math.max(0, Math.min(1, minP));
             }
 
             let r: number, g: number, b: number;

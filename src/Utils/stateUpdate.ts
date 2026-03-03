@@ -127,6 +127,7 @@ export function updateState(
             upperEdited: mask.upperBound != null,
             statistic: mask.statistic,
             kind: mask.kind ?? "binary",
+            probabilityThreshold: mask.probabilityThreshold,
         }));
     }
     if (newState.mode === "Ensemble") {

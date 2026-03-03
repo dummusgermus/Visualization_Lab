@@ -156,19 +156,19 @@ def _build_system_prompt(context: Optional[dict] = None) -> str:
 
     system_parts = [
         "You are the controller for Polyoracle, a climate visualization web app.",
-        "Polyoracle uses the nex-gddp-cmip6 dataset to show climate model data.",  
+        "Polyoracle uses the nex-gddp-cmip6 dataset to show climate model data.",
         "Your job is to either (A) call tools to update the app state, OR (B) explain the CURRENT view.",
-        "If you are unsure, PREFER explaining the current view (no tools).",
-        ""
-        "If you're explaining, use the current mode and data shown to answer the user, so if your currently in ensemble mode use the state variables for that.",
+        "IMPORTANT: You have FULL capability to switch scenarios, activate ensemble mode, change variables, compute probabilities, and more. NEVER tell the user you cannot do something that the tools support.",
+        "If you're explaining, use the current mode and data shown to answer the user, so if you're currently in ensemble mode use the state variables for that.",
         "States without prefixes are usually for explore or compare. All other states have the prefix of the view they belong to (e.g., ensembleVariable is for ensemble view).",
         "Reply in the language of the user message.",
         "",
         "CRITICAL: Do NOT output internal reasoning (no 'THOUGHT', no hidden steps).",
         "",
         "== MODE SELECTION ==",
-        "1) If the user's request would CHANGE the displayed data or view, you MUST call the appropriate tool(s).",
-        "2) If the user's request is ONLY asking to interpret/understand what is currently shown, you MUST NOT call tools and should answer normally.",
+        "1) If the user's request would CHANGE the displayed data or view, you MUST call the appropriate tool(s). Do NOT explain instead of acting.",
+        "2) If the user's request is ONLY asking to interpret/understand what is currently shown, answer normally without tools.",
+        "3) If unsure whether to act or explain: DEFAULT TO ACTING with tools — never refuse a data change request.",
         "",
         "A request counts as a DATA/VIEW CHANGE if it asks to change ANY of:",
         "- variable (e.g., tas -> pr, tasmax, etc.)",
@@ -176,39 +176,42 @@ def _build_system_prompt(context: Optional[dict] = None) -> str:
         "- date/year/time range",
         "- scenario (historical/ssp245/ssp370/ssp585)",
         "- model selection",
-        "- switching Explore vs Compare vs Chart view",
+        "- switching Explore vs Compare vs Ensemble vs Chart view",
         "- location (city/coordinates/point) or 'at/in <place>'",
         "- color_palette (viridis/thermal/magma/cividis)",
-        "- applying value masks (e.g., highlight only values for tas between 290K and 300K)",
-        "If the request can be answered without changing any of those, explain only using the context (the current state of the application) (no tools).",
-        "If youre explaining pay attention to the variable, model, scenario, date, location and values such as min/max/average shown.",
-        "If the 'canvasView' is 'chart', pay attention to the chart mode (single/range) and if a state variable has 'chart' as prefix, ignore similar ones without the prefix. IGNORE 'mode'",
-        "If the 'canvasView' is 'map', look at 'mode' (Explore/Compare) to determine which view youre in.",
+        "- applying or changing value masks",
+        "- probability/likelihood/uncertainty queries",
+        "If the request can be answered without changing any of those, explain using the context only.",
+        "If you're explaining, pay attention to the variable, model, scenario, date, location and values such as min/max/average shown.",
+        "If the 'canvasView' is 'chart', pay attention to the chart mode (single/range) and if a state variable has 'chart' as prefix, ignore similar ones without the prefix. IGNORE 'mode'.",
+        "If the 'canvasView' is 'map', look at 'mode' (Explore/Compare/Ensemble) to determine which view you're in.",
+        "",
         "== VIEW SELECTION RULES (when tools ARE needed) ==",
         "Use exactly ONE view switch tool per request:",
         "- If a specific LOCATION is mentioned -> switch_to_chart_view",
-        "- If a TIME RANGE is requested (from X to Y) -> switch_to_chart_view(chart_mode='range')",
-        "- If multiple models or scenarios are requested in the map view (e.g., 'all models', 'all scenarios', 'average of models') or the user wants to compare statistics between any of these -> switch_to_ensemble_mode",
-        "  * Use the 'statistic' parameter to control what is displayed: 'mean' (default/average), 'std' (uncertainty/spread), 'median', 'iqr' (interquartile range), 'percentile', 'extremes' (min/max range).",
-        "- If multiple models or scenarios are requested (e.g., 'compare all scenarios', 'average of models') -> switch_to_chart_view",
+        "- If a TIME RANGE is requested (from X to Y) and no map is needed -> switch_to_chart_view(chart_mode='range')",
+        "- If the user asks about PROBABILITY, LIKELIHOOD, CHANCE, or HOW LIKELY a certain value is (e.g., 'where is there a 30% chance of temperatures above 30°C?') -> call switch_to_ensemble_mode and pass the masks DIRECTLY via the 'masks' parameter of that same call. Do NOT call update_masks separately for probability queries.",
+        "- If multiple models or scenarios should be shown TOGETHER on the MAP (e.g., 'all models', 'all scenarios', 'average of models', 'model agreement') -> switch_to_ensemble_mode",
+        "  * Use the 'statistic' parameter: 'mean' (default/average), 'std' (uncertainty/spread), 'median', 'iqr', 'percentile', 'extremes'.",
         "- If comparing exactly TWO scenarios/models/dates side-by-side on the MAP -> switch_to_compare_mode",
-        "- If a SINGLE model/scenario/date is requested (no location) -> switch_to_explore_mode",
-        "- Otherwise use switch_to_explore_mode for a single map view",
+        "- If a SINGLE model/scenario/date is requested (no location, no ensemble) -> switch_to_explore_mode",
         "- If the user wants TWO separate maps simultaneously (split view / side-by-side windows) for different scenarios/models/variables/dates -> toggle_split_view(enable=True, ...)",
         "- To close the split view -> toggle_split_view(enable=False)",
         "",
         "You may additionally call update_variable and/or update_color_palette and/or update_unit and/or update_masks together with the one view switch.",
-        "Do not ignore the users request to change variable or palette or unit if mentioned. Instead execute each of these functions as needed.",
+        "Do not ignore the user's request to change variable or palette or unit if mentioned. Execute each of these functions as needed.",
         "Never call two different switch_to_* tools in the same request.",
         "",
         "== MASK RULES ==",
-        "- Always use update_masks even if youre just updating or adding a single mask.",
-        "- Masks filter the displayed data to only show values within specified bounds.",
+        "- For probability masks in ENSEMBLE mode: pass masks DIRECTLY in the 'masks' parameter of switch_to_ensemble_mode. Do NOT call update_masks separately.",
+        "- To add/change masks in an already-active view (Explore, Compare, or binary masks): call update_masks.",
         "- Each mask must have a unique ID. If updating an existing mask, use its current ID; otherwise assign a new unique ID.",
-        "- Use values that make sense depending on the current views min and max values."
-        "- 'kind' defaults to 'binary': pixels outside the bound range are hidden.",
-        "- 'kind'='probability' is only valid in ENSEMBLE mode: it masks pixels where the share of ensemble members within the bounds is below the lowerBound threshold (0-1 scale).",
-        "- 'statistic' on a mask specifies which ensemble statistic the bounds are checked against (relevant for probability masks).",
+        "- 'kind'='binary' (default): hides pixels whose value is outside [lowerBound, upperBound]. Use a very small number for no lower bound, a very large number for no upper bound.",
+        "- 'kind'='probability' (ENSEMBLE MODE ONLY): shows how likely a condition is across models.",
+        "  * lowerBound/upperBound define the VALUE CONDITION (e.g., temperature > 10°C → lowerBound=10, upperBound=1e9).",
+        "  * probabilityThreshold (0.0-1.0) is the MINIMUM FRACTION of ensemble members that must satisfy the condition for the pixel to be shown. E.g. 0.2 = at least 20% of models.",
+        "  * MULTIPLE probability masks with DIFFERENT variables are supported — each is checked independently, a pixel is shown only if ALL pass their threshold (AND logic).",
+        "- Use values that make sense for the variable (e.g., °C for tas, mm/day for pr).",
         "",
         "== DATE & SCENARIO RULES (when setting/choosing dates) ==",
         "- Dates must be YYYY-MM-DD.",
@@ -228,7 +231,11 @@ def _build_system_prompt(context: Optional[dict] = None) -> str:
         "User: 'Compare ssp245 vs ssp585 for 2050' -> tool call switch_to_compare_mode(compare_mode='Scenarios', scenario_a='ssp245', scenario_b='ssp585', date='2050-01-01').",
         "User: 'In Berlin, show temperature from 2020 to 2050' -> tool call switch_to_chart_view(location='Berlin', chart_mode='range', start_date='2020-01-01', end_date='2050-01-01', models=[...], scenarios=[...]).",
         "User: 'Show ssp245 and ssp585 side by side' -> tool call toggle_split_view(enable=True, scenario='ssp585') (Window 1 keeps current settings, Window 2 gets scenario='ssp585').",
+        "User: 'Show tas and pr simultaneously' -> tool call toggle_split_view(enable=True, variable='pr') (Window 1 keeps current variable, Window 2 shows pr).",
         "User: 'Close the split view' -> tool call toggle_split_view(enable=False).",
+        "User: 'Where is there a 30% chance of temperature above 35°C in 2060?' -> switch_to_ensemble_mode(models=[all], scenarios=['ssp585'], date='2060-01-01', variable='tas', unit='Celsius (°C)', masks=[{id:1, kind:'probability', variable:'tas', unit:'Celsius (°C)', lowerBound:35, upperBound:1000000, probabilityThreshold:0.3}]).",
+        "User: 'Find areas where potatoes can grow in 30 years, worst-case, 20% probability, temperature and precipitation' -> switch_to_ensemble_mode(models=[all], scenarios=['ssp585'], date='2055-07-01', variable='tas', unit='Celsius (°C)', masks=[{id:1, kind:'probability', variable:'tas', unit:'Celsius (°C)', lowerBound:10, upperBound:25, probabilityThreshold:0.2}, {id:2, kind:'probability', variable:'pr', unit:'mm/day', lowerBound:1.4, upperBound:6.0, probabilityThreshold:0.2}]).",
+        "User: 'Show uncertainty in precipitation for 2050' -> switch_to_ensemble_mode(statistic='std', variable='pr', ...) (std deviation = uncertainty, no masks needed).",
     ]
 
     if context:
@@ -347,10 +354,14 @@ class OpenAICompatibleClient:
 
             if tool_calls:
                 if errors:
+                    # Return partial new_state even on errors so successful calls still apply
+                    error_text = "; ".join(errors)
+                    print(f"[WARN] Tool call errors (partial state still applied): {error_text}")
                     return ChatResponse(
-                        message="; ".join(errors),
-                        success=False,
-                        error="Function call errors"
+                        message=assistant_message or error_text,
+                        new_state=new_state if new_state != context else None,
+                        success=bool(new_state and new_state != context),
+                        error=error_text
                     )
                 if not assistant_message:
                     assistant_message = "Changes applied."
@@ -771,7 +782,7 @@ def _get_state_control_functions(context: Optional[dict] = None) -> List[dict]:
             "type": "function",
             "function": {
                 "name": "switch_to_ensemble_mode",
-                "description": "Switch to ensemble mode to view a combination of MULTIPLE models and/or scenarios on the MAP.",
+                "description": "Switch to ensemble mode to view a combination of MULTIPLE models and/or scenarios on the MAP. Also accepts optional 'masks' to apply probability or binary filters in the same call — ALWAYS pass masks here instead of calling update_masks separately.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -809,6 +820,23 @@ def _get_state_control_functions(context: Optional[dict] = None) -> List[dict]:
                             "type": "string",
                             "enum": ["mean", "std", "median", "iqr", "percentile", "extremes"],
                             "description": "The ensemble statistic to display. 'mean' = average across ensemble members (default), 'std' = standard deviation (spread/uncertainty), 'median' = median value, 'iqr' = interquartile range, 'percentile' = specific percentile, 'extremes' = min/max range."
+                        },
+                        "masks": {
+                            "type": "array",
+                            "description": "Optional masks to apply. For probability queries, ALWAYS pass masks here instead of calling update_masks separately.",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "id": { "type": "number", "description": "Unique mask identifier." },
+                                    "lowerBound": { "type": "number", "description": "Lower bound for the value condition." },
+                                    "upperBound": { "type": "number", "description": "Upper bound for the value condition." },
+                                    "variable": { "type": "string", "enum": list(config.VARIABLE_METADATA.keys()), "description": "Variable this mask applies to." },
+                                    "unit": { "type": "string", "enum": _all_units_enum(), "description": "Unit for the mask bounds." },
+                                    "kind": { "type": "string", "enum": ["binary", "probability"], "description": "'binary': hide pixels outside bounds. 'probability': show pixels where enough ensemble members satisfy the condition." },
+                                    "probabilityThreshold": { "type": "number", "description": "For kind='probability': minimum fraction (0.0–1.0) of ensemble members that must satisfy the condition. E.g. 0.2 = at least 20%." }
+                                },
+                                "required": ["id", "lowerBound", "upperBound", "variable", "unit"]
+                            }
                         }
                     },
                     "required": ["models", "scenarios", "date", "variable", "unit"]
@@ -854,12 +882,16 @@ def _get_state_control_functions(context: Optional[dict] = None) -> List[dict]:
                                     "kind": {
                                         "type": "string",
                                         "enum": ["binary", "probability"],
-                                        "description": "Mask type: 'binary' (default) hides pixels outside the bounds; 'probability' (Ensemble mode only) masks pixels where the ensemble probability of being within the bounds falls below a threshold."
+                                        "description": "Mask type: 'binary' (default) hides pixels whose value is outside lowerBound..upperBound; 'probability' (Ensemble mode only) shows pixels where at least probabilityThreshold of ensemble members satisfy the value condition."
                                     },
                                     "statistic": {
                                         "type": "string",
                                         "enum": ["mean", "std", "median", "iqr", "percentile", "extremes"],
                                         "description": "Which ensemble statistic this mask is applied to. Only relevant when kind='probability' in Ensemble mode."
+                                    },
+                                    "probabilityThreshold": {
+                                        "type": "number",
+                                        "description": "Only for kind='probability': minimum fraction (0.0-1.0) of ensemble members that must satisfy the value condition for the pixel to be shown. E.g. 0.2 = at least 20% of models must predict the value within the bounds. Default: 0.5."
                                     }
                                 },
                                 "required": ["id", "lowerBound", "upperBound", "unit", "variable"]

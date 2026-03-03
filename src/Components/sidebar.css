@@ -210,3 +210,48 @@
     border-color: var(--border-medium);
     color: var(--text-primary);
 }
+
+.state-io-section {
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border-medium);
+    margin-bottom: 4px;
+}
+
+.state-io-label {
+    font-size: 10px;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+    opacity: 0.6;
+}
+
+.state-io-row {
+    display: flex;
+    gap: 8px;
+}
+
+.state-io-btn {
+    flex: 1;
+    padding: 8px 10px;
+    border-radius: 10px;
+    border: 1px solid var(--border-default);
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    cursor: pointer;
+    transition: all 140ms ease;
+    text-align: center;
+}
+
+.state-io-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-primary);
+    border-color: var(--border-medium);
+}
+
+.state-io-btn:active {
+    transform: translateY(1px);
+}

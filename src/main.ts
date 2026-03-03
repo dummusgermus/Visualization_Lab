@@ -63,6 +63,11 @@ import {
 } from "./Utils/mockChartData";
 import { registerStateUpdateCallback } from "./Utils/stateUpdate";
 import {
+    applyImportedState,
+    downloadStateAsJson,
+    triggerImportJson,
+} from "./Components/stateIO";
+import {
     convertMinMax,
     convertValue,
     getDefaultUnitOption,
@@ -2217,6 +2222,26 @@ function renderDrawOverlayPaths() {
     overlay.style.width = `${rect.width}px`;
     overlay.style.height = `${rect.height}px`;
 
+    // Sync the overlay's position to the main canvas so drawn points
+    // are pixel-accurate regardless of split-view or other layout shifts.
+    if (state.splitView) {
+        overlay.style.left = "50%";
+        overlay.style.top = "0";
+        overlay.style.transform = "translateX(-50%)";
+        overlay.style.right = "";
+        overlay.style.bottom = "";
+    } else {
+        const overlayParent = overlay.offsetParent as HTMLElement | null;
+        const parentRect = overlayParent?.getBoundingClientRect();
+        if (parentRect) {
+            overlay.style.left = `${rect.left - parentRect.left}px`;
+            overlay.style.top = `${rect.top - parentRect.top}px`;
+            overlay.style.transform = "";
+            overlay.style.right = "";
+            overlay.style.bottom = "";
+        }
+    }
+
     const ctx = overlay.getContext("2d");
     if (!ctx) return;
 
@@ -2291,10 +2316,16 @@ function renderDrawOverlay() {
         (state.mapPolygon !== null && state.mapPolygon.length >= 3);
     if (!shouldShowOverlay) return "";
 
+    // In split view the main canvas is centered with left:50%/translateX(-50%).
+    // The overlay must use the SAME positioning so both share the same origin.
+    const overlayStyle = state.splitView
+        ? `position:absolute;top:0;left:50%;transform:translateX(-50%);pointer-events:none;z-index:9`
+        : styleAttr(styles.drawOverlayCanvas);
+
     return `
       <canvas
         id="draw-overlay-canvas"
-        style="${styleAttr(styles.drawOverlayCanvas)}"
+        style="${overlayStyle}"
       ></canvas>
     `;
 }
@@ -2329,6 +2360,16 @@ function renderMapMarkerPosition() {
     const hasPolygon =
         state.mapPolygon !== null && state.mapPolygon.length >= 3;
 
+    // Compute canvas offset relative to the marker's offsetParent (the pane div).
+    // In split-view the canvas is centred with left:50%/translateX(-50%) and
+    // overflows the pane, so canvas-relative coords must be shifted by this offset
+    // before being used as CSS position values inside the pane.
+    const canvasRect = canvas.getBoundingClientRect();
+    const markerOffsetParent = marker?.offsetParent as HTMLElement | null;
+    const markerParentRect = markerOffsetParent?.getBoundingClientRect();
+    const canvasOffsetLeft = markerParentRect ? canvasRect.left - markerParentRect.left : 0;
+    const canvasOffsetTop  = markerParentRect ? canvasRect.top  - markerParentRect.top  : 0;
+
     // Handle marker visibility
     if (marker) {
         if (!state.mapMarker) {
@@ -2349,7 +2390,7 @@ function renderMapMarkerPosition() {
                 marker.style.transform = "translate(-9999px, -9999px)";
             } else {
                 marker.style.opacity = "1";
-                marker.style.transform = `translate(${projected.x}px, ${projected.y}px) translate(-50%, -100%)`;
+                marker.style.transform = `translate(${projected.x + canvasOffsetLeft}px, ${projected.y + canvasOffsetTop}px) translate(-50%, -100%)`;
             }
         }
     }
@@ -8127,6 +8168,24 @@ function renderManualSection(params: {
                 ];
 
     return `
+    <div class="state-io-section">
+      <div class="state-io-label">Settings</div>
+      <div class="state-io-row">
+        <button
+          type="button"
+          data-action="state-export"
+          class="state-io-btn"
+          title="Export current settings as JSON file"
+        >&#x2193; Export</button>
+        <button
+          type="button"
+          data-action="state-import"
+          class="state-io-btn"
+          title="Import settings from JSON file"
+        >&#x2191; Import</button>
+      </div>
+    </div>
+
     <div style="${styleAttr(styles.modeSwitch)}">
       <div data-role="mode-indicator" style="${styleAttr({
           ...styles.modeIndicator,
@@ -12941,6 +13000,25 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
     });
 
     attachChatHandlers(root, state);
+
+    // State Export/Import handlers
+    root
+        .querySelector('[data-action="state-export"]')
+        ?.addEventListener("click", () => {
+            downloadStateAsJson(state);
+        });
+
+    root
+        .querySelector('[data-action="state-import"]')
+        ?.addEventListener("click", () => {
+            triggerImportJson(
+                (saved) => {
+                    applyImportedState(state, saved);
+                    render();
+                },
+                (msg) => console.error("Import failed:", msg),
+            );
+        });
 
     // ── Window 2 select/input handlers ─────────────────────────────────────
     const w2Selects = root.querySelectorAll<HTMLSelectElement>('[data-action="w2-update-select"]');

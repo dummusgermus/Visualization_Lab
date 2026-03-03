@@ -141,8 +141,6 @@ ALLOWED_CHAT_MODELS = {
     "gpt-5.1",
     "gpt-oss-120b",
     "mistral-small-3.2-24B-instruct-2506",
-    "mixtral-8x22B",
-    "e5-mistral-7b-instruct",
 }
 
 

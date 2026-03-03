@@ -2,7 +2,7 @@ import * as d3 from "d3";
 import { hexToRgb } from "../Utils/colorUtils";
 import { dataToArray, type ClimateData } from "../Utils/dataClient";
 import { convertMinMax, convertValue } from "../Utils/unitConverter";
-import { hideTooltip, setActiveLegendCanvas, setDataRange, showTooltip } from "./tooltip";
+import { hideTooltip, setDataRange, showTooltip } from "./tooltip";
 import {
     addBaseMapOverlayInvalidationCallback,
     drawBaseMapOverlay,
@@ -75,6 +75,8 @@ function computeGaussianRangeProbabilityAtIndex(
     unit: string | undefined,
     lowerBound: number | null,
     upperBound: number | null,
+    lowerEdited: boolean,
+    upperEdited: boolean,
 ): number {
     let count = 0;
     let mean = 0;
@@ -93,11 +95,8 @@ function computeGaussianRangeProbabilityAtIndex(
     }
     if (count === 0) return NaN;
 
-    // For probability masks the bounds represent the VALUE CONDITION (always concrete).
-    // Respect them whether or not the lowerEdited/upperEdited flags are set — the flags
-    // are meant for the manual-entry UI, but agent-set bounds must always be honoured.
-    const lower = lowerBound !== null && lowerBound !== undefined ? lowerBound : -Infinity;
-    const upper = upperBound !== null && upperBound !== undefined ? upperBound : Infinity;
+    const lower = lowerEdited && lowerBound !== null ? lowerBound : -Infinity;
+    const upper = upperEdited && upperBound !== null ? upperBound : Infinity;
     if (lower > upper) return 0;
 
     const variance = m2 / count;
@@ -391,8 +390,6 @@ export function setupMapInteractions(
             cachedValueLookup &&
             cachedMapCanvas
         ) {
-            // Route legend indicator to Window 1 canvas with Window 1's data range
-            setActiveLegendCanvas("legend-gradient-canvas");
             const [mouseX, mouseY] = d3.pointer(e, canvas);
             updateTooltip(
                 e.clientX,
@@ -482,9 +479,13 @@ export function isW2CacheReady(): boolean {
     return w2CachedMapCanvas !== null;
 }
 
-/** Clears the Window 2 render cache (call before importing state to avoid stale image flashing). */
 export function clearW2Cache(): void {
     w2CachedMapCanvas = null;
+    w2CachedData = null;
+    w2CachedIsDifference = false;
+    w2CachedValueLookup = null;
+    w2CachedVariable = undefined;
+    w2CachedSelectedUnit = undefined;
 }
 
 // ── Window 2: fast redraw ────────────────────────────────────────────────────
@@ -563,8 +564,6 @@ export function setupWindow2Interactions(
             w2CachedValueLookup &&
             w2CachedMapCanvas
         ) {
-            // Route legend indicator updates to the Window 2 legend canvas
-            setActiveLegendCanvas("legend-gradient-canvas-w2");
             const [mouseX, mouseY] = d3.pointer(e, canvas);
             updateW2Tooltip(
                 e.clientX,
@@ -580,7 +579,6 @@ export function setupWindow2Interactions(
     });
 
     selection.on("pointerleave.w2tooltip", () => {
-        // hideTooltip resets the active legend canvas back to the default
         hideTooltip();
     });
 
@@ -822,7 +820,6 @@ function runRenderMapData(
     const effectiveTooltipMax = useProbabilityRendering ? 100 : convertedMax;
 
     // Set data range for tooltip/legend indicator (use converted values)
-    // Route to the correct per-canvas state: W1 uses the default canvas, W2 uses its own.
     setDataRange(
         effectiveTooltipMin,
         effectiveTooltipMax,
@@ -830,7 +827,6 @@ function runRenderMapData(
         selectedUnit,
         isDifference,
         useProbabilityRendering,
-        isW2 ? "legend-gradient-canvas-w2" : "legend-gradient-canvas",
     );
 
     if (!isEnsembleMode && masks && masks.length > 0 && maskVariableData) {
@@ -966,7 +962,6 @@ function runRenderMapData(
                             variable?: string;
                             unit?: string;
                             kind?: "binary" | "probability";
-                            probabilityThreshold?: number;
                         }>
                     >();
                     for (const mask of binaryMasks) {
@@ -1049,28 +1044,24 @@ function runRenderMapData(
                 passesMask = true;
             }
 
-            // Probability rendering: compute per-mask probability and apply individual thresholds.
-            // A pixel passes only if EVERY probability mask's probability >= its own threshold (AND logic).
-            // The display color uses the minimum probability across all masks (weakest-link).
             let probabilityValue = 1;
-            let probabilityMaskFails = false;
             if (
                 useProbabilityRendering &&
                 probabilityMasks.length > 0 &&
                 isEnsembleMode
             ) {
                 const idx = (height - 1 - y) * width + x;
-                let minP = 1;
+                probabilityValue = 1;
                 for (const mask of probabilityMasks) {
                     const maskVar = mask.variable || variable;
                     if (!maskVar) {
-                        probabilityMaskFails = true;
+                        probabilityValue = NaN;
                         break;
                     }
                     const sampleArrays =
                         ensembleRawSamplesByVariable?.get(maskVar);
                     if (!sampleArrays || sampleArrays.length === 0) {
-                        probabilityMaskFails = true;
+                        probabilityValue = NaN;
                         break;
                     }
                     const maskUnit = mask.unit || selectedUnit;
@@ -1081,20 +1072,32 @@ function runRenderMapData(
                         maskUnit,
                         mask.lowerBound,
                         mask.upperBound,
+                        mask.lowerEdited,
+                        mask.upperEdited,
                     );
                     if (!Number.isFinite(p)) {
-                        probabilityMaskFails = true;
+                        probabilityValue = NaN;
                         break;
                     }
-                    // Each mask is checked individually against its own threshold (AND logic)
-                    const maskThreshold = mask.probabilityThreshold ?? 0.5;
-                    if (p < maskThreshold) {
-                        probabilityMaskFails = true;
-                    }
-                    minP = Math.min(minP, p);
+                    probabilityValue *= p;
                 }
-                // Use minimum probability across all masks for colorizing (weakest-link)
-                probabilityValue = probabilityMaskFails ? 0 : Math.max(0, Math.min(1, minP));
+                if (!Number.isFinite(probabilityValue)) {
+                    probabilityValue = 0;
+                } else {
+                    probabilityValue = Math.max(0, Math.min(1, probabilityValue));
+                }
+            }
+
+            // Check if pixel falls below any probability mask's minimum probability threshold
+            let probabilityMaskFails = false;
+            if (useProbabilityRendering && Number.isFinite(probabilityValue)) {
+                const maxThreshold = probabilityMasks.reduce(
+                    (acc, m) => Math.max(acc, m.probabilityThreshold ?? 0),
+                    0,
+                );
+                if (probabilityValue < maxThreshold) {
+                    probabilityMaskFails = true;
+                }
             }
 
             let r: number, g: number, b: number;

@@ -1358,6 +1358,7 @@ export type AppState = {
         lowerEdited: boolean;
         upperEdited: boolean;
         kind?: "binary" | "probability";
+        probabilityThreshold?: number; // Minimum probability (0-1) to show pixel — only for probability masks
         statistic?: EnsembleStatistic; // Used in ensemble mode
         variable?: string; // Variable for this mask (explore + ensemble)
         unit?: string; // Unit for this mask (explore + ensemble)
@@ -8693,6 +8694,48 @@ function renderManualSection(params: {
                               −
                             </button>
                           </div>
+                          ${mask.kind === "probability" ? `
+                          <div style="${styleAttr({
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 8,
+                              marginTop: 4,
+                          })}">
+                            <span style="${styleAttr({
+                                fontSize: 12,
+                                color: "var(--text-secondary)",
+                                whiteSpace: "nowrap",
+                            })}">Min. prob. ≥</span>
+                            <input
+                              type="number"
+                              min="0"
+                              max="100"
+                              step="1"
+                              value="${Math.round((mask.probabilityThreshold ?? 0.5) * 100)}"
+                              data-action="update-mask-probability-threshold"
+                              data-mask-index="${index}"
+                              placeholder="50"
+                              style="${styleAttr({
+                                  width: "70px",
+                                  background: "var(--gradient-bg)",
+                                  border: "1px solid var(--border-strong)",
+                                  borderRadius: 8,
+                                  color: "var(--text-primary)",
+                                  padding: "6px 10px",
+                                  fontSize: 12.5,
+                                  fontWeight: 600,
+                                  fontFamily: "var(--font-geist-sans)",
+                                  letterSpacing: 0.25,
+                                  minHeight: 32,
+                                  boxShadow: "inset 0 1px 0 var(--inset-light)",
+                              })}"
+                            />
+                            <span style="${styleAttr({
+                                fontSize: 12.5,
+                                color: "var(--text-secondary)",
+                            })}">%</span>
+                          </div>
+                          ` : ""}
                         `;
                             })
                             .join("")}
@@ -9265,6 +9308,48 @@ function renderManualSection(params: {
                                   −
                                 </button>
                               </div>
+                              ${mask.kind === "probability" ? `
+                              <div style="${styleAttr({
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: 8,
+                                  marginTop: 4,
+                              })}">
+                                <span style="${styleAttr({
+                                    fontSize: 12,
+                                    color: "var(--text-secondary)",
+                                    whiteSpace: "nowrap",
+                                })}">Min. prob. ≥</span>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  max="100"
+                                  step="1"
+                                  value="${Math.round((mask.probabilityThreshold ?? 0.5) * 100)}"
+                                  data-action="update-mask-probability-threshold"
+                                  data-mask-index="${index}"
+                                  placeholder="50"
+                                  style="${styleAttr({
+                                      width: "70px",
+                                      background: "var(--gradient-bg)",
+                                      border: "1px solid var(--border-strong)",
+                                      borderRadius: 8,
+                                      color: "var(--text-primary)",
+                                      padding: "6px 10px",
+                                      fontSize: 12.5,
+                                      fontWeight: 600,
+                                      fontFamily: "var(--font-geist-sans)",
+                                      letterSpacing: 0.25,
+                                      minHeight: 32,
+                                      boxShadow: "inset 0 1px 0 var(--inset-light)",
+                                  })}"
+                                />
+                                <span style="${styleAttr({
+                                    fontSize: 12.5,
+                                    color: "var(--text-secondary)",
+                                })}">%</span>
+                              </div>
+                              ` : ""}
                             `;
                                 })
                                 .join("")}
@@ -9795,6 +9880,48 @@ function renderManualSection(params: {
                               −
                             </button>
                           </div>
+                          ${mask.kind === "probability" ? `
+                          <div style="${styleAttr({
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 8,
+                              marginTop: 4,
+                          })}">
+                            <span style="${styleAttr({
+                                fontSize: 12,
+                                color: "var(--text-secondary)",
+                                whiteSpace: "nowrap",
+                            })}">Min. prob. ≥</span>
+                            <input
+                              type="number"
+                              min="0"
+                              max="100"
+                              step="1"
+                              value="${Math.round((mask.probabilityThreshold ?? 0.5) * 100)}"
+                              data-action="update-mask-probability-threshold"
+                              data-mask-index="${index}"
+                              placeholder="50"
+                              style="${styleAttr({
+                                  width: "70px",
+                                  background: "var(--gradient-bg)",
+                                  border: "1px solid var(--border-strong)",
+                                  borderRadius: 8,
+                                  color: "var(--text-primary)",
+                                  padding: "6px 10px",
+                                  fontSize: 12.5,
+                                  fontWeight: 600,
+                                  fontFamily: "var(--font-geist-sans)",
+                                  letterSpacing: 0.25,
+                                  minHeight: 32,
+                                  boxShadow: "inset 0 1px 0 var(--inset-light)",
+                              })}"
+                            />
+                            <span style="${styleAttr({
+                                fontSize: 12.5,
+                                color: "var(--text-secondary)",
+                            })}">%</span>
+                          </div>
+                          ` : ""}
                         `;
                             })
                             .join("")}
@@ -10811,6 +10938,46 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             },
             { capture: true },
         );
+    });
+
+    // Handle probability threshold inputs for probability masks
+    const maskProbThresholdInputs = root.querySelectorAll<HTMLInputElement>(
+        '[data-action="update-mask-probability-threshold"]',
+    );
+    maskProbThresholdInputs.forEach((input) => {
+        const commitThreshold = (e?: Event) => {
+            if (e) {
+                e.stopPropagation();
+                e.preventDefault();
+                e.stopImmediatePropagation();
+            }
+            const indexStr = (input as HTMLElement).dataset.maskIndex;
+            if (indexStr === undefined) return;
+            const index = Number.parseInt(indexStr, 10);
+            if (Number.isNaN(index) || index < 0 || index >= state.masks.length) return;
+            const value = input.value.trim();
+            const pct = value === "" ? 50 : Number.parseFloat(value);
+            if (!Number.isNaN(pct)) {
+                const mask = state.masks[index];
+                const newThreshold = Math.max(0, Math.min(100, pct)) / 100;
+                if (mask.probabilityThreshold !== newThreshold) {
+                    mask.probabilityThreshold = newThreshold;
+                    (state as any).__updatingMask = true;
+                    render();
+                    setTimeout(() => { (state as any).__updatingMask = false; }, 0);
+                }
+            }
+        };
+        input.addEventListener("blur", (e) => commitThreshold(e), { capture: true });
+        input.addEventListener("keydown", (e) => {
+            if ((e as KeyboardEvent).key === "Enter") {
+                e.preventDefault();
+                e.stopPropagation();
+                e.stopImmediatePropagation();
+                commitThreshold(e);
+                input.blur();
+            }
+        }, { capture: true });
     });
 
     attachSidebarHandlers({
@@ -12780,6 +12947,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             lowerEdited: boolean;
             upperEdited: boolean;
             kind?: "binary" | "probability";
+            probabilityThreshold?: number;
             statistic?: EnsembleStatistic;
             variable?: string;
             unit?: string;
@@ -12790,6 +12958,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             lowerEdited: false,
             upperEdited: false,
             kind,
+            ...(kind === "probability" ? { probabilityThreshold: 0.5 } : {}),
         };
         // In ensemble mode, default to "mean" statistic and current variable/unit
         if (state.mode === "Ensemble") {

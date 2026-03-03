@@ -1,52 +1,155 @@
 /**
- * Captures all visible canvas layers merged into a single base64 PNG string,
- * respecting each canvas's position in the viewport.
+ * Draws a rounded-rectangle path (no fill/stroke applied).
+ * Compatible with all browsers (does not rely on ctx.roundRect).
+ */
+function rrectPath(
+    ctx: CanvasRenderingContext2D,
+    x: number, y: number,
+    w: number, h: number,
+    r: number,
+): void {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y,     x + w, y + r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x,  y + h - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y,     x + r, y);
+    ctx.closePath();
+}
+
+/**
+ * Reads all visible `.map-legend` HTML elements and draws their content
+ * (panel background, title, and tick-value labels) onto the provided 2D
+ * canvas context.
+ *
+ * The canvas must already be viewport-sized so that
+ * `getBoundingClientRect()` coordinates map 1-to-1 onto canvas pixels.
+ * Call this AFTER compositing all <canvas> layers.
+ */
+export function drawLegendOverlaysOntoCanvas(ctx: CanvasRenderingContext2D): void {
+    const legends = document.querySelectorAll<HTMLElement>(".map-legend");
+    legends.forEach((legend) => {
+        const lr = legend.getBoundingClientRect();
+        if (lr.width === 0 || lr.height === 0) return;
+
+        const x = lr.left, y = lr.top, w = lr.width, h = lr.height;
+
+        // ── Panel background + border ─────────────────────────────────────
+        ctx.save();
+        rrectPath(ctx, x, y, w, h, 10);
+        ctx.fillStyle = "rgba(9, 14, 26, 0.93)";
+        ctx.fill();
+        ctx.strokeStyle = "rgba(100, 116, 139, 0.45)";
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.restore();
+
+        // ── Legend title ─────────────────────────────────────────────────
+        const titleEl = legend.querySelector<HTMLElement>(".legend-title");
+        if (titleEl) {
+            const tr = titleEl.getBoundingClientRect();
+            ctx.save();
+            ctx.fillStyle = "#e2e8f0";
+            ctx.font = "600 13px system-ui,-apple-system,sans-serif";
+            ctx.textBaseline = "top";
+            ctx.fillText(
+                titleEl.textContent?.trim() ?? "",
+                tr.left,
+                tr.top,
+                lr.right - tr.left - 8,
+            );
+            ctx.restore();
+        }
+
+        // ── Tick value labels ────────────────────────────────────────────
+        legend.querySelectorAll<HTMLElement>(".legend-labels span").forEach((span) => {
+            const sr = span.getBoundingClientRect();
+            ctx.save();
+            ctx.fillStyle = "#94a3b8";
+            ctx.font = "400 11px system-ui,-apple-system,sans-serif";
+            ctx.textBaseline = "middle";
+            ctx.fillText(
+                span.textContent?.trim() ?? "",
+                sr.left,
+                sr.top + sr.height / 2,
+            );
+            ctx.restore();
+        });
+    });
+}
+
+/**
+ * Composites all canvas layers in the viewport into a single canvas,
+ * then draws legend HTML overlays on top, and returns the result.
+ *
+ * @param startX     Left crop offset in viewport pixels (0 for full width).
+ * @param sliceWidth Width of the output slice in viewport pixels.
+ *                   Defaults to the full viewport width.
+ */
+export function compositeViewport(
+    startX = 0,
+    sliceWidth?: number,
+): HTMLCanvasElement | null {
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const sw = sliceWidth ?? vw;
+
+    // Step 1: render all canvases onto a full-viewport backing canvas
+    const full = document.createElement("canvas");
+    full.width  = vw;
+    full.height = vh;
+    const fullCtx = full.getContext("2d");
+    if (!fullCtx) return null;
+
+    fullCtx.fillStyle = "#0f121a";
+    fullCtx.fillRect(0, 0, vw, vh);
+
+    for (const c of Array.from(document.querySelectorAll<HTMLCanvasElement>("canvas"))) {
+        if (c.width === 0 || c.height === 0) continue;
+        const rect = c.getBoundingClientRect();
+        if (rect.right < 0 || rect.bottom < 0 || rect.left > vw || rect.top > vh) continue;
+        try {
+            fullCtx.drawImage(c, rect.left, rect.top, rect.width, rect.height);
+        } catch { /* ignore tainted */ }
+    }
+
+    // Step 2: draw legend HTML overlays
+    drawLegendOverlaysOntoCanvas(fullCtx);
+
+    if (startX === 0 && sw === vw) return full;
+
+    // Step 3: slice to requested region
+    const out = document.createElement("canvas");
+    out.width  = sw;
+    out.height = vh;
+    const outCtx = out.getContext("2d");
+    if (!outCtx) return null;
+    outCtx.drawImage(full, startX, 0, sw, vh, 0, 0, sw, vh);
+    return out;
+}
+
+/**
+ * Captures all visible canvas layers merged into a single base64 string,
+ * including the legend panel (title + tick labels) drawn on top.
+ * Downscaled to ≤512 px on the longest side to keep AI-chat token counts low.
  */
 export async function captureMapScreenshot(
     _canvas: HTMLCanvasElement,
 ): Promise<string | null> {
     try {
-        const allCanvases = Array.from(
-            document.querySelectorAll<HTMLCanvasElement>("canvas")
-        );
-
-        if (allCanvases.length === 0) return null;
-
         const viewportWidth  = window.innerWidth;
         const viewportHeight = window.innerHeight;
 
+        const composite = compositeViewport();
+        if (!composite) return null;
+
         console.debug(`[Screenshot] Viewport: ${viewportWidth}x${viewportHeight}`);
-        allCanvases.forEach((c, i) => {
-            const r = c.getBoundingClientRect();
-            console.debug(`[Screenshot] Canvas[${i}] pos=(${r.left.toFixed(0)},${r.top.toFixed(0)}) css=${r.width.toFixed(0)}x${r.height.toFixed(0)} buffer=${c.width}x${c.height}`);
-        });
 
-        // Step 1: Composite all canvas layers at viewport size
-        const composite = document.createElement("canvas");
-        composite.width  = viewportWidth;
-        composite.height = viewportHeight;
-
-        const ctx = composite.getContext("2d");
-        if (!ctx) return null;
-
-        ctx.fillStyle = "#0f121a";
-        ctx.fillRect(0, 0, viewportWidth, viewportHeight);
-
-        for (const c of allCanvases) {
-            if (c.width === 0 || c.height === 0) continue;
-            const rect = c.getBoundingClientRect();
-            if (rect.right < 0 || rect.bottom < 0 || rect.left > viewportWidth || rect.top > viewportHeight) {
-                console.debug(`[Screenshot] Skipping off-screen canvas`);
-                continue;
-            }
-            try {
-                ctx.drawImage(c, rect.left, rect.top, rect.width, rect.height);
-            } catch (e) {
-                console.warn("[Screenshot] Could not draw canvas layer:", e);
-            }
-        }
-
-        // Step 2: Downscale to max 512px on the longest side to stay within token limits
+        // Downscale to max 512px on the longest side to stay within token limits
         const MAX_SIZE = 512;
         const scale = Math.min(MAX_SIZE / viewportWidth, MAX_SIZE / viewportHeight, 1);
         const outputWidth  = Math.round(viewportWidth  * scale);
@@ -62,14 +165,11 @@ export async function captureMapScreenshot(
 
         console.debug(`[Screenshot] Downscaled to ${outputWidth}x${outputHeight} (scale: ${scale.toFixed(2)})`);
 
-        // Step 3: Encode as JPEG (much smaller than PNG) at reduced quality
+        // Encode as JPEG at reduced quality
         const base64 = output.toDataURL("image/jpeg", 0.7).split(",")[1];
-
         console.debug(`[Screenshot] Base64 size: ${(base64.length / 1024).toFixed(1)} KB`);
 
-        // Debug: save screenshot as downloadable file
         saveScreenshotDebug(output);
-
         return base64;
     } catch (e) {
         console.warn("Failed to capture canvas screenshot:", e);
@@ -78,7 +178,7 @@ export async function captureMapScreenshot(
 }
 
 /**
- * Debug helper: triggers a download of the canvas as PNG
+ * Debug helper: triggers a download of the canvas as JPEG.
  */
 function saveScreenshotDebug(canvas: HTMLCanvasElement): void {
     try {

@@ -20,6 +20,7 @@ import {
 } from "./Components/tutorial";
 import { drawLegendGradient, renderMapLegend } from "./MapView/legend";
 import {
+    clearW2Cache,
     getCurrentZoomLevel,
     isW2CacheReady,
     projectLonLatToCanvas,
@@ -1361,6 +1362,8 @@ export type AppState = {
     }>;
     chartRequestId: number;
     splitView: boolean;
+    splitRatio: number;
+    chatScreenshot: string | null;
     window2: Window2State;
 };
 
@@ -1507,6 +1510,8 @@ const state: AppState = {
     maskVariableRanges: new Map<string, { min: number; max: number }>(),
     chartRequestId: 0,
     splitView: false,
+    splitRatio: 0.5,
+    chatScreenshot: null,
     window2: {
         scenario: "SSP245",
         model: models[0],
@@ -2218,6 +2223,26 @@ function renderDrawOverlayPaths() {
     overlay.style.width = `${rect.width}px`;
     overlay.style.height = `${rect.height}px`;
 
+    // Sync the overlay's position to the main canvas so drawn points
+    // are pixel-accurate regardless of split-view or other layout shifts.
+    if (state.splitView) {
+        overlay.style.left = "50%";
+        overlay.style.top = "0";
+        overlay.style.transform = "translateX(-50%)";
+        overlay.style.right = "";
+        overlay.style.bottom = "";
+    } else {
+        const overlayParent = overlay.offsetParent as HTMLElement | null;
+        const parentRect = overlayParent?.getBoundingClientRect();
+        if (parentRect) {
+            overlay.style.left = `${rect.left - parentRect.left}px`;
+            overlay.style.top = `${rect.top - parentRect.top}px`;
+            overlay.style.transform = "";
+            overlay.style.right = "";
+            overlay.style.bottom = "";
+        }
+    }
+
     const ctx = overlay.getContext("2d");
     if (!ctx) return;
 
@@ -2292,10 +2317,16 @@ function renderDrawOverlay() {
         (state.mapPolygon !== null && state.mapPolygon.length >= 3);
     if (!shouldShowOverlay) return "";
 
+    // In split view the main canvas is centered with left:50%/translateX(-50%).
+    // The overlay must use the SAME positioning so both share the same origin.
+    const overlayStyle = state.splitView
+        ? `position:absolute;top:0;left:50%;transform:translateX(-50%);pointer-events:none;z-index:9`
+        : styleAttr(styles.drawOverlayCanvas);
+
     return `
       <canvas
         id="draw-overlay-canvas"
-        style="${styleAttr(styles.drawOverlayCanvas)}"
+        style="${overlayStyle}"
       ></canvas>
     `;
 }
@@ -2330,6 +2361,16 @@ function renderMapMarkerPosition() {
     const hasPolygon =
         state.mapPolygon !== null && state.mapPolygon.length >= 3;
 
+    // Compute canvas offset relative to the marker's offsetParent (the pane div).
+    // In split-view the canvas is centred with left:50%/translateX(-50%) and
+    // overflows the pane, so canvas-relative coords must be shifted by this offset
+    // before being used as CSS position values inside the pane.
+    const canvasRect = canvas.getBoundingClientRect();
+    const markerOffsetParent = marker?.offsetParent as HTMLElement | null;
+    const markerParentRect = markerOffsetParent?.getBoundingClientRect();
+    const canvasOffsetLeft = markerParentRect ? canvasRect.left - markerParentRect.left : 0;
+    const canvasOffsetTop  = markerParentRect ? canvasRect.top  - markerParentRect.top  : 0;
+
     // Handle marker visibility
     if (marker) {
         if (!state.mapMarker) {
@@ -2350,7 +2391,7 @@ function renderMapMarkerPosition() {
                 marker.style.transform = "translate(-9999px, -9999px)";
             } else {
                 marker.style.opacity = "1";
-                marker.style.transform = `translate(${projected.x}px, ${projected.y}px) translate(-50%, -100%)`;
+                marker.style.transform = `translate(${projected.x + canvasOffsetLeft}px, ${projected.y + canvasOffsetTop}px) translate(-50%, -100%)`;
             }
         }
     }
@@ -6377,9 +6418,8 @@ async function loadClimateDataWindow2() {
             const finite = Array.from(arr).filter(Number.isFinite) as number[];
             if (finite.length) {
                 const [mn, mx] = [Math.min(...finite), Math.max(...finite)];
-                const { min: cMin, max: cMax } = convertMinMax(mn, mx, w2.variable, w2.selectedUnit);
-                state.window2.dataMin = cMin;
-                state.window2.dataMax = cMax;
+                state.window2.dataMin = mn;
+                state.window2.dataMax = mx;
             }
         }
 
@@ -6456,7 +6496,7 @@ function renderWindow2Pane(vpW: number, vpH: number): string {
         </div>` : "";
 
     return `
-        <div style="flex:1;position:relative;overflow:hidden;border-left:1px solid rgba(148,163,184,0.15);">
+        <div id="split-pane-2" style="flex: 0 0 ${((1 - state.splitRatio) * 100).toFixed(2)}%;position:relative;overflow:hidden;">
             <div style="position:absolute;inset:0;pointer-events:none;">
                 <canvas id="map-canvas-2" style="${canvasStyle}pointer-events:auto;"></canvas>
                 ${loadingHtml}${errorHtml}${noDataHtml}
@@ -6506,6 +6546,55 @@ function renderWindow2Pane(vpW: number, vpH: number): string {
             </div>
         </div>
     `;
+}
+
+/** Attach drag-to-resize behaviour to the split-view divider. */
+function setupSplitDivider() {
+    if (!appRoot) return;
+    const divider = appRoot.querySelector<HTMLElement>("#split-divider");
+    const pane1   = appRoot.querySelector<HTMLElement>("#split-pane-1");
+    const pane2   = appRoot.querySelector<HTMLElement>("#split-pane-2");
+    if (!divider || !pane1 || !pane2) return;
+
+    const indicator = divider.querySelector<HTMLElement>("div");
+
+    divider.addEventListener("mouseenter", () => {
+        if (indicator) indicator.style.background = "rgba(148,163,184,0.6)";
+    });
+    divider.addEventListener("mouseleave", () => {
+        if (indicator) indicator.style.background = "rgba(148,163,184,0.2)";
+    });
+
+    divider.addEventListener("mousedown", (e: MouseEvent) => {
+        e.preventDefault();
+        document.body.style.cursor = "col-resize";
+        document.body.style.userSelect = "none";
+        if (indicator) indicator.style.background = "rgba(148,163,184,0.9)";
+
+        const onMove = (ev: MouseEvent) => {
+            const ratio = Math.min(0.8, Math.max(0.2, ev.clientX / window.innerWidth));
+            pane1.style.flex = `0 0 ${(ratio * 100).toFixed(2)}%`;
+            pane2.style.flex = `0 0 ${((1 - ratio) * 100).toFixed(2)}%`;
+            // Move the fixed W2 legend live
+            const legends = appRoot!.querySelectorAll<HTMLElement>(".map-legend");
+            if (legends.length >= 2) {
+                legends[1].style.left = `calc(${(ratio * 100).toFixed(2)}vw + 1rem)`;
+            }
+        };
+
+        const onUp = (ev: MouseEvent) => {
+            document.removeEventListener("mousemove", onMove);
+            document.removeEventListener("mouseup", onUp);
+            document.body.style.cursor = "";
+            document.body.style.userSelect = "";
+            const ratio = Math.min(0.8, Math.max(0.2, ev.clientX / window.innerWidth));
+            state.splitRatio = ratio;
+            render();
+        };
+
+        document.addEventListener("mousemove", onMove);
+        document.addEventListener("mouseup", onUp);
+    });
 }
 
 function renderBranding() {
@@ -6627,6 +6716,28 @@ function render() {
                   )
                 : ""
         }
+        ${
+            state.splitView &&
+            state.canvasView === "map" &&
+            state.window2.dataMin !== null &&
+            state.window2.dataMax !== null
+                ? renderMapLegend(
+                      state.window2.variable,
+                      state.window2.dataMin,
+                      state.window2.dataMax,
+                      state.metaData,
+                      state.window2.selectedUnit,
+                      false,
+                      0,
+                      {
+                          canvasId: "legend-gradient-canvas-w2",
+                          leftOverride: `calc(${(state.splitRatio * 100).toFixed(2)}vw + 1rem)`,
+                          paletteControlHtml: renderLegendW2PaletteSelect(),
+                          bottomControlsHtml: renderLegendW2UnitControl(),
+                      },
+                  )
+                : ""
+        }
       <div style="${styleAttr(state.splitView && state.canvasView === 'map'
         ? { ...styles.mapArea, flexDirection: 'row', alignItems: 'stretch', gap: 0, padding: 0 }
         : styles.mapArea)}">
@@ -6648,15 +6759,6 @@ function render() {
                   id="map-canvas"
                   style="${canvasStyle}"
                 ></canvas>
-                <!-- View 1 badge -->
-                <div style="
-                    position:absolute;top:12px;left:12px;z-index:15;
-                    background:rgba(9,14,26,0.82);border:1px solid rgba(148,163,184,0.2);
-                    border-radius:8px;padding:5px 10px;pointer-events:none;
-                    backdrop-filter:blur(8px);
-                ">
-                    <span style="font-size:11px;font-weight:700;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.5px;">View 1 · Sidebar</span>
-                </div>
                 ${renderMapSearchBar()}
                 ${renderDrawOverlay()}
                 ${renderPointOverlay()}
@@ -6686,7 +6788,10 @@ function render() {
               </div>
             `;
                         return `
-              <div style="flex:1;position:relative;overflow:hidden;">${paneInner}</div>
+              <div id="split-pane-1" style="flex: 0 0 ${(state.splitRatio * 100).toFixed(2)}%;position:relative;overflow:hidden;">${paneInner}</div>
+              <div id="split-divider" style="width:6px;position:relative;z-index:20;cursor:col-resize;flex-shrink:0;display:flex;align-items:stretch;justify-content:center;pointer-events:auto;">
+                <div style="width:2px;background:rgba(148,163,184,0.2);transition:background 0.15s;"></div>
+              </div>
               ${renderWindow2Pane(vpW, vpH)}
             `;
                     })()
@@ -6989,6 +7094,15 @@ function render() {
                     paletteOptions[0];
                 drawLegendGradient("legend-gradient-canvas", palette.colors);
 
+                // Draw gradient on the Window 2 legend canvas
+                if (state.splitView && state.window2.dataMin !== null) {
+                    const w2Pal =
+                        paletteOptions.find(
+                            (p) => p.name === state.window2.mapPalette,
+                        ) || paletteOptions[0];
+                    drawLegendGradient("legend-gradient-canvas-w2", w2Pal.colors);
+                }
+
                 // Render overlay if actively drawing or if there's a completed polygon
                 if (
                     state.drawState.active ||
@@ -7032,6 +7146,8 @@ function render() {
         }
     }
 
+    // Attach drag-resize to split-view divider (re-attaches each render, old element is gone).
+    setupSplitDivider();
     // Apply responsive padding to charts after DOM is ready
     const currentPadding = (state.sidebarOpen ? SIDEBAR_WIDTH + 24 : 24) + 8;
     const scale = state.sidebarOpen ? 1 : 0.9;
@@ -8016,6 +8132,70 @@ function renderLegendUnitControl() {
           getUnitOptions(unitVariable).map((opt) => opt.label),
           currentUnit,
           { dataKey: unitKey, dataRole: "unit-selector" },
+      )}
+    </div>
+  `;
+}
+
+function renderLegendW2PaletteSelect() {
+    const uniqueId = `w2-legend-palette-${Math.random().toString(36).substr(2, 9)}`;
+    return `
+    <div class="custom-select-container">
+      <div class="custom-select-wrapper legend-palette-wrapper" data-key="w2mapPalette" data-role="palette-selector">
+        <button
+          type="button"
+          class="custom-select-trigger legend-palette-trigger"
+          data-action="update-select"
+          data-key="w2mapPalette"
+          id="${uniqueId}-trigger"
+          aria-label="Select color palette for View 2"
+        >
+          <span class="custom-select-value legend-palette-current">${escapeHtml(state.window2.mapPalette)}</span>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M12 4a8 8 0 1 0 0 16h1.2c1.4 0 2.3-1.5 1.6-2.7-.6-1-.2-2.3.9-2.8 1.1-.5 2.3.2 2.4 1.4.1 1.2 1.1 2.1 2.3 2.1H21a3 3 0 0 0 3-3c0-6.1-5.4-11-12-11Z" stroke="currentColor" stroke-width="1.6"/>
+            <circle cx="7.3" cy="11.2" r="1.1" fill="currentColor"/>
+            <circle cx="10.1" cy="8.2" r="1.1" fill="currentColor"/>
+            <circle cx="14.1" cy="8.6" r="1.1" fill="currentColor"/>
+            <circle cx="16.8" cy="11.7" r="1.1" fill="currentColor"/>
+          </svg>
+        </button>
+        <div class="custom-select-dropdown legend-palette-dropdown" id="${uniqueId}-dropdown" role="listbox">
+          ${paletteOptions
+              .map(
+                  (palette) => `
+            <div class="custom-select-option ${palette.name === state.window2.mapPalette ? "selected" : ""}"
+                 data-value="${palette.name}"
+                 data-action="update-select"
+                 data-key="w2mapPalette"
+                 role="option"
+                 ${palette.name === state.window2.mapPalette ? 'aria-selected="true"' : ""}
+                 tabindex="0">
+              <div class="legend-palette-option-content">
+                <div class="legend-palette-swatches">
+                  ${palette.colors.slice(0, 4).map((color) => `<span class="legend-palette-dot" style="background:${color};"></span>`).join("")}
+                </div>
+                <span class="legend-palette-name">${escapeHtml(palette.name)}</span>
+              </div>
+            </div>
+          `,
+              )
+              .join("")}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderLegendW2UnitControl() {
+    const unitVariable = state.window2.variable;
+    const currentUnit = state.window2.selectedUnit;
+    return `
+    <div class="legend-unit-select">
+      ${renderSelect(
+          "w2unit",
+          getUnitOptions(unitVariable).map((opt) => opt.label),
+          currentUnit,
+          { dataKey: "w2unit", dataRole: "unit-selector" },
       )}
     </div>
   `;
@@ -10688,6 +10868,8 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             reader.onload = (ev) => {
                 try {
                     const data = JSON.parse(ev.target?.result as string);
+                    // Clear window-2 cache so the new state re-renders correctly
+                    clearW2Cache();
                     // Only apply known saveable keys to avoid stomping runtime state
                     for (const key of SAVEABLE_KEYS) {
                         if (key in data) {
@@ -10697,6 +10879,9 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                     render();
                     if (state.canvasView === "map") {
                         loadClimateData();
+                        if (state.splitView) {
+                            loadClimateDataWindow2();
+                        }
                     } else {
                         loadChartData();
                     }
@@ -11395,6 +11580,55 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             case "chartPalette":
                 state.chartPalette = val;
                 render();
+                return;
+            case "w2mapPalette":
+                state.window2.mapPalette = val;
+                render();
+                if (
+                    state.canvasView === "map" &&
+                    state.window2.currentData &&
+                    persistentCanvas2 &&
+                    state.window2.dataMin !== null &&
+                    state.window2.dataMax !== null
+                ) {
+                    renderMapDataWindow2(
+                        state.window2.currentData,
+                        persistentCanvas2,
+                        paletteOptions,
+                        state.window2.mapPalette,
+                        state.window2.dataMin,
+                        state.window2.dataMax,
+                        state.window2.variable,
+                        state.window2.selectedUnit,
+                    );
+                    const w2Pal =
+                        paletteOptions.find((p) => p.name === state.window2.mapPalette) ||
+                        paletteOptions[0];
+                    drawLegendGradient("legend-gradient-canvas-w2", w2Pal.colors);
+                }
+                return;
+            case "w2unit":
+                state.window2.selectedUnit = val;
+                render();
+                if (
+                    state.canvasView === "map" &&
+                    state.window2.currentData &&
+                    persistentCanvas2 &&
+                    state.window2.dataMin !== null &&
+                    state.window2.dataMax !== null
+                ) {
+                    renderMapDataWindow2(
+                        state.window2.currentData,
+                        persistentCanvas2,
+                        paletteOptions,
+                        state.window2.mapPalette,
+                        state.window2.dataMin,
+                        state.window2.dataMax,
+                        state.window2.variable,
+                        state.window2.selectedUnit,
+                    );
+                    setupWindow2Interactions(persistentCanvas2, state.window2.selectedUnit ?? "");
+                }
                 return;
             case "compareMode":
                 state.compareMode = val as CompareMode;

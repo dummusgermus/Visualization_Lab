@@ -10,6 +10,7 @@
 import { jsPDF } from "jspdf";
 import html2canvas from "html2canvas";
 import type { AppState, Window2State } from "../main";
+import { compositeViewport } from "./screenshot";
 
 // ─── Colour palette for the PDF ────────────────────────────────────────────
 const COLORS = {
@@ -25,77 +26,44 @@ const COLORS = {
 // ─── Screenshot capture ─────────────────────────────────────────────────────
 
 /**
- * High-quality capture of a single named canvas element.
- * Returns a JPEG data URL at full canvas buffer resolution.
+ * Captures the full viewport (all map canvases + legend HTML overlays)
+ * and returns a JPEG data URL at full resolution.
  */
-function captureCanvas(id: string): string | null {
-    const canvas = document.getElementById(id) as HTMLCanvasElement | null;
-    if (!canvas || canvas.width === 0 || canvas.height === 0) return null;
-    try {
-        return canvas.toDataURL("image/jpeg", 0.92);
-    } catch {
-        return null;
-    }
+function captureMapView(): string | null {
+    const canvas = compositeViewport();
+    return canvas ? canvas.toDataURL("image/jpeg", 0.92) : null;
 }
 
 /**
- * Composites all DOM canvases into a single high-quality image of the viewport.
- * Used for non-split map view and chart view (where canvases show the base map).
+ * Captures one horizontal half of the viewport — used for split-view reports.
+ * @param side "left" = first half, "right" = second half
  */
-function captureAllCanvasesComposite(): string | null {
-    const allCanvases = Array.from(
-        document.querySelectorAll<HTMLCanvasElement>("canvas"),
-    );
-    if (allCanvases.length === 0) return null;
-
+function captureMapViewHalf(side: "left" | "right"): string | null {
     const vw = window.innerWidth;
-    const vh = window.innerHeight;
-
-    const composite = document.createElement("canvas");
-    composite.width  = vw;
-    composite.height = vh;
-    const ctx = composite.getContext("2d");
-    if (!ctx) return null;
-
-    ctx.fillStyle = "#0f121a";
-    ctx.fillRect(0, 0, vw, vh);
-
-    for (const c of allCanvases) {
-        if (c.width === 0 || c.height === 0) continue;
-        const rect = c.getBoundingClientRect();
-        if (
-            rect.right  < 0 || rect.bottom < 0 ||
-            rect.left   > vw || rect.top   > vh
-        ) continue;
-        try {
-            ctx.drawImage(c, rect.left, rect.top, rect.width, rect.height);
-        } catch { /* ignore tainted canvases */ }
-    }
-
-    return composite.toDataURL("image/jpeg", 0.92);
+    const halfW = Math.floor(vw / 2);
+    const startX = side === "right" ? halfW : 0;
+    const canvas = compositeViewport(startX, halfW);
+    return canvas ? canvas.toDataURL("image/jpeg", 0.92) : null;
 }
 
 /**
- * Uses html2canvas to capture the main content area (chart SVGs etc.).
- * Falls back to the canvas composite approach if html2canvas fails.
+ * Uses html2canvas to capture the chart/SVG view.
+ * Falls back to the canvas composite if html2canvas fails.
  */
-async function capturePageScreenshot(): Promise<string | null> {
+async function captureChartView(): Promise<string | null> {
     try {
-        const target = document.body;
-        const offscreen = await html2canvas(target, {
+        const offscreen = await html2canvas(document.body, {
             useCORS: true,
             allowTaint: false,
             backgroundColor: "#0f121a",
             scale: window.devicePixelRatio ?? 1,
             logging: false,
-            // Exclude sidebar from screenshot
             ignoreElements: (el) =>
                 el.matches('[data-role="sidebar"], [data-action="toggle-sidebar"]'),
         });
         return offscreen.toDataURL("image/jpeg", 0.92);
     } catch {
-        // Fallback
-        return captureAllCanvasesComposite();
+        return captureMapView(); // fallback
     }
 }
 
@@ -405,9 +373,9 @@ export async function generateReport(state: AppState): Promise<void> {
     const isSplitMap = state.splitView && state.canvasView === "map";
 
     if (isSplitMap) {
-        // Capture each window's canvas individually
-        const leftUrl  = captureCanvas("map-canvas");
-        const rightUrl = captureCanvas("map-canvas-2");
+        // Capture each half of the viewport (including the legend overlay)
+        const leftUrl  = captureMapViewHalf("left");
+        const rightUrl = captureMapViewHalf("right");
 
         if (leftUrl && rightUrl) {
             y = addTwoImages(pdf, leftUrl, rightUrl, y);
@@ -416,13 +384,13 @@ export async function generateReport(state: AppState): Promise<void> {
         }
 
     } else if (state.canvasView === "map") {
-        // Single map view — composite all canvas layers
-        const imgUrl = captureAllCanvasesComposite();
+        // Single map view — composite all canvas layers + legend HTML
+        const imgUrl = captureMapView();
         if (imgUrl) y = addImageFitWidth(pdf, imgUrl, y);
 
     } else {
         // Chart view — use html2canvas for full-fidelity capture (includes SVG)
-        const imgUrl = await capturePageScreenshot();
+        const imgUrl = await captureChartView();
         if (imgUrl) y = addImageFitWidth(pdf, imgUrl, y);
     }
 

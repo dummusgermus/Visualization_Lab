@@ -1365,6 +1365,7 @@ export type AppState = {
     }>;
     chartRequestId: number;
     splitView: boolean;
+    splitRatio: number;
     window2: Window2State;
 };
 
@@ -1511,6 +1512,7 @@ const state: AppState = {
     maskVariableRanges: new Map<string, { min: number; max: number }>(),
     chartRequestId: 0,
     splitView: false,
+    splitRatio: 0.5,
     window2: {
         scenario: "SSP245",
         model: models[0],
@@ -6498,7 +6500,7 @@ function renderWindow2Pane(vpW: number, vpH: number): string {
         </div>` : "";
 
     return `
-        <div style="flex:1;position:relative;overflow:hidden;border-left:1px solid rgba(148,163,184,0.15);">
+        <div id="split-pane-2" style="flex: 0 0 ${((1 - state.splitRatio) * 100).toFixed(2)}%;position:relative;overflow:hidden;">
             <div style="position:absolute;inset:0;pointer-events:none;">
                 <canvas id="map-canvas-2" style="${canvasStyle}pointer-events:auto;"></canvas>
                 ${loadingHtml}${errorHtml}${noDataHtml}
@@ -6594,6 +6596,55 @@ function renderBranding() {
     `;
 }
 
+/** Attach drag-to-resize behaviour to the split-view divider. */
+function setupSplitDivider() {
+    if (!appRoot) return;
+    const divider = appRoot.querySelector<HTMLElement>("#split-divider");
+    const pane1   = appRoot.querySelector<HTMLElement>("#split-pane-1");
+    const pane2   = appRoot.querySelector<HTMLElement>("#split-pane-2");
+    if (!divider || !pane1 || !pane2) return;
+
+    const indicator = divider.querySelector<HTMLElement>("div");
+
+    divider.addEventListener("mouseenter", () => {
+        if (indicator) indicator.style.background = "rgba(148,163,184,0.6)";
+    });
+    divider.addEventListener("mouseleave", () => {
+        if (indicator) indicator.style.background = "rgba(148,163,184,0.2)";
+    });
+
+    divider.addEventListener("mousedown", (e: MouseEvent) => {
+        e.preventDefault();
+        document.body.style.cursor = "col-resize";
+        document.body.style.userSelect = "none";
+        if (indicator) indicator.style.background = "rgba(148,163,184,0.9)";
+
+        const onMove = (ev: MouseEvent) => {
+            const ratio = Math.min(0.8, Math.max(0.2, ev.clientX / window.innerWidth));
+            pane1.style.flex = `0 0 ${(ratio * 100).toFixed(2)}%`;
+            pane2.style.flex = `0 0 ${((1 - ratio) * 100).toFixed(2)}%`;
+            // Move the fixed W2 legend live
+            const legends = appRoot!.querySelectorAll<HTMLElement>(".map-legend");
+            if (legends.length >= 2) {
+                legends[1].style.left = `calc(${(ratio * 100).toFixed(2)}vw + 1rem)`;
+            }
+        };
+
+        const onUp = (ev: MouseEvent) => {
+            document.removeEventListener("mousemove", onMove);
+            document.removeEventListener("mouseup", onUp);
+            document.body.style.cursor = "";
+            document.body.style.userSelect = "";
+            const ratio = Math.min(0.8, Math.max(0.2, ev.clientX / window.innerWidth));
+            state.splitRatio = ratio;
+            render();
+        };
+
+        document.addEventListener("mousemove", onMove);
+        document.addEventListener("mouseup", onUp);
+    });
+}
+
 function render() {
     if (!appRoot) return; // Defensive check (should never happen due to initialization check)
     const root = appRoot;
@@ -6684,7 +6735,7 @@ function render() {
                       0,
                       {
                           canvasId: "legend-gradient-canvas-w2",
-                          leftOverride: "calc(50vw + 1rem)",
+                          leftOverride: `calc(${(state.splitRatio * 100).toFixed(2)}vw + 1rem)`,
                           paletteControlHtml: renderLegendW2PaletteSelect(),
                           bottomControlsHtml: renderLegendW2UnitControl(),
                       },
@@ -6750,7 +6801,10 @@ function render() {
               </div>
             `;
                         return `
-              <div style="flex:1;position:relative;overflow:hidden;">${paneInner}</div>
+              <div id="split-pane-1" style="flex: 0 0 ${(state.splitRatio * 100).toFixed(2)}%;position:relative;overflow:hidden;">${paneInner}</div>
+              <div id="split-divider" style="width:6px;position:relative;z-index:20;cursor:col-resize;flex-shrink:0;display:flex;align-items:stretch;justify-content:center;pointer-events:auto;">
+                <div style="width:2px;background:rgba(148,163,184,0.2);transition:background 0.15s;"></div>
+              </div>
               ${renderWindow2Pane(vpW, vpH)}
             `;
                     })()
@@ -7089,6 +7143,8 @@ function render() {
         }
     }
 
+    // Attach drag-resize to split-view divider (re-attaches each render, old element is gone).
+    setupSplitDivider();
     // Apply responsive padding to charts after DOM is ready
     const currentPadding = (state.sidebarOpen ? SIDEBAR_WIDTH + 24 : 24) + 8;
     const scale = state.sidebarOpen ? 1 : 0.9;

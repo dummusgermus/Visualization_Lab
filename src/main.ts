@@ -6417,9 +6417,8 @@ async function loadClimateDataWindow2() {
             const finite = Array.from(arr).filter(Number.isFinite) as number[];
             if (finite.length) {
                 const [mn, mx] = [Math.min(...finite), Math.max(...finite)];
-                const { min: cMin, max: cMax } = convertMinMax(mn, mx, w2.variable, w2.selectedUnit);
-                state.window2.dataMin = cMin;
-                state.window2.dataMax = cMax;
+                state.window2.dataMin = mn;
+                state.window2.dataMax = mx;
             }
         }
 
@@ -6446,6 +6445,9 @@ async function loadClimateDataWindow2() {
                 state.window2.variable,
                 state.window2.selectedUnit,
             );
+            // Draw gradient on the Window 2 legend canvas
+            const w2Palette = paletteOptions.find((p) => p.name === state.window2.mapPalette) || paletteOptions[0];
+            drawLegendGradient("legend-gradient-canvas-w2", w2Palette.colors);
             // Re-attach to pick up any unit change in the tooltip handler.
             setupWindow2Interactions(persistentCanvas2, state.window2.selectedUnit ?? "");
         }
@@ -6664,6 +6666,28 @@ function render() {
                                 paletteControlHtml: renderLegendPaletteSelect(),
                                 bottomControlsHtml: renderLegendUnitControl(),
                             },
+                  )
+                : ""
+        }
+        ${
+            state.splitView &&
+            state.canvasView === "map" &&
+            state.window2.dataMin !== null &&
+            state.window2.dataMax !== null
+                ? renderMapLegend(
+                      state.window2.variable,
+                      state.window2.dataMin,
+                      state.window2.dataMax,
+                      state.metaData,
+                      state.window2.selectedUnit,
+                      false,
+                      0,
+                      {
+                          canvasId: "legend-gradient-canvas-w2",
+                          leftOverride: "calc(50vw + 1rem)",
+                          paletteControlHtml: renderLegendW2PaletteSelect(),
+                          bottomControlsHtml: renderLegendW2UnitControl(),
+                      },
                   )
                 : ""
         }
@@ -7059,6 +7083,9 @@ function render() {
         // Redraw from cache if data is already loaded (e.g. sidebar toggle).
         if (isW2CacheReady()) {
             resizeWindow2Canvas(persistentCanvas2);
+            // Repaint the Window 2 legend gradient (canvas was recreated in innerHTML)
+            const w2Pal = paletteOptions.find((p) => p.name === state.window2.mapPalette) || paletteOptions[0];
+            drawLegendGradient("legend-gradient-canvas-w2", w2Pal.colors);
         }
     }
 
@@ -8046,6 +8073,70 @@ function renderLegendUnitControl() {
           getUnitOptions(unitVariable).map((opt) => opt.label),
           currentUnit,
           { dataKey: unitKey, dataRole: "unit-selector" },
+      )}
+    </div>
+  `;
+}
+
+function renderLegendW2PaletteSelect() {
+    const uniqueId = `w2-legend-palette-${Math.random().toString(36).substr(2, 9)}`;
+    return `
+    <div class="custom-select-container">
+      <div class="custom-select-wrapper legend-palette-wrapper" data-key="w2mapPalette" data-role="palette-selector">
+        <button
+          type="button"
+          class="custom-select-trigger legend-palette-trigger"
+          data-action="update-select"
+          data-key="w2mapPalette"
+          id="${uniqueId}-trigger"
+          aria-label="Select color palette for View 2"
+        >
+          <span class="custom-select-value legend-palette-current">${escapeHtml(state.window2.mapPalette)}</span>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M12 4a8 8 0 1 0 0 16h1.2c1.4 0 2.3-1.5 1.6-2.7-.6-1-.2-2.3.9-2.8 1.1-.5 2.3.2 2.4 1.4.1 1.2 1.1 2.1 2.3 2.1H21a3 3 0 0 0 3-3c0-6.1-5.4-11-12-11Z" stroke="currentColor" stroke-width="1.6"/>
+            <circle cx="7.3" cy="11.2" r="1.1" fill="currentColor"/>
+            <circle cx="10.1" cy="8.2" r="1.1" fill="currentColor"/>
+            <circle cx="14.1" cy="8.6" r="1.1" fill="currentColor"/>
+            <circle cx="16.8" cy="11.7" r="1.1" fill="currentColor"/>
+          </svg>
+        </button>
+        <div class="custom-select-dropdown legend-palette-dropdown" id="${uniqueId}-dropdown" role="listbox">
+          ${paletteOptions
+              .map(
+                  (palette) => `
+            <div class="custom-select-option ${palette.name === state.window2.mapPalette ? "selected" : ""}"
+                 data-value="${palette.name}"
+                 data-action="update-select"
+                 data-key="w2mapPalette"
+                 role="option"
+                 ${palette.name === state.window2.mapPalette ? 'aria-selected="true"' : ""}
+                 tabindex="0">
+              <div class="legend-palette-option-content">
+                <div class="legend-palette-swatches">
+                  ${palette.colors.slice(0, 4).map((color) => `<span class="legend-palette-dot" style="background:${color};"></span>`).join("")}
+                </div>
+                <span class="legend-palette-name">${escapeHtml(palette.name)}</span>
+              </div>
+            </div>
+          `,
+              )
+              .join("")}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderLegendW2UnitControl() {
+    const unitVariable = state.window2.variable;
+    const currentUnit = state.window2.selectedUnit;
+    return `
+    <div class="legend-unit-select">
+      ${renderSelect(
+          "w2unit",
+          getUnitOptions(unitVariable).map((opt) => opt.label),
+          currentUnit,
+          { dataKey: "w2unit", dataRole: "unit-selector" },
       )}
     </div>
   `;
@@ -11412,6 +11503,43 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                     }
                 }
                 return;
+            case "w2mapPalette":
+                state.window2.mapPalette = val;
+                render();
+                if (persistentCanvas2 && state.window2.currentData && state.window2.dataMin !== null && state.window2.dataMax !== null) {
+                    renderMapDataWindow2(
+                        state.window2.currentData,
+                        persistentCanvas2,
+                        paletteOptions,
+                        state.window2.mapPalette,
+                        state.window2.dataMin,
+                        state.window2.dataMax,
+                        state.window2.variable,
+                        state.window2.selectedUnit,
+                    );
+                    const w2Pal = paletteOptions.find((p) => p.name === state.window2.mapPalette) || paletteOptions[0];
+                    drawLegendGradient("legend-gradient-canvas-w2", w2Pal.colors);
+                }
+                return;
+            case "w2unit":
+                state.window2.selectedUnit = val;
+                render();
+                if (persistentCanvas2 && state.window2.currentData && state.window2.dataMin !== null && state.window2.dataMax !== null) {
+                    renderMapDataWindow2(
+                        state.window2.currentData,
+                        persistentCanvas2,
+                        paletteOptions,
+                        state.window2.mapPalette,
+                        state.window2.dataMin,
+                        state.window2.dataMax,
+                        state.window2.variable,
+                        val,
+                    );
+                    setupWindow2Interactions(persistentCanvas2, val);
+                    const w2UnitPal = paletteOptions.find((p) => p.name === state.window2.mapPalette) || paletteOptions[0];
+                    drawLegendGradient("legend-gradient-canvas-w2", w2UnitPal.colors);
+                }
+                return;
             case "mapInfoPalette":
                 state.mapInfoPalette = val;
                 render();
@@ -13074,6 +13202,10 @@ async function init() {
 
     // Register callback for state updates from chat/backend
     registerStateUpdateCallback((updates: Record<string, any>) => {
+        // Deep-merge nested objects instead of replacing them
+        if (updates.window2) {
+            updates = { ...updates, window2: { ...state.window2, ...updates.window2 } };
+        }
         Object.assign(state, updates);
         render();
 
@@ -13102,6 +13234,10 @@ async function init() {
                 updates.mode === "Compare";
             if (exploreChanged || ensembleChanged || compareChanged) {
                 loadClimateData();
+            }
+            // Reload Window 2 when split view is activated or its config changes
+            if (state.splitView && (updates.splitView || updates.window2)) {
+                loadClimateDataWindow2();
             }
         } else if (updates.mapPalette && state.currentData) {
             // If only map palette changed and we already have data, just redraw

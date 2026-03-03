@@ -2,7 +2,7 @@ import * as d3 from "d3";
 import { hexToRgb } from "../Utils/colorUtils";
 import { dataToArray, type ClimateData } from "../Utils/dataClient";
 import { convertMinMax, convertValue } from "../Utils/unitConverter";
-import { hideTooltip, setDataRange, showTooltip } from "./tooltip";
+import { hideTooltip, setActiveLegendCanvas, setDataRange, showTooltip } from "./tooltip";
 import {
     addBaseMapOverlayInvalidationCallback,
     drawBaseMapOverlay,
@@ -390,6 +390,8 @@ export function setupMapInteractions(
             cachedValueLookup &&
             cachedMapCanvas
         ) {
+            // Route legend indicator to Window 1 canvas with Window 1's data range
+            setActiveLegendCanvas("legend-gradient-canvas");
             const [mouseX, mouseY] = d3.pointer(e, canvas);
             updateTooltip(
                 e.clientX,
@@ -555,6 +557,8 @@ export function setupWindow2Interactions(
             w2CachedValueLookup &&
             w2CachedMapCanvas
         ) {
+            // Route legend indicator updates to the Window 2 legend canvas
+            setActiveLegendCanvas("legend-gradient-canvas-w2");
             const [mouseX, mouseY] = d3.pointer(e, canvas);
             updateW2Tooltip(
                 e.clientX,
@@ -570,6 +574,7 @@ export function setupWindow2Interactions(
     });
 
     selection.on("pointerleave.w2tooltip", () => {
+        // hideTooltip resets the active legend canvas back to the default
         hideTooltip();
     });
 
@@ -809,6 +814,7 @@ function runRenderMapData(
     const effectiveTooltipMax = useProbabilityRendering ? 100 : convertedMax;
 
     // Set data range for tooltip/legend indicator (use converted values)
+    // Route to the correct per-canvas state: W1 uses the default canvas, W2 uses its own.
     setDataRange(
         effectiveTooltipMin,
         effectiveTooltipMax,
@@ -816,6 +822,7 @@ function runRenderMapData(
         selectedUnit,
         isDifference,
         useProbabilityRendering,
+        isW2 ? "legend-gradient-canvas-w2" : "legend-gradient-canvas",
     );
 
     if (!isEnsembleMode && masks && masks.length > 0 && maskVariableData) {

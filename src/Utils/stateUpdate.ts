@@ -152,6 +152,35 @@ export function updateState(
         updates.canvasView = newState.canvasView.toLowerCase();
     }
 
+    // Split view
+    if (typeof newState.splitView === "boolean") {
+        updates.splitView = newState.splitView;
+    }
+
+    // Window 2 configuration (partial update – only override fields that were explicitly provided)
+    if (newState.window2 && typeof newState.window2 === "object") {
+        const w2 = newState.window2 as Record<string, unknown>;
+        const window2Updates: Record<string, unknown> = {};
+        if (typeof w2.scenario === "string") {
+            window2Updates.scenario = normalizeScenarioLabel(w2.scenario);
+        }
+        if (typeof w2.model === "string") {
+            window2Updates.model = w2.model;
+        }
+        if (typeof w2.variable === "string") {
+            window2Updates.variable = w2.variable;
+        }
+        if (typeof w2.date === "string") {
+            window2Updates.date = w2.date;
+        }
+        if (typeof w2.mode === "string") {
+            window2Updates.mode = w2.mode;
+        }
+        if (Object.keys(window2Updates).length > 0) {
+            updates.window2 = window2Updates;
+        }
+    }
+
     if (Object.keys(updates).length > 0) {
         console.log("Applying state updates from backend:", updates);
         globalStateUpdateCallback(updates);

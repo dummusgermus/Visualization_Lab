@@ -3,9 +3,8 @@ import type { Metadata } from "../Utils/dataClient";
 import { convertMinMax, getUnitString } from "../Utils/unitConverter";
 import "./legend.css";
 
-// Store references for indicator updates
-let legendCanvas: HTMLCanvasElement | null = null;
-let currentPaletteColors: string[] = [];
+// Store references for indicator updates, keyed by canvas id
+const legendCanvases = new Map<string, { canvas: HTMLCanvasElement; colors: string[] }>();
 
 // Helper function to render the gradient on a canvas
 function renderGradient(
@@ -49,6 +48,9 @@ export function renderMapLegend(
         skipConversion?: boolean;
         paletteControlHtml?: string;
         bottomControlsHtml?: string;
+        canvasId?: string;
+        /** Override the CSS `left` value (e.g. "calc(50vw + 1rem)" for split-view W2). */
+        leftOverride?: string;
     },
 ): string {
     const variableMeta = metadata?.variable_metadata[variable];
@@ -81,9 +83,12 @@ export function renderMapLegend(
         convertedMin,
     ];
 
+    const leftStyle = options?.leftOverride ? `left:${options.leftOverride};` : "";
     const offsetStyle = offsetY
-        ? `style="transform: translateY(calc(-50% - ${offsetY}px));"`
-        : "";
+        ? `style="${leftStyle}transform: translateY(calc(-50% - ${offsetY}px));"`
+        : leftStyle
+          ? `style="${leftStyle}"`
+          : "";
     return `
       <div class="map-legend" ${offsetStyle}>
         <div class="legend-header">
@@ -95,7 +100,7 @@ export function renderMapLegend(
           }
         </div>
         <div class="legend-container">
-        <canvas id="legend-gradient-canvas" width="20" height="200" style="width: 20px; height: 200px; border-radius: 4px;"></canvas>
+        <canvas id="${options?.canvasId ?? 'legend-gradient-canvas'}" width="20" height="200" style="width: 20px; height: 200px; border-radius: 4px;"></canvas>
           <div class="legend-labels">
             ${values
                 .map((val) => `<span>${val.toFixed(2)} ${unit}</span>`)
@@ -117,29 +122,28 @@ export function drawLegendGradient(
 ): void {
     const canvas = document.getElementById(canvasId) as HTMLCanvasElement;
     if (!canvas) {
-        console.warn("Legend canvas not found");
+        console.warn("Legend canvas not found:", canvasId);
         return;
     }
 
-    // Store references for indicator updates
-    legendCanvas = canvas;
-    currentPaletteColors = paletteColors;
+    // Store canvas + colours so we can redraw later (indicator updates)
+    legendCanvases.set(canvasId, { canvas, colors: paletteColors });
 
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const width = canvas.width;
-    const height = canvas.height;
-
-    renderGradient(ctx, width, height, paletteColors);
+    renderGradient(ctx, canvas.width, canvas.height, paletteColors);
 }
 
 export function updateLegendIndicator(
     value: number,
     min: number,
-    max: number
+    max: number,
+    canvasId = "legend-gradient-canvas",
 ): void {
-    if (!legendCanvas || currentPaletteColors.length === 0) return;
+    const entry = legendCanvases.get(canvasId);
+    if (!entry) return;
+    const { canvas: legendCanvas, colors: currentPaletteColors } = entry;
 
     // Redraw the gradient first
     const ctx = legendCanvas.getContext("2d");
@@ -170,14 +174,11 @@ export function updateLegendIndicator(
     ctx.shadowBlur = 0;
 }
 
-export function clearLegendIndicator(): void {
-    if (!legendCanvas || currentPaletteColors.length === 0) return;
-
-    const ctx = legendCanvas.getContext("2d");
+export function clearLegendIndicator(canvasId = "legend-gradient-canvas"): void {
+    const entry = legendCanvases.get(canvasId);
+    if (!entry) return;
+    const { canvas, colors } = entry;
+    const ctx = canvas.getContext("2d");
     if (!ctx) return;
-
-    const width = legendCanvas.width;
-    const height = legendCanvas.height;
-
-    renderGradient(ctx, width, height, currentPaletteColors);
+    renderGradient(ctx, canvas.width, canvas.height, colors);
 }

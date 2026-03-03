@@ -372,6 +372,47 @@ def switch_to_chart_view(**kwargs) -> dict:
     
     return result
 
+def toggle_split_view(**kwargs) -> dict:
+    """Enable or disable split view and configure the second window (Window 2)."""
+    enable = kwargs.get("enable", True)
+    if not enable:
+        return {"splitView": False}
+
+    scenario = kwargs.get("scenario")
+    model = kwargs.get("model")
+    variable = kwargs.get("variable")
+    date = kwargs.get("date")
+
+    # Normalise null-like strings
+    scenario = None if scenario in ("None", "null", None) else scenario
+    model = None if model in ("None", "null", None) else model
+    variable = None if variable in ("None", "null", None) else variable
+    date = None if date in ("None", "null", None) else date
+
+    if scenario and scenario not in config.VALID_SCENARIOS:
+        raise ValueError(f"Invalid scenario for Window 2: {scenario}. Valid: {config.VALID_SCENARIOS}")
+    if model and model not in config.VALID_MODELS:
+        raise ValueError(f"Invalid model for Window 2: {model}. Valid: {config.VALID_MODELS}")
+    if variable and variable not in config.VARIABLE_METADATA:
+        raise ValueError(f"Invalid variable for Window 2: {variable}. Valid: {list(config.VARIABLE_METADATA.keys())}")
+
+    window2: dict = {}
+    if scenario is not None:
+        window2["scenario"] = scenario
+    if model is not None:
+        window2["model"] = model
+    if variable is not None:
+        window2["variable"] = variable
+    if date is not None:
+        window2["date"] = date
+
+    return {
+        "splitView": True,
+        "canvasView": "map",
+        "window2": window2,
+    }
+
+
 def parseDateToYear(date_str: str) -> int:
     """Parse date string to extract the year as an integer."""
     try:

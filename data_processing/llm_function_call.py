@@ -18,6 +18,7 @@ FUNCTION_REGISTRY: Dict[str, callable] = {
     "switch_to_explore_mode": ui_state_updater.switch_to_explore_mode,
     "switch_to_chart_view": ui_state_updater.switch_to_chart_view,
     "switch_to_ensemble_mode": ui_state_updater.switch_to_ensemble_mode,
+    "toggle_split_view": ui_state_updater.toggle_split_view,
 }
 
 
@@ -192,6 +193,8 @@ def _build_system_prompt(context: Optional[dict] = None) -> str:
         "- If comparing exactly TWO scenarios/models/dates side-by-side on the MAP -> switch_to_compare_mode",
         "- If a SINGLE model/scenario/date is requested (no location) -> switch_to_explore_mode",
         "- Otherwise use switch_to_explore_mode for a single map view",
+        "- If the user wants TWO separate maps simultaneously (split view / side-by-side windows) for different scenarios/models/variables/dates -> toggle_split_view(enable=True, ...)",
+        "- To close the split view -> toggle_split_view(enable=False)",
         "",
         "You may additionally call update_variable and/or update_color_palette and/or update_unit and/or update_masks together with the one view switch.",
         "Do not ignore the users request to change variable or palette or unit if mentioned. Instead execute each of these functions as needed.",
@@ -220,6 +223,8 @@ def _build_system_prompt(context: Optional[dict] = None) -> str:
         "User: 'Show 2050' -> tool call switch_to_explore_mode(date='2050-01-01', scenario='ssp245').",
         "User: 'Compare ssp245 vs ssp585 for 2050' -> tool call switch_to_compare_mode(compare_mode='Scenarios', scenario_a='ssp245', scenario_b='ssp585', date='2050-01-01').",
         "User: 'In Berlin, show temperature from 2020 to 2050' -> tool call switch_to_chart_view(location='Berlin', chart_mode='range', start_date='2020-01-01', end_date='2050-01-01', models=[...], scenarios=[...]).",
+        "User: 'Show ssp245 and ssp585 side by side' -> tool call toggle_split_view(enable=True, scenario='ssp585') (Window 1 keeps current settings, Window 2 gets scenario='ssp585').",
+        "User: 'Close the split view' -> tool call toggle_split_view(enable=False).",
     ]
 
     if context:
@@ -843,6 +848,49 @@ def _get_state_control_functions(context: Optional[dict] = None) -> List[dict]:
                         }
                     },
                     "required": ["masks"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "toggle_split_view",
+                "description": (
+                    "Open or close a split map view that shows two maps side by side. "
+                    "Window 1 always keeps the current main view settings. "
+                    "Window 2 is independently configured via the parameters below. "
+                    "Use this when the user wants to visually compare two different scenarios, models, "
+                    "variables or dates as maps at the same time. "
+                    "To close the split view, call with enable=false."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "enable": {
+                            "type": "boolean",
+                            "description": "True to open split view, False to close it."
+                        },
+                        "scenario": {
+                            "type": "string",
+                            "enum": config.VALID_SCENARIOS,
+                            "description": "Scenario for Window 2 (e.g. ssp585). If omitted, Window 2 inherits the current scenario."
+                        },
+                        "model": {
+                            "type": "string",
+                            "enum": config.VALID_MODELS,
+                            "description": "Climate model for Window 2. If omitted, Window 2 inherits the current model."
+                        },
+                        "variable": {
+                            "type": "string",
+                            "enum": list(config.VARIABLE_METADATA.keys()),
+                            "description": "Climate variable for Window 2. If omitted, Window 2 inherits the current variable."
+                        },
+                        "date": {
+                            "type": "string",
+                            "description": "Date for Window 2 in YYYY-MM-DD format. If omitted, Window 2 inherits the current date."
+                        }
+                    },
+                    "required": ["enable"]
                 }
             }
         },

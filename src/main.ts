@@ -166,6 +166,7 @@ function applyChartLayoutOffset(offset: number, scale?: number) {
 }
 
 export function normalizeScenarioLabel(input: string): string {
+    if (input == null) return "";
     const lower = input.toLowerCase();
     if (lower === "historical") return "Historical";
     if (lower === "ssp245") return "SSP245";
@@ -175,6 +176,7 @@ export function normalizeScenarioLabel(input: string): string {
 }
 
 export function normalizeColorPalette(input: string): string {
+    if (input == null) return "";
     const lower = input.toLowerCase();
     if (lower === "viridis") return "Viridis";
     if (lower === "magma") return "Magma";
@@ -1608,6 +1610,7 @@ function mergeStyles(...entries: Array<Style | undefined>): Style {
 }
 
 function escapeHtml(input: string): string {
+    if (input == null) return "";
     return input.replace(/[&<>"']/g, (char) => {
         switch (char) {
             case "&":
@@ -6719,8 +6722,8 @@ function render() {
         ${
             state.splitView &&
             state.canvasView === "map" &&
-            state.window2.dataMin !== null &&
-            state.window2.dataMax !== null
+            state.window2.dataMin != null &&
+            state.window2.dataMax != null
                 ? renderMapLegend(
                       state.window2.variable,
                       state.window2.dataMin,
@@ -13261,6 +13264,10 @@ async function init() {
 
     // Register callback for state updates from chat/backend
     registerStateUpdateCallback((updates: Record<string, any>) => {
+        // Deep-merge window2 to avoid replacing existing fields (e.g. dataMin/dataMax) with undefined
+        if (updates.window2 && typeof updates.window2 === "object") {
+            updates = { ...updates, window2: { ...state.window2, ...updates.window2 } };
+        }
         Object.assign(state, updates);
         render();
 
@@ -13289,6 +13296,14 @@ async function init() {
                 updates.mode === "Compare";
             if (exploreChanged || ensembleChanged || compareChanged) {
                 loadClimateData();
+            }
+            // When agent enables split view, load Window 2 data
+            if (updates.splitView === true && state.splitView) {
+                loadClimateDataWindow2();
+            }
+            // When agent changes window2 fields while split view is active, reload W2
+            if (updates.window2 && state.splitView) {
+                loadClimateDataWindow2();
             }
         } else if (updates.mapPalette && state.currentData) {
             // If only map palette changed and we already have data, just redraw

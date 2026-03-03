@@ -103,7 +103,7 @@ export function renderMapLegend(
         <canvas id="${options?.canvasId ?? 'legend-gradient-canvas'}" width="20" height="200" style="width: 20px; height: 200px; border-radius: 4px;"></canvas>
           <div class="legend-labels">
             ${values
-                .map((val) => `<span>${val.toFixed(2)} ${unit}</span>`)
+                .map((val) => `<span>${val != null && Number.isFinite(val) ? val.toFixed(2) : "—"} ${unit}</span>`)
                 .join("")}
           </div>
         </div>

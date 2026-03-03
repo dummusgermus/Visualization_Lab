@@ -193,9 +193,12 @@ def _build_system_prompt(context: Optional[dict] = None) -> str:
         "- If the user asks about PROBABILITY, LIKELIHOOD, CHANCE, or HOW LIKELY a certain value is (e.g., 'where is there a 30% chance of temperatures above 30°C?') -> call switch_to_ensemble_mode and pass the masks DIRECTLY via the 'masks' parameter of that same call. Do NOT call update_masks separately for probability queries.",
         "- If multiple models or scenarios should be shown TOGETHER on the MAP (e.g., 'all models', 'all scenarios', 'average of models', 'model agreement') -> switch_to_ensemble_mode",
         "  * Use the 'statistic' parameter: 'mean' (default/average), 'std' (uncertainty/spread), 'median', 'iqr', 'percentile', 'extremes'.",
-        "- If comparing exactly TWO scenarios/models/dates side-by-side on the MAP -> switch_to_compare_mode",
+        "- If the user wants TWO INDEPENDENT maps visible AT THE SAME TIME (side by side, next to each other, split screen, dual view, two windows, two maps), showing each map in FULL without subtracting one from the other -> toggle_split_view(enable=True, ...)",
+        "  * Trigger phrases: 'side by side', 'next to each other', 'both at the same time', 'simultaneously', 'split screen', 'two maps', 'dual view', 'show both', 'compare [X] with [Y] on the map', 'show [X] and [Y] at the same time'.",
+        "  * Window 1 keeps all current settings. Only specify parameters for Window 2 (the thing that differs).",
+        "- If comparing TWO scenarios/models/dates as a DIFFERENCE map (one single map showing what changed, e.g. 'how much warmer', 'anomaly', 'difference') -> switch_to_compare_mode",
+        "  * compare_mode is NOT a split view — it produces a single blended/difference map, not two separate windows.",
         "- If a SINGLE model/scenario/date is requested (no location, no ensemble) -> switch_to_explore_mode",
-        "- If the user wants TWO separate maps simultaneously (split view / side-by-side windows) for different scenarios/models/variables/dates -> toggle_split_view(enable=True, ...)",
         "- To close the split view -> toggle_split_view(enable=False)",
         "",
         "You may additionally call update_variable and/or update_color_palette and/or update_unit and/or update_masks together with the one view switch.",
@@ -233,10 +236,13 @@ def _build_system_prompt(context: Optional[dict] = None) -> str:
         "User: 'Switch to tasmax' -> tool call update_variable(variable='tasmax') (+ view switch only if needed).",
         "User: 'Show 2050' -> tool call switch_to_explore_mode(date='2050-01-01', scenario='ssp245').",
         "User: 'Compare ssp245 vs ssp585 for 2050' -> tool call switch_to_compare_mode(compare_mode='Scenarios', scenario_a='ssp245', scenario_b='ssp585', date='2050-01-01').",
-        "User: 'In Berlin, show temperature from 2020 to 2050' -> tool call switch_to_chart_view(location='Berlin', chart_mode='range', start_date='2020-01-01', end_date='2050-01-01', models=[...], scenarios=[...]).",
-        "User: 'Show ssp245 and ssp585 side by side' -> tool call toggle_split_view(enable=True, scenario='ssp585') (Window 1 keeps current settings, Window 2 gets scenario='ssp585').",
-        "User: 'Show tas and pr simultaneously' -> tool call toggle_split_view(enable=True, variable='pr') (Window 1 keeps current variable, Window 2 shows pr).",
+        "User: 'Show the difference between ssp245 and ssp585' -> switch_to_compare_mode (single difference map).",
+        "User: 'Show ssp245 and ssp585 side by side' -> toggle_split_view(enable=True, scenario='ssp585') (two independent maps, NOT compare mode).",
+        "User: 'Show tas and pr simultaneously' -> toggle_split_view(enable=True, variable='pr') (Window 1 keeps current variable, Window 2 shows pr).",
+        "User: 'Compare temperature in 2030 and 2060 next to each other' -> toggle_split_view(enable=True, date='2060-01-01') (two maps, each showing their date).",
+        "User: 'Give me a split screen with historical and ssp585' -> toggle_split_view(enable=True, scenario='ssp585').",
         "User: 'Close the split view' -> tool call toggle_split_view(enable=False).",
+        "User: 'In Berlin, show temperature from 2020 to 2050' -> tool call switch_to_chart_view(location='Berlin', chart_mode='range', start_date='2020-01-01', end_date='2050-01-01', models=[...], scenarios=[...]).",
         "User: 'Where is there a 30% chance of temperature above 35°C in 2060?' -> switch_to_ensemble_mode(models=[all], scenarios=['ssp585'], date='2060-01-01', variable='tas', unit='Celsius (°C)', masks=[{id:1, kind:'probability', variable:'tas', unit:'Celsius (°C)', lowerBound:35, upperBound:1000000, probabilityThreshold:0.3}]).",
         "User: 'Find areas where potatoes can grow in 30 years, worst-case, 20% probability, temperature and precipitation' -> switch_to_ensemble_mode(models=[all], scenarios=['ssp585'], date='2055-07-01', variable='tas', unit='°C', masks=[{id:1, kind:'probability', variable:'tas', unit:'°C', lowerBound:10, upperBound:25, probabilityThreshold:0.2}, {id:2, kind:'probability', variable:'pr', unit:'mm/day', lowerBound:1.4, upperBound:6.0, probabilityThreshold:0.2}]). NOTE: for precipitation use 'mm/day' (typical range 0–20 mm/day), NOT 'kg m⁻² s⁻¹'.",
         "User: 'Show uncertainty in precipitation for 2050' -> switch_to_ensemble_mode(statistic='std', variable='pr', ...) (std deviation = uncertainty, no masks needed).",
@@ -911,11 +917,17 @@ def _get_state_control_functions(context: Optional[dict] = None) -> List[dict]:
             "function": {
                 "name": "toggle_split_view",
                 "description": (
-                    "Open or close a split map view that shows two maps side by side. "
-                    "Window 1 always keeps the current main view settings. "
-                    "Window 2 is independently configured via the parameters below. "
-                    "Use this when the user wants to visually compare two different scenarios, models, "
-                    "variables or dates as maps at the same time. "
+                    "Open or close a split map view that shows two FULL maps side by side in separate windows. "
+                    "Use this whenever the user wants to see two maps at the same time — "
+                    "trigger phrases include: 'side by side', 'next to each other', 'simultaneously', "
+                    "'split screen', 'two maps', 'dual view', 'show both', 'both at the same time', "
+                    "'open a second window', 'compare [X] with [Y] on the map'. "
+                    "IMPORTANT: This is NOT the same as switch_to_compare_mode. "
+                    "split view = two separate full maps each showing their own data. "
+                    "compare mode = one single difference/anomaly map. "
+                    "Window 1 always keeps the current main view settings unchanged. "
+                    "Window 2 is independently configured via the parameters below — "
+                    "only specify what should be DIFFERENT in Window 2. "
                     "To close the split view, call with enable=false."
                 ),
                 "parameters": {

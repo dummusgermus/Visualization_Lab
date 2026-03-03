@@ -114,7 +114,7 @@ function createChatBubbleHTML(msg: ChatMessage): string {
             ? "chat-bubble chat-bubble-user"
             : "chat-bubble chat-bubble-agent";
     const content =
-        msg.sender === "user" ? msg.text : formatChatMessage(msg.text);
+        msg.sender === "user" ? (msg.text ?? "") : formatChatMessage(msg.text ?? "");
     return `<div class="${bubbleClass}">${content}</div>`;
 }
 
@@ -363,7 +363,7 @@ async function sendChat(
         .slice(Math.max(0, appStateContext.chatMessages.length - 6), -1) // Last 5 messages, excluding current
         .map((msg) => ({
             role: msg.sender === "user" ? "user" : "assistant",
-            content: msg.text,
+            content: msg.text ?? "",
         }));
 
     // Build context WITH screenshot if attached
@@ -389,7 +389,7 @@ async function sendChat(
         const reply: ChatMessage = {
             id: Date.now() + 1,
             sender: "agent",
-            text: response.message,
+            text: response.message ?? "",
             new_state: response.new_state,
         };
         console.log("New state from agent:", reply.new_state);

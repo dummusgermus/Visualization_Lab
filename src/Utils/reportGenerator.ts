@@ -11,6 +11,7 @@ import { jsPDF } from "jspdf";
 import html2canvas from "html2canvas";
 import type { AppState, Window2State } from "../main";
 import { compositeViewport } from "./screenshot";
+import { describeScreenshotForReport } from "./chatClient";
 
 // ─── Colour palette for the PDF ────────────────────────────────────────────
 const COLORS = {
@@ -388,18 +389,70 @@ export async function generateReport(state: AppState): Promise<void> {
             y = addImageFitWidth(pdf, leftUrl, y);
         }
 
+        // AI descriptions for each panel
+        const [descLeft, descRight] = await Promise.all([
+            leftUrl  ? describeScreenshotForReport(leftUrl.split(",")[1],  "View 1 – Left panel")  : Promise.resolve(null),
+            rightUrl ? describeScreenshotForReport(rightUrl.split(",")[1], "View 2 – Right panel") : Promise.resolve(null),
+        ]);
+
+        if (descLeft || descRight) {
+            if (y > PAGE_H - 40) { pdf.addPage(); y = MARGIN; }
+            y = sectionHeader(pdf, "Visual Analysis", y);
+            if (descLeft) {
+                pdf.setFontSize(8); pdf.setFont("helvetica", "bold"); setColor(pdf, COLORS.accent);
+                pdf.text("View 1 – Left panel", MARGIN, y);
+                y += LINE_H;
+                pdf.setFontSize(8.5); pdf.setFont("helvetica", "italic"); setColor(pdf, COLORS.dark);
+                y = writeWrapped(pdf, descLeft, MARGIN, y, CONTENT_W);
+                y += 2;
+            }
+            if (descRight) {
+                pdf.setFontSize(8); pdf.setFont("helvetica", "bold"); setColor(pdf, COLORS.accent);
+                pdf.text("View 2 – Right panel", MARGIN, y);
+                y += LINE_H;
+                pdf.setFontSize(8.5); pdf.setFont("helvetica", "italic"); setColor(pdf, COLORS.dark);
+                y = writeWrapped(pdf, descRight, MARGIN, y, CONTENT_W);
+                y += 2;
+            }
+        }
+        y = drawDivider(pdf, y);
+
     } else if (state.canvasView === "map") {
         // Single map view — composite all canvas layers + legend HTML
         const imgUrl = captureMapView();
         if (imgUrl) y = addImageFitWidth(pdf, imgUrl, y);
 
+        // AI description
+        if (imgUrl) {
+            const desc = await describeScreenshotForReport(imgUrl.split(",")[1]);
+            if (desc) {
+                if (y > PAGE_H - 30) { pdf.addPage(); y = MARGIN; }
+                y = sectionHeader(pdf, "Visual Analysis", y);
+                pdf.setFontSize(8.5); pdf.setFont("helvetica", "italic"); setColor(pdf, COLORS.dark);
+                y = writeWrapped(pdf, desc, MARGIN, y, CONTENT_W);
+                y += 2;
+            }
+        }
+        y = drawDivider(pdf, y);
+
     } else {
         // Chart view — use html2canvas for full-fidelity capture (includes SVG)
         const imgUrl = await captureChartView();
         if (imgUrl) y = addImageFitWidth(pdf, imgUrl, y);
-    }
 
-    y = drawDivider(pdf, y);
+        // AI description
+        if (imgUrl) {
+            const desc = await describeScreenshotForReport(imgUrl.split(",")[1], "Chart view");
+            if (desc) {
+                if (y > PAGE_H - 30) { pdf.addPage(); y = MARGIN; }
+                y = sectionHeader(pdf, "Visual Analysis", y);
+                pdf.setFontSize(8.5); pdf.setFont("helvetica", "italic"); setColor(pdf, COLORS.dark);
+                y = writeWrapped(pdf, desc, MARGIN, y, CONTENT_W);
+                y += 2;
+            }
+        }
+        y = drawDivider(pdf, y);
+    }
 
     // ── Settings summary ───────────────────────────────────────────────────
 

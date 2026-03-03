@@ -110,6 +110,31 @@ export async function sendChatMessage(
 }
 
 /**
+ * Ask the LLM to describe a screenshot for use in reports.
+ * Returns a plain-text description, or null on failure.
+ */
+export async function describeScreenshotForReport(
+    screenshotBase64: string,
+    label?: string,
+): Promise<string | null> {
+    const prompt =
+        `You are analyzing a climate data visualization screenshot${label ? ` (${label})` : ""}. ` +
+        "Describe concisely what is shown: the climate variable displayed, the approximate value range and color scale, " +
+        "the geographic region covered, the time period or scenario if visible, and any notable spatial patterns or hotspots. " +
+        "Keep your response to 3-5 sentences and do not use markdown formatting.";
+    try {
+        const response = await sendChatMessage({
+            message: prompt,
+            context: { screenshot: screenshotBase64 },
+            history: [],
+        });
+        return response.success && response.message ? response.message : null;
+    } catch {
+        return null;
+    }
+}
+
+/**
  * Build context object from current application state
  */
 export function buildChatContext(

@@ -113,7 +113,33 @@ export function compositeViewport(
         const rect = c.getBoundingClientRect();
         if (rect.right < 0 || rect.bottom < 0 || rect.left > vw || rect.top > vh) continue;
         try {
-            fullCtx.drawImage(c, rect.left, rect.top, rect.width, rect.height);
+            // Clip to the nearest overflow:hidden ancestor so that split-view panes
+            // don't bleed into each other when each canvas is wider than its pane.
+            let clipRect: DOMRect | null = null;
+            let parent = c.parentElement;
+            while (parent && parent !== document.body) {
+                const style = getComputedStyle(parent);
+                if (style.overflow === "hidden" || style.overflowX === "hidden") {
+                    clipRect = parent.getBoundingClientRect();
+                    break;
+                }
+                parent = parent.parentElement;
+            }
+            if (clipRect) {
+                fullCtx.save();
+                fullCtx.beginPath();
+                fullCtx.rect(
+                    Math.max(0, clipRect.left),
+                    Math.max(0, clipRect.top),
+                    Math.min(clipRect.right, vw) - Math.max(0, clipRect.left),
+                    Math.min(clipRect.bottom, vh) - Math.max(0, clipRect.top),
+                );
+                fullCtx.clip();
+                fullCtx.drawImage(c, rect.left, rect.top, rect.width, rect.height);
+                fullCtx.restore();
+            } else {
+                fullCtx.drawImage(c, rect.left, rect.top, rect.width, rect.height);
+            }
         } catch { /* ignore tainted */ }
     }
 

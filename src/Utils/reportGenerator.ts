@@ -40,9 +40,14 @@ function captureMapView(): string | null {
  */
 function captureMapViewHalf(side: "left" | "right"): string | null {
     const vw = window.innerWidth;
-    const halfW = Math.floor(vw / 2);
-    const startX = side === "right" ? halfW : 0;
-    const canvas = compositeViewport(startX, halfW);
+    // Use the actual pane boundary from the DOM rather than assuming 50/50
+    const pane2 = document.getElementById("split-pane-2");
+    const splitX = pane2 ? Math.round(pane2.getBoundingClientRect().left) : Math.floor(vw / 2);
+    const leftW  = splitX;
+    const rightW = vw - splitX;
+    const startX = side === "right" ? splitX : 0;
+    const width  = side === "right" ? rightW : leftW;
+    const canvas = compositeViewport(startX, width);
     return canvas ? canvas.toDataURL("image/jpeg", 0.92) : null;
 }
 

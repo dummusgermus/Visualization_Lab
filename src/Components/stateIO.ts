@@ -1,4 +1,9 @@
-import type { AppState, EnsembleStatistic, ChartLocation } from "../main";
+import type { AppState, EnsembleStatistic, ChartLocation, Window2State } from "../main";
+
+export type SavedWindow2State = Pick<
+    Window2State,
+    "scenario" | "model" | "variable" | "date" | "mapPalette" | "selectedUnit" | "mode" | "resolution"
+>;
 
 /** The subset of AppState that is saved/loaded */
 export type SavedState = {
@@ -48,6 +53,10 @@ export type SavedState = {
     masks: AppState["masks"];
     // Chat model
     selectedChatModel: AppState["selectedChatModel"];
+    // Split view
+    splitView: AppState["splitView"];
+    splitRatio: AppState["splitRatio"];
+    window2: SavedWindow2State;
 };
 
 export function exportState(state: AppState): SavedState {
@@ -92,6 +101,18 @@ export function exportState(state: AppState): SavedState {
         ensembleUnit: state.ensembleUnit,
         masks: state.masks.map((m) => ({ ...m })),
         selectedChatModel: state.selectedChatModel,
+        splitView: state.splitView,
+        splitRatio: state.splitRatio,
+        window2: {
+            scenario: state.window2.scenario,
+            model: state.window2.model,
+            variable: state.window2.variable,
+            date: state.window2.date,
+            mapPalette: state.window2.mapPalette,
+            selectedUnit: state.window2.selectedUnit,
+            mode: state.window2.mode,
+            resolution: state.window2.resolution,
+        },
     };
 }
 
@@ -142,6 +163,30 @@ export function applyImportedState(
     target.masks = (saved.masks ?? []).map((m) => ({ ...m }));
     if (saved.selectedChatModel) {
         target.selectedChatModel = saved.selectedChatModel;
+    }
+    // Split view
+    target.splitView = saved.splitView ?? false;
+    target.splitRatio = saved.splitRatio ?? 0.5;
+    if (saved.window2) {
+        target.window2 = {
+            ...target.window2,
+            scenario: saved.window2.scenario,
+            model: saved.window2.model,
+            variable: saved.window2.variable,
+            date: saved.window2.date,
+            mapPalette: saved.window2.mapPalette,
+            selectedUnit: saved.window2.selectedUnit,
+            mode: saved.window2.mode,
+            resolution: saved.window2.resolution,
+            // Reset runtime state
+            isLoading: false,
+            loadingProgress: 0,
+            dataError: null,
+            currentData: null,
+            dataMin: null,
+            dataMax: null,
+            timeRange: null,
+        };
     }
     // Reset derived/cached data so a fresh load is triggered after import
     target.currentData = null;

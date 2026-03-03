@@ -481,6 +481,11 @@ export function isW2CacheReady(): boolean {
     return w2CachedMapCanvas !== null;
 }
 
+/** Clears the Window 2 render cache (call before importing state to avoid stale image flashing). */
+export function clearW2Cache(): void {
+    w2CachedMapCanvas = null;
+}
+
 // ── Window 2: fast redraw ────────────────────────────────────────────────────
 function redrawW2CachedMap(canvas: HTMLCanvasElement): void {
     if (!w2CachedMapCanvas) return;

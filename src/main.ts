@@ -22,6 +22,7 @@ import { drawLegendGradient, renderMapLegend } from "./MapView/legend";
 import {
     getCurrentZoomLevel,
     isW2CacheReady,
+    clearW2Cache,
     projectLonLatToCanvas,
     renderMapData,
     renderMapDataWindow2,
@@ -7137,9 +7138,12 @@ function render() {
         // Redraw from cache if data is already loaded (e.g. sidebar toggle).
         if (isW2CacheReady()) {
             resizeWindow2Canvas(persistentCanvas2);
-            // Repaint the Window 2 legend gradient (canvas was recreated in innerHTML)
-            const w2Pal = paletteOptions.find((p) => p.name === state.window2.mapPalette) || paletteOptions[0];
-            drawLegendGradient("legend-gradient-canvas-w2", w2Pal.colors);
+            // Repaint the Window 2 legend gradient only when the legend canvas is in the DOM
+            // (guarded by dataMin !== null, which is the same condition used to render the legend HTML).
+            if (state.window2.dataMin !== null) {
+                const w2Pal = paletteOptions.find((p) => p.name === state.window2.mapPalette) || paletteOptions[0];
+                drawLegendGradient("legend-gradient-canvas-w2", w2Pal.colors);
+            }
         }
     }
 
@@ -8315,24 +8319,6 @@ function renderManualSection(params: {
                 ];
 
     return `
-    <div class="state-io-section">
-      <div class="state-io-label">Settings</div>
-      <div class="state-io-row">
-        <button
-          type="button"
-          data-action="state-export"
-          class="state-io-btn"
-          title="Export current settings as JSON file"
-        >&#x2193; Export</button>
-        <button
-          type="button"
-          data-action="state-import"
-          class="state-io-btn"
-          title="Import settings from JSON file"
-        >&#x2191; Import</button>
-      </div>
-    </div>
-
     <div style="${styleAttr(styles.modeSwitch)}">
       <div data-role="mode-indicator" style="${styleAttr({
           ...styles.modeIndicator,
@@ -10830,81 +10816,6 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         },
     });
 
-    // ── Export / Load state ──────────────────────────────────────
-    const SAVEABLE_KEYS: (keyof AppState)[] = [
-        "mode", "canvasView", "panelTab",
-        "scenario", "model", "variable", "date", "selectedUnit",
-        "mapPalette", "mapInfoPalette", "mapRangePalette", "chartPalette",
-        "compareMode", "compareScenarioA", "compareScenarioB",
-        "compareModelA", "compareModelB", "compareDateStart", "compareDateEnd",
-        "ensembleScenarios", "ensembleModels", "ensembleStatistic",
-        "ensembleDate", "ensembleVariable", "ensembleUnit",
-        "chartMode", "chartDate", "chartRangeStart", "chartRangeEnd",
-        "chartVariable", "chartUnit", "chartScenarios", "chartModels",
-        "chartLocation", "chartLocationName", "chartPoint",
-        "masks",
-        "mapShowBorders", "mapShowCities",
-        "mapPolygon", "chartPolygon", "mapMarker",
-        "mapRangeStart", "mapRangeEnd", "mapRangeNumSamples", "mapRangePreset",
-    ];
-
-    const exportBtn = root.querySelector<HTMLButtonElement>(
-        '[data-action="export-state"]',
-    );
-    exportBtn?.addEventListener("click", () => {
-        const saveData: Record<string, any> = { __version: 1 };
-        for (const key of SAVEABLE_KEYS) {
-            saveData[key] = (state as any)[key];
-        }
-        const blob = new Blob([JSON.stringify(saveData, null, 2)], {
-            type: "application/json",
-        });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `polyoracle-${new Date().toISOString().slice(0, 10)}.json`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-    });
-
-    const importBtn = root.querySelector<HTMLButtonElement>(
-        '[data-action="import-state"]',
-    );
-    importBtn?.addEventListener("click", () => {
-        const fileInput = document.createElement("input");
-        fileInput.type = "file";
-        fileInput.accept = ".json,application/json";
-        fileInput.addEventListener("change", () => {
-            const file = fileInput.files?.[0];
-            if (!file) return;
-            const reader = new FileReader();
-            reader.onload = (ev) => {
-                try {
-                    const data = JSON.parse(ev.target?.result as string);
-                    // Only apply known saveable keys to avoid stomping runtime state
-                    for (const key of SAVEABLE_KEYS) {
-                        if (key in data) {
-                            (state as any)[key] = data[key];
-                        }
-                    }
-                    render();
-                    if (state.canvasView === "map") {
-                        loadClimateData();
-                    } else {
-                        loadChartData();
-                    }
-                } catch {
-                    console.error("Failed to parse state file");
-                }
-            };
-            reader.readAsText(file);
-        });
-        fileInput.click();
-    });
-    // ─────────────────────────────────────────────────────────────
-
     const canvasButtons = root.querySelectorAll<HTMLButtonElement>(
         '[data-action="set-canvas"]',
     );
@@ -13187,18 +13098,27 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
 
     // State Export/Import handlers
     root
-        .querySelector('[data-action="state-export"]')
+        .querySelector('[data-action="export-state"]')
         ?.addEventListener("click", () => {
             downloadStateAsJson(state);
         });
 
     root
-        .querySelector('[data-action="state-import"]')
+        .querySelector('[data-action="import-state"]')
         ?.addEventListener("click", () => {
             triggerImportJson(
                 (saved) => {
+                    clearW2Cache();
                     applyImportedState(state, saved);
                     render();
+                    if (state.canvasView === "map") {
+                        loadClimateData();
+                        if (state.splitView) {
+                            loadClimateDataWindow2();
+                        }
+                    } else if (state.canvasView === "chart") {
+                        loadChartData();
+                    }
                 },
                 (msg) => console.error("Import failed:", msg),
             );

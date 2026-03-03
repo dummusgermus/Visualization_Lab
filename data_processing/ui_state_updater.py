@@ -86,12 +86,14 @@ def switch_to_ensemble_mode(**kwargs) -> dict:
     unit = kwargs.get('unit')
     date = kwargs.get('date')
     variable = kwargs.get('variable')
+    statistic = kwargs.get('statistic')
 
     scenarios = None if scenarios in ('None', 'null', None) else scenarios
     models = None if models in ('None', 'null', None) else models
     date = None if date in ('None', 'null', None) else date
     unit = None if unit in ('None', 'null', None) else unit
     variable = None if variable in ('None', 'null', None) else variable
+    statistic = None if statistic in ('None', 'null', None) else statistic
 
     if not scenarios:
         scenarios = current_state.get('selectedScenarios') or current_state.get('scenarios')
@@ -122,7 +124,7 @@ def switch_to_ensemble_mode(**kwargs) -> dict:
         validate_date_for_scenario(date, scenario)
 
 
-    return {
+    result = {
         "canvasView": "map",
         "mode": "Ensemble",
         "selectedScenarios": scenarios,
@@ -131,6 +133,9 @@ def switch_to_ensemble_mode(**kwargs) -> dict:
         "selectedUnit": unit,
         "variable": variable
     }
+    if statistic:
+        result["ensembleStatistic"] = statistic
+    return result
 
 class CompareMode(Enum):
     MODEL = "Models"

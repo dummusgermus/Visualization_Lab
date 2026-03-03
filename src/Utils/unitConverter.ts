@@ -136,6 +136,11 @@ export function getUnitOptions(variable: string): UnitOption[] {
  */
 export function getDefaultUnitOption(variable: string): UnitOption {
     const options = getUnitOptions(variable);
+    // Prefer Celsius over Kelvin for temperature variables
+    if (["tas", "tasmin", "tasmax"].includes(variable)) {
+        const celsius = options.find((opt) => opt.label.includes("Celsius"));
+        if (celsius) return celsius;
+    }
     return options[0];
 }
 

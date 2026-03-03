@@ -126,6 +126,7 @@ export function updateState(
             lowerEdited: mask.lowerBound != null,
             upperEdited: mask.upperBound != null,
             statistic: mask.statistic,
+            kind: mask.kind ?? "binary",
         }));
     }
     if (newState.mode === "Ensemble") {
@@ -145,6 +146,9 @@ export function updateState(
         }
         if (newState.variable) {
             updates.ensembleVariable = newState.variable;
+        }
+        if (newState.ensembleStatistic) {
+            updates.ensembleStatistic = newState.ensembleStatistic;
         }
     }
 

@@ -604,6 +604,7 @@ export function renderMapData(
         variable?: string;
         unit?: string;
         kind?: "binary" | "probability";
+        probabilityThreshold?: number;
     }>,
     ensembleStatistics?: Map<"mean" | "std" | "median" | "iqr" | "percentile" | "extremes", Float32Array> | null,
     isEnsembleMode?: boolean,
@@ -695,6 +696,7 @@ function runRenderMapData(
         variable?: string;
         unit?: string;
         kind?: "binary" | "probability";
+        probabilityThreshold?: number;
     }>,
     ensembleStatistics?: Map<"mean" | "std" | "median" | "iqr" | "percentile" | "extremes", Float32Array> | null,
     isEnsembleMode?: boolean,
@@ -963,6 +965,7 @@ function runRenderMapData(
                             variable?: string;
                             unit?: string;
                             kind?: "binary" | "probability";
+                            probabilityThreshold?: number;
                         }>
                     >();
                     for (const mask of binaryMasks) {
@@ -1089,9 +1092,21 @@ function runRenderMapData(
                 }
             }
 
+            // Check if pixel falls below any probability mask's minimum probability threshold
+            let probabilityMaskFails = false;
+            if (useProbabilityRendering && Number.isFinite(probabilityValue)) {
+                const maxThreshold = probabilityMasks.reduce(
+                    (acc, m) => Math.max(acc, m.probabilityThreshold ?? 0),
+                    0,
+                );
+                if (probabilityValue < maxThreshold) {
+                    probabilityMaskFails = true;
+                }
+            }
+
             let r: number, g: number, b: number;
             
-            if (!passesMask && binaryMasks.length > 0) {
+            if ((!passesMask && binaryMasks.length > 0) || probabilityMaskFails) {
                 // Render masked pixels in dark gray (slightly lighter than background)
                 // Background is #070b13 (rgb(7, 11, 19)), use a slightly lighter gray
                 r = 20;

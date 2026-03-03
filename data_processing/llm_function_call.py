@@ -189,6 +189,7 @@ def _build_system_prompt(context: Optional[dict] = None) -> str:
         "- If a specific LOCATION is mentioned -> switch_to_chart_view",
         "- If a TIME RANGE is requested (from X to Y) -> switch_to_chart_view(chart_mode='range')",
         "- If multiple models or scenarios are requested in the map view (e.g., 'all models', 'all scenarios', 'average of models') or the user wants to compare statistics between any of these -> switch_to_ensemble_mode",
+        "  * Use the 'statistic' parameter to control what is displayed: 'mean' (default/average), 'std' (uncertainty/spread), 'median', 'iqr' (interquartile range), 'percentile', 'extremes' (min/max range).",
         "- If multiple models or scenarios are requested (e.g., 'compare all scenarios', 'average of models') -> switch_to_chart_view",
         "- If comparing exactly TWO scenarios/models/dates side-by-side on the MAP -> switch_to_compare_mode",
         "- If a SINGLE model/scenario/date is requested (no location) -> switch_to_explore_mode",
@@ -205,6 +206,9 @@ def _build_system_prompt(context: Optional[dict] = None) -> str:
         "- Masks filter the displayed data to only show values within specified bounds.",
         "- Each mask must have a unique ID. If updating an existing mask, use its current ID; otherwise assign a new unique ID.",
         "- Use values that make sense depending on the current views min and max values."
+        "- 'kind' defaults to 'binary': pixels outside the bound range are hidden.",
+        "- 'kind'='probability' is only valid in ENSEMBLE mode: it masks pixels where the share of ensemble members within the bounds is below the lowerBound threshold (0-1 scale).",
+        "- 'statistic' on a mask specifies which ensemble statistic the bounds are checked against (relevant for probability masks).",
         "",
         "== DATE & SCENARIO RULES (when setting/choosing dates) ==",
         "- Dates must be YYYY-MM-DD.",
@@ -800,6 +804,11 @@ def _get_state_control_functions(context: Optional[dict] = None) -> List[dict]:
                             "type": "string",
                             "enum": list(config.VARIABLE_METADATA.keys()),
                             "description": "The climate variable to display"
+                        },
+                        "statistic": {
+                            "type": "string",
+                            "enum": ["mean", "std", "median", "iqr", "percentile", "extremes"],
+                            "description": "The ensemble statistic to display. 'mean' = average across ensemble members (default), 'std' = standard deviation (spread/uncertainty), 'median' = median value, 'iqr' = interquartile range, 'percentile' = specific percentile, 'extremes' = min/max range."
                         }
                     },
                     "required": ["models", "scenarios", "date", "variable", "unit"]
@@ -841,6 +850,16 @@ def _get_state_control_functions(context: Optional[dict] = None) -> List[dict]:
                                         "type": "string",
                                         "enum": _all_units_enum(),
                                         "description": "The unit of measurement for the mask values."
+                                    },
+                                    "kind": {
+                                        "type": "string",
+                                        "enum": ["binary", "probability"],
+                                        "description": "Mask type: 'binary' (default) hides pixels outside the bounds; 'probability' (Ensemble mode only) masks pixels where the ensemble probability of being within the bounds falls below a threshold."
+                                    },
+                                    "statistic": {
+                                        "type": "string",
+                                        "enum": ["mean", "std", "median", "iqr", "percentile", "extremes"],
+                                        "description": "Which ensemble statistic this mask is applied to. Only relevant when kind='probability' in Ensemble mode."
                                     }
                                 },
                                 "required": ["id", "lowerBound", "upperBound", "unit", "variable"]

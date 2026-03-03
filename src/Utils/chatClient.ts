@@ -186,8 +186,7 @@ export function buildChatContext(
             (context.ensembleStatistic = state.ensembleStatistic),
             (context.ensembleDate = state.ensembleDate),
             (context.ensembleVariable = state.ensembleVariable),
-            (context.ensembleUnit = state.ensembleUnit),
-            (context.ensembleStatistics = state.ensembleStatistics));
+            (context.ensembleUnit = state.ensembleUnit));
     }
     if (state.masks && state.masks.length > 0) {
         context.masks = state.masks.map((mask) => ({
@@ -195,6 +194,7 @@ export function buildChatContext(
             variable: mask.variable,
             unit: mask.unit,
             statistic: mask.statistic,
+            kind: mask.kind,
             lowerBound: mask.lowerBound,
             upperBound: mask.upperBound,
         }));

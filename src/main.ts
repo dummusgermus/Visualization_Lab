@@ -1360,6 +1360,7 @@ export type AppState = {
         lowerEdited: boolean;
         upperEdited: boolean;
         kind?: "binary" | "probability";
+        probabilityThreshold?: number; // Minimum probability (0-1) to show pixel — only for probability masks
         statistic?: EnsembleStatistic; // Used in ensemble mode
         variable?: string; // Variable for this mask (explore + ensemble)
         unit?: string; // Unit for this mask (explore + ensemble)
@@ -6764,15 +6765,6 @@ function render() {
                   id="map-canvas"
                   style="${canvasStyle}"
                 ></canvas>
-                <!-- View 1 badge -->
-                <div style="
-                    position:absolute;top:12px;left:12px;z-index:15;
-                    background:rgba(9,14,26,0.82);border:1px solid rgba(148,163,184,0.2);
-                    border-radius:8px;padding:5px 10px;pointer-events:none;
-                    backdrop-filter:blur(8px);
-                ">
-                    <span style="font-size:11px;font-weight:700;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.5px;">View 1 · Sidebar</span>
-                </div>
                 ${renderMapSearchBar()}
                 ${renderDrawOverlay()}
                 ${renderPointOverlay()}
@@ -9542,7 +9534,7 @@ function renderManualSection(params: {
               ${
                   state.masks.length > 0
                       ? `
-                      <div style="${styleAttr({
+                      <div data-pane-mask="ensemble" style="${styleAttr({
                           display: "flex",
                           flexDirection: "column",
                           gap: 8,
@@ -9793,6 +9785,48 @@ function renderManualSection(params: {
                               −
                             </button>
                           </div>
+                          ${mask.kind === "probability" ? `
+                          <div style="${styleAttr({
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 8,
+                              marginTop: 4,
+                          })}">
+                            <span style="${styleAttr({
+                                fontSize: 12,
+                                color: "var(--text-secondary)",
+                                whiteSpace: "nowrap",
+                            })}">Min. prob. ≥</span>
+                            <input
+                              type="number"
+                              min="0"
+                              max="100"
+                              step="1"
+                              value="${Math.round((mask.probabilityThreshold ?? 0.5) * 100)}"
+                              data-action="update-mask-probability-threshold"
+                              data-mask-index="${index}"
+                              placeholder="50"
+                              style="${styleAttr({
+                                  width: "70px",
+                                  background: "var(--gradient-bg)",
+                                  border: "1px solid var(--border-strong)",
+                                  borderRadius: 8,
+                                  color: "var(--text-primary)",
+                                  padding: "6px 10px",
+                                  fontSize: 12.5,
+                                  fontWeight: 600,
+                                  fontFamily: "var(--font-geist-sans)",
+                                  letterSpacing: 0.25,
+                                  minHeight: 32,
+                                  boxShadow: "inset 0 1px 0 var(--inset-light)",
+                              })}"
+                            />
+                            <span style="${styleAttr({
+                                fontSize: 12.5,
+                                color: "var(--text-secondary)",
+                            })}">%</span>
+                          </div>
+                          ` : ""}
                         `;
                             })
                             .join("")}
@@ -10811,6 +10845,46 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         );
     });
 
+    // Handle probability threshold inputs for probability masks
+    const maskProbThresholdInputs = root.querySelectorAll<HTMLInputElement>(
+        '[data-action="update-mask-probability-threshold"]',
+    );
+    maskProbThresholdInputs.forEach((input) => {
+        const commitThreshold = (e?: Event) => {
+            if (e) {
+                e.stopPropagation();
+                e.preventDefault();
+                e.stopImmediatePropagation();
+            }
+            const indexStr = input.dataset.maskIndex;
+            if (indexStr === undefined) return;
+            const index = Number.parseInt(indexStr, 10);
+            if (Number.isNaN(index) || index < 0 || index >= state.masks.length) return;
+            const value = input.value.trim();
+            const pct = value === "" ? 50 : Number.parseFloat(value);
+            if (!Number.isNaN(pct)) {
+                const mask = state.masks[index];
+                const newThreshold = Math.max(0, Math.min(100, pct)) / 100;
+                if (mask.probabilityThreshold !== newThreshold) {
+                    mask.probabilityThreshold = newThreshold;
+                    (state as any).__updatingMask = true;
+                    render();
+                    setTimeout(() => { (state as any).__updatingMask = false; }, 0);
+                }
+            }
+        };
+        input.addEventListener("blur", (e) => commitThreshold(e), { capture: true });
+        input.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") {
+                e.preventDefault();
+                e.stopPropagation();
+                e.stopImmediatePropagation();
+                commitThreshold(e);
+                input.blur();
+            }
+        }, { capture: true });
+    });
+
     attachSidebarHandlers({
         root,
         getSidebarOpen: () => state.sidebarOpen,
@@ -11468,6 +11542,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                         appRoot.querySelector<HTMLCanvasElement>("#map-canvas");
                     if (canvas) {
                         mapCanvas = canvas;
+                        const isEns = state.mode === "Ensemble";
                         renderMapData(
                             state.currentData,
                             mapCanvas,
@@ -11475,14 +11550,16 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                             state.mapPalette,
                             state.dataMin,
                             state.dataMax,
-                            state.variable,
-                            state.selectedUnit,
+                            isEns ? state.ensembleVariable : state.variable,
+                            isEns ? state.ensembleUnit : state.selectedUnit,
                             state.masks,
-                            null,
-                            false,
+                            isEns ? state.ensembleStatistics : null,
+                            isEns,
                             state.mode === "Explore"
                                 ? state.maskVariableData
                                 : undefined,
+                            isEns ? state.ensembleStatisticsByVariable : null,
+                            isEns ? state.ensembleRawSamplesByVariable : null,
                         );
 
                         // Redraw gradient with new palette
@@ -12666,6 +12743,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             lowerEdited: boolean;
             upperEdited: boolean;
             kind?: "binary" | "probability";
+            probabilityThreshold?: number;
             statistic?: EnsembleStatistic;
             variable?: string;
             unit?: string;
@@ -12676,6 +12754,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             lowerEdited: false,
             upperEdited: false,
             kind,
+            ...(kind === "probability" ? { probabilityThreshold: 0.5 } : {}),
         };
         // In ensemble mode, default to "mean" statistic and current variable/unit
         if (state.mode === "Ensemble") {

@@ -10108,6 +10108,33 @@ function renderMapSearchBar() {
               <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
             </svg>
           </button>
+          ${(state.mapPolygon !== null && state.mapPolygon.length >= 3) || state.drawState.active ? `
+          <button
+            type="button"
+            data-action="clear-map-draw"
+            aria-label="Clear drawn selection"
+            title="Clear drawn selection"
+            style="
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              width: 36px;
+              height: 36px;
+              padding: 0;
+              border: 1px solid rgba(148, 163, 184, 0.3);
+              border-radius: 6px;
+              background: rgba(239,68,68,0.10);
+              color: #f87171;
+              cursor: pointer;
+              transition: all 0.2s ease;
+            "
+            onmouseover="this.style.background='rgba(239,68,68,0.22)';"
+            onmouseout="this.style.background='rgba(239,68,68,0.10)';"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+            </svg>
+          </button>` : ""}
           <button
             type="button"
             data-action="toggle-map-options-menu"
@@ -13062,6 +13089,17 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             startMapDrawing();
         }
     });
+
+    root.querySelector<HTMLButtonElement>('[data-action="clear-map-draw"]')
+        ?.addEventListener("click", (e) => {
+            e.preventDefault();
+            stopMapDrawing();
+            state.mapPolygon = null;
+            state.mapInfoOpen = false;
+            closeMapRangeOverlay();
+            render();
+            renderDrawOverlayPaths();
+        });
 
     attachTimeSliderHandlers({
         root,

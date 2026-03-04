@@ -51,6 +51,8 @@ export function renderMapLegend(
         canvasId?: string;
         /** Override the CSS `left` value (e.g. "calc(50vw + 1rem)" for split-view W2). */
         leftOverride?: string;
+        /** When true, omit positioning (used when legend is inside a collapsible wrapper). */
+        inWrapper?: boolean;
     },
 ): string {
     const variableMeta = metadata?.variable_metadata[variable];
@@ -83,14 +85,14 @@ export function renderMapLegend(
         convertedMin,
     ];
 
-    const leftStyle = options?.leftOverride ? `left:${options.leftOverride};` : "";
-    const offsetStyle = offsetY
-        ? `style="${leftStyle}transform: translateY(calc(-50% - ${offsetY}px));"`
-        : leftStyle
-          ? `style="${leftStyle}"`
-          : "";
+    const leftStyle = options?.inWrapper ? "" : options?.leftOverride ? `left:${options.leftOverride};` : "left:1rem;";
+    const styleAttr = options?.inWrapper
+        ? ""
+        : offsetY
+          ? `style="${leftStyle}top:50%;transform: translateY(calc(-50% - ${offsetY}px));"`
+          : `style="${leftStyle}top:50%;transform: translateY(-50%);"`;
     return `
-      <div class="map-legend" ${offsetStyle}>
+      <div class="map-legend" ${styleAttr}>
         <div class="legend-header">
           <div class="legend-title">${name}</div>
           ${

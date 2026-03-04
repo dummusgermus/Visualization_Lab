@@ -1353,6 +1353,9 @@ export type AppState = {
     compareInfoOpen: boolean;
     saveDialogOpen: boolean;
     loadDialogOpen: boolean;
+    saveDialogOpenForWindow: "1" | "2" | null;
+    loadDialogOpenForWindow: "1" | "2" | null;
+    loadTargetWindow: "1" | "2";
     saveConfigNameDraft: string;
     masks: Array<{
         id: number | null;
@@ -1370,6 +1373,7 @@ export type AppState = {
     splitView: boolean;
     splitRatio: number;
     chatScreenshot: string | null;
+    legendCollapsed: boolean;
     window2: Window2State;
 };
 
@@ -1389,6 +1393,53 @@ export type Window2State = {
     dataMin: number | null;
     dataMax: number | null;
     timeRange: { start: string; end: string } | null;
+    // Per-window UI state for independent operation
+    canvasView: CanvasView;
+    sidebarOpen: boolean;
+    panelTab: PanelTab;
+    mapLocationSearchQuery: string;
+    mapLocationSearchResults: LocationSearchResult[];
+    mapLocationSearchLoading: boolean;
+    mapLocationSearchError: string | null;
+    mapLocationSearchSelection: string | null;
+    mapOptionsOpen: boolean;
+    mapShowBorders: boolean;
+    mapShowCities: boolean;
+    mapMarker: MapMarker | null;
+    drawState: DrawState;
+    mapPolygon: LatLon[] | null;
+    compareMode: CompareMode;
+    compareScenarioA: string;
+    compareScenarioB: string;
+    compareModelA: string;
+    compareModelB: string;
+    compareDateStart: string;
+    compareDateEnd: string;
+    ensembleScenarios: string[];
+    ensembleModels: string[];
+    ensembleDropdown: ChartDropdownState;
+    ensembleStatistic: EnsembleStatistic;
+    ensembleDate: string;
+    ensembleVariable: string;
+    ensembleUnit: string;
+    masks: AppState["masks"];
+    maskVariableData: Map<string, ClimateData>;
+    maskVariableRanges: Map<string, { min: number; max: number }>;
+    ensembleStatistics: Map<EnsembleStatistic, Float32Array> | null;
+    ensembleStatisticRanges: Map<EnsembleStatistic, { min: number; max: number }>;
+    ensembleStatisticsByVariable: Map<
+        string,
+        Map<EnsembleStatistic, Float32Array>
+    >;
+    ensembleStatisticRangesByVariable: Map<
+        string,
+        Map<EnsembleStatistic, { min: number; max: number }>
+    >;
+    ensembleRawSamplesByVariable: Map<
+        string,
+        Array<Float32Array | Float64Array>
+    >;
+    legendCollapsed: boolean;
 };
 
 //TODO set 0 from available models to active model and so on
@@ -1514,6 +1565,9 @@ const state: AppState = {
     compareInfoOpen: false,
     saveDialogOpen: false,
     loadDialogOpen: false,
+    saveDialogOpenForWindow: null,
+    loadDialogOpenForWindow: null,
+    loadTargetWindow: "1",
     saveConfigNameDraft: "",
     maskVariableData: new Map<string, ClimateData>(),
     maskVariableRanges: new Map<string, { min: number; max: number }>(),
@@ -1521,6 +1575,7 @@ const state: AppState = {
     splitView: false,
     splitRatio: 0.5,
     chatScreenshot: null,
+    legendCollapsed: false,
     window2: {
         scenario: "SSP245",
         model: models[0],
@@ -1537,6 +1592,55 @@ const state: AppState = {
         dataMin: null,
         dataMax: null,
         timeRange: null,
+        canvasView: "map",
+        sidebarOpen: true,
+        panelTab: "Manual",
+        mapLocationSearchQuery: "",
+        mapLocationSearchResults: [],
+        mapLocationSearchLoading: false,
+        mapLocationSearchError: null,
+        mapLocationSearchSelection: null,
+        mapOptionsOpen: false,
+        mapShowBorders: true,
+        mapShowCities: true,
+        mapMarker: null,
+        drawState: { active: false, points: [], previewPoint: null },
+        mapPolygon: null,
+        compareMode: "Scenarios",
+        compareScenarioA: "SSP245",
+        compareScenarioB: "SSP585",
+        compareModelA: models[0],
+        compareModelB: models[1] ?? models[0],
+        compareDateStart: getDateForScenario("SSP245"),
+        compareDateEnd: clipDateToScenarioRange(
+            addYearsToDate(getDateForScenario("SSP245"), 30),
+            "SSP245",
+        ),
+        ensembleScenarios: ["SSP245", "SSP370", "SSP585"],
+        ensembleModels: [...models],
+        ensembleDropdown: { scenariosOpen: false, modelsOpen: false },
+        ensembleStatistic: "mean",
+        ensembleDate: getDateForScenario("SSP245"),
+        ensembleVariable: variables[0],
+        ensembleUnit: getDefaultUnitOption(variables[0]).label,
+        masks: [],
+        maskVariableData: new Map<string, ClimateData>(),
+        maskVariableRanges: new Map<string, { min: number; max: number }>(),
+        ensembleStatistics: null,
+        ensembleStatisticRanges: new Map<EnsembleStatistic, { min: number; max: number }>(),
+        ensembleStatisticsByVariable: new Map<
+            string,
+            Map<EnsembleStatistic, Float32Array>
+        >(),
+        ensembleStatisticRangesByVariable: new Map<
+            string,
+            Map<EnsembleStatistic, { min: number; max: number }>
+        >(),
+        ensembleRawSamplesByVariable: new Map<
+            string,
+            Array<Float32Array | Float64Array>
+        >(),
+        legendCollapsed: false,
     },
 };
 
@@ -1909,7 +2013,7 @@ function renderCompareInfo(state: AppState): string {
     `;
 }
 
-function renderConfigDropup(state: AppState, panel: "save" | "load"): string {
+function renderConfigDropup(state: AppState, panel: "save" | "load", window: "1" | "2"): string {
     const savedConfigs = getSavedConfigs();
     const savedConfigRows =
         savedConfigs.length === 0
@@ -1946,8 +2050,9 @@ function renderConfigDropup(state: AppState, panel: "save" | "load"): string {
                   })
                   .join("");
 
-    const savePanel = state.saveDialogOpen
-        ? `
+    const savePanel =
+        state.saveDialogOpen && state.saveDialogOpenForWindow === window
+            ? `
       <div class="sidebar-footer-dropup-panel" role="dialog" aria-label="Save configuration">
           <div class="sidebar-footer-dropup-header">
             <div class="sidebar-footer-dropup-title">Save configuration</div>
@@ -1974,8 +2079,9 @@ function renderConfigDropup(state: AppState, panel: "save" | "load"): string {
     `
         : "";
 
-    const loadPanel = state.loadDialogOpen
-        ? `
+    const loadPanel =
+        state.loadDialogOpen && state.loadDialogOpenForWindow === window
+            ? `
       <div class="sidebar-footer-dropup-panel sidebar-footer-dropup-panel-wide" role="dialog" aria-label="Load configuration">
           <div class="sidebar-footer-dropup-header">
             <div class="sidebar-footer-dropup-title">Load configuration</div>
@@ -4970,6 +5076,489 @@ async function loadEnsembleData(
     return { data: ensembleData, min, max, mean };
 }
 
+async function loadCompareDataForWindow2(
+    w2: Window2State,
+    onProgress?: (progress: number) => void,
+): Promise<{ data: ClimateData; min: number; max: number; mean: number }> {
+    let activeScenarioForRange = w2.scenario;
+    if (w2.compareMode === "Scenarios") {
+        activeScenarioForRange = w2.compareScenarioA;
+    }
+    let requestA = createDataRequest({
+        variable: w2.variable,
+        date: w2.date,
+        model: w2.model,
+        scenario: w2.scenario,
+        resolution: w2.resolution,
+    });
+    let requestB = requestA;
+    let labelA = "";
+    let labelB = "";
+
+    switch (w2.compareMode) {
+        case "Scenarios": {
+            const scenarioA = w2.compareScenarioA;
+            const scenarioB = w2.compareScenarioB;
+            const compareDate = clipDateToScenarioRange(
+                w2.date,
+                activeScenarioForRange,
+            );
+            if (compareDate !== w2.date) {
+                w2.date = compareDate;
+            }
+            requestA = createDataRequest({
+                variable: w2.variable,
+                date: compareDate,
+                model: w2.model,
+                scenario: scenarioA,
+                resolution: w2.resolution,
+            });
+            requestB = createDataRequest({
+                variable: w2.variable,
+                date: compareDate,
+                model: w2.model,
+                scenario: scenarioB,
+                resolution: w2.resolution,
+            });
+            labelA = scenarioA;
+            labelB = scenarioB;
+            break;
+        }
+        case "Models": {
+            const compareDate = clipDateToScenarioRange(
+                w2.date,
+                activeScenarioForRange,
+            );
+            if (compareDate !== w2.date) {
+                w2.date = compareDate;
+            }
+            requestA = createDataRequest({
+                variable: w2.variable,
+                date: compareDate,
+                model: w2.compareModelA,
+                scenario: w2.scenario,
+                resolution: w2.resolution,
+            });
+            requestB = createDataRequest({
+                variable: w2.variable,
+                date: compareDate,
+                model: w2.compareModelB,
+                scenario: w2.scenario,
+                resolution: w2.resolution,
+            });
+            labelA = w2.compareModelA;
+            labelB = w2.compareModelB;
+            break;
+        }
+        case "Dates": {
+            const startDate = clipDateToScenarioRange(
+                w2.compareDateStart,
+                w2.scenario,
+            );
+            const endDate = clipDateToScenarioRange(
+                w2.compareDateEnd,
+                w2.scenario,
+            );
+            if (startDate !== w2.compareDateStart) {
+                w2.compareDateStart = startDate;
+            }
+            if (endDate !== w2.compareDateEnd) {
+                w2.compareDateEnd = endDate;
+            }
+            requestA = createDataRequest({
+                variable: w2.variable,
+                date: startDate,
+                model: w2.model,
+                scenario: w2.scenario,
+                resolution: w2.resolution,
+            });
+            requestB = createDataRequest({
+                variable: w2.variable,
+                date: endDate,
+                model: w2.model,
+                scenario: w2.scenario,
+                resolution: w2.resolution,
+            });
+            labelA = startDate;
+            labelB = endDate;
+            break;
+        }
+    }
+
+    const dataA = await fetchClimateData(requestA);
+    onProgress?.(65);
+    const dataB = await fetchClimateData(requestB);
+    onProgress?.(85);
+    return createDifferenceData(dataA, dataB, labelA, labelB);
+}
+
+async function loadEnsembleDataForWindow2(
+    w2: Window2State,
+    onProgress?: (progress: number) => void,
+): Promise<{ data: ClimateData; min: number; max: number; mean: number }> {
+    const activeScenarios =
+        w2.ensembleScenarios.length > 0
+            ? w2.ensembleScenarios
+            : scenarios.filter((s) => s !== "Historical");
+    const activeModels =
+        w2.ensembleModels.length > 0 ? w2.ensembleModels : models;
+
+    if (activeScenarios.length === 0 || activeModels.length === 0) {
+        throw new Error("Please select at least one scenario and one model.");
+    }
+
+    const commonRange = intersectScenarioRange(activeScenarios);
+    const ensembleDate = clipDateToRange(w2.ensembleDate, commonRange);
+    if (ensembleDate !== w2.ensembleDate) {
+        w2.ensembleDate = ensembleDate;
+    }
+
+    const statsByVariable = new Map<string, Map<EnsembleStatistic, Float32Array>>();
+    const rangesByVariable = new Map<
+        string,
+        Map<EnsembleStatistic, { min: number; max: number }>
+    >();
+    const rawSamplesByVariable = new Map<
+        string,
+        Array<Float32Array | Float64Array>
+    >();
+    const requestedStatsByVariable = new Map<string, Set<EnsembleStatistic>>();
+    const addRequestedStat = (variable: string, stat: EnsembleStatistic) => {
+        if (!requestedStatsByVariable.has(variable)) {
+            requestedStatsByVariable.set(variable, new Set<EnsembleStatistic>());
+        }
+        requestedStatsByVariable.get(variable)!.add(stat);
+    };
+    addRequestedStat(w2.ensembleVariable, w2.ensembleStatistic);
+    if (w2.masks && w2.masks.length > 0) {
+        for (const mask of w2.masks) {
+            addRequestedStat(
+                mask.variable || w2.ensembleVariable,
+                mask.statistic || "mean",
+            );
+        }
+    }
+
+    const variablesToProcess = Array.from(requestedStatsByVariable.keys());
+    const requestsPerVariable = activeScenarios.length * activeModels.length;
+    const totalRequests = Math.max(1, requestsPerVariable * variablesToProcess.length);
+    let completedRequests = 0;
+    onProgress?.(10);
+
+    for (const targetVariable of variablesToProcess) {
+        const neededStats = requestedStatsByVariable.get(targetVariable)!;
+        const allDataArrays: (Float32Array | Float64Array)[] = [];
+        const allShapes: Array<[number, number]> = [];
+
+        for (let i = 0; i < activeScenarios.length; i++) {
+            const scenario = activeScenarios[i];
+            for (let j = 0; j < activeModels.length; j++) {
+                const model = activeModels[j];
+                const request = createDataRequest({
+                    variable: targetVariable,
+                    date: ensembleDate,
+                    model,
+                    scenario,
+                    resolution: w2.resolution,
+                });
+
+                try {
+                    const data = await fetchClimateData(request);
+                    const arrayData = dataToArray(data);
+                    if (arrayData) {
+                        allDataArrays.push(arrayData);
+                        allShapes.push(data.shape);
+                    }
+                } catch (error) {
+                    console.warn(
+                        `Failed to fetch data for ${targetVariable} (${scenario}/${model}):`,
+                        error,
+                    );
+                } finally {
+                    completedRequests += 1;
+                    const progress =
+                        10 + Math.round((completedRequests / totalRequests) * 78);
+                    onProgress?.(Math.min(88, progress));
+                }
+            }
+        }
+
+        if (allDataArrays.length === 0) {
+            if (targetVariable === w2.ensembleVariable) {
+                throw new Error(
+                    "No valid data could be loaded for the selected scenarios and models.",
+                );
+            }
+            continue;
+        }
+
+        rawSamplesByVariable.set(targetVariable, allDataArrays);
+
+        const firstShape = allShapes[0];
+        for (let i = 1; i < allShapes.length; i++) {
+            if (
+                allShapes[i][0] !== firstShape[0] ||
+                allShapes[i][1] !== firstShape[1]
+            ) {
+                throw new Error(
+                    "Ensemble datasets have mismatched shapes. Cannot compute statistics.",
+                );
+            }
+        }
+
+        const length = allDataArrays[0].length;
+        const statsArrays = new Map<EnsembleStatistic, Float32Array>();
+        const statsRanges = new Map<
+            EnsembleStatistic,
+            { min: number; max: number }
+        >();
+        for (const stat of neededStats) {
+            statsArrays.set(stat, new Float32Array(length));
+            statsRanges.set(stat, { min: Infinity, max: -Infinity });
+        }
+
+        for (let i = 0; i < length; i++) {
+            const values: number[] = [];
+            for (const arrayData of allDataArrays) {
+                const val = arrayData[i];
+                if (!isFinite(val)) continue;
+                values.push(
+                    targetVariable === "hurs" ? Math.min(val, 100) : val,
+                );
+            }
+
+            if (values.length === 0) {
+                for (const stat of neededStats) {
+                    statsArrays.get(stat)![i] = NaN;
+                }
+                continue;
+            }
+
+            const sorted =
+                neededStats.has("median") ||
+                neededStats.has("iqr") ||
+                neededStats.has("percentile")
+                    ? [...values].sort((a, b) => a - b)
+                    : null;
+            const mean =
+                neededStats.has("mean") || neededStats.has("std")
+                    ? values.reduce((a, b) => a + b, 0) / values.length
+                    : 0;
+
+            for (const stat of neededStats) {
+                let result: number;
+                if (stat === "mean") {
+                    result = mean;
+                } else if (stat === "median") {
+                    result = percentile(sorted!, 50);
+                } else if (stat === "std") {
+                    const variance =
+                        values.reduce(
+                            (sum, val) => sum + Math.pow(val - mean, 2),
+                            0,
+                        ) / values.length;
+                    result = Math.sqrt(variance);
+                } else if (stat === "iqr") {
+                    const q75 = percentile(sorted!, 75);
+                    const q25 = percentile(sorted!, 25);
+                    result = q75 - q25;
+                } else if (stat === "percentile") {
+                    const p90 = percentile(sorted!, 90);
+                    const p10 = percentile(sorted!, 10);
+                    result = p90 - p10;
+                } else if (stat === "extremes") {
+                    result = Math.max(...values) - Math.min(...values);
+                } else {
+                    result = mean;
+                }
+
+                statsArrays.get(stat)![i] = result;
+                if (isFinite(result)) {
+                    const range = statsRanges.get(stat)!;
+                    range.min = Math.min(range.min, result);
+                    range.max = Math.max(range.max, result);
+                }
+            }
+        }
+
+        statsByVariable.set(targetVariable, statsArrays);
+        rangesByVariable.set(targetVariable, statsRanges);
+    }
+
+    onProgress?.(90);
+
+    const displayStats = statsByVariable.get(w2.ensembleVariable);
+    const resultArray = displayStats?.get(w2.ensembleStatistic);
+    if (!displayStats || !resultArray) {
+        throw new Error("Unable to compute ensemble statistics for the selected variable.");
+    }
+
+    let min = Infinity;
+    let max = -Infinity;
+    let sum = 0;
+    let count = 0;
+    for (let i = 0; i < resultArray.length; i++) {
+        const displayedResult = resultArray[i];
+        if (!isFinite(displayedResult)) continue;
+        min = Math.min(min, displayedResult);
+        max = Math.max(max, displayedResult);
+        sum += displayedResult;
+        count += 1;
+    }
+
+    w2.ensembleStatistics = displayStats;
+    w2.ensembleStatisticRanges =
+        rangesByVariable.get(w2.ensembleVariable) ??
+        new Map<EnsembleStatistic, { min: number; max: number }>();
+    w2.ensembleStatisticsByVariable = statsByVariable;
+    w2.ensembleStatisticRangesByVariable = rangesByVariable;
+    w2.ensembleRawSamplesByVariable = rawSamplesByVariable;
+
+    if (w2.masks.length > 0) {
+        for (const mask of w2.masks) {
+            const maskStatistic = mask.statistic || "mean";
+            const maskVariable = mask.variable || w2.ensembleVariable;
+            const maskUnit = mask.unit || w2.ensembleUnit;
+            const range =
+                mask.kind === "probability"
+                    ? getEnsembleProbabilityMaskRangeForWindow2(
+                          w2,
+                          maskVariable,
+                          maskUnit,
+                      )
+                    : getEnsembleMaskRangeForWindow2(
+                          maskStatistic,
+                          w2,
+                          maskVariable,
+                          maskUnit,
+                      );
+            if (!mask.lowerEdited) {
+                mask.lowerBound = range.min;
+            }
+            if (!mask.upperEdited) {
+                mask.upperBound = range.max;
+            }
+        }
+    }
+
+    if (!isFinite(min) || !isFinite(max)) {
+        throw new Error(
+            "Ensemble computation produced no valid numeric values.",
+        );
+    }
+
+    const mean = count > 0 ? sum / count : NaN;
+
+    const templateRequest = createDataRequest({
+        variable: w2.ensembleVariable,
+        date: ensembleDate,
+        model: activeModels[0],
+        scenario: activeScenarios[0],
+        resolution: w2.resolution,
+    });
+
+    const templateData = await fetchClimateData(templateRequest);
+    const isDifferenceStatistic = isDifferenceEnsembleStatistic(
+        w2.ensembleStatistic,
+    );
+    const metadata = isDifferenceStatistic
+        ? {
+              ...(templateData.metadata || {}),
+              comparison: {
+                  labelA: "Ensemble",
+                  labelB:
+                      w2.ensembleStatistic === "std"
+                          ? "Std Dev"
+                          : w2.ensembleStatistic === "median"
+                            ? "Median"
+                            : w2.ensembleStatistic === "iqr"
+                              ? "IQR"
+                              : w2.ensembleStatistic === "percentile"
+                                ? "Percentile Band"
+                                : "Extremes",
+              },
+          }
+        : templateData.metadata;
+
+    const ensembleData: ClimateData = {
+        ...templateData,
+        data: resultArray,
+        data_encoding: "none",
+        metadata,
+    };
+
+    onProgress?.(100);
+    return { data: ensembleData, min, max, mean };
+}
+
+function getEnsembleMaskRangeForWindow2(
+    stat: EnsembleStatistic,
+    w2: Window2State,
+    variable = w2.ensembleVariable,
+    unitLabel = w2.ensembleUnit,
+): { min: number | null; max: number | null } {
+    const rangesForVariable =
+        w2.ensembleStatisticRangesByVariable.get(variable) ??
+        (variable === w2.ensembleVariable
+            ? w2.ensembleStatisticRanges
+            : undefined);
+    const range = rangesForVariable?.get(stat);
+    let rawMin: number | null = null;
+    let rawMax: number | null = null;
+
+    if (range && Number.isFinite(range.min) && Number.isFinite(range.max)) {
+        rawMin = range.min;
+        rawMax = range.max;
+    } else if (
+        stat === w2.ensembleStatistic &&
+        w2.dataMin !== null &&
+        w2.dataMax !== null
+    ) {
+        rawMin = w2.dataMin;
+        rawMax = w2.dataMax;
+    }
+
+    if (rawMin === null || rawMax === null) {
+        return { min: null, max: null };
+    }
+
+    const converted = convertMinMax(
+        rawMin,
+        rawMax,
+        variable,
+        unitLabel,
+        { isDifference: isDifferenceEnsembleStatistic(stat) },
+    );
+    return { min: converted.min, max: converted.max };
+}
+
+function getEnsembleProbabilityMaskRangeForWindow2(
+    w2: Window2State,
+    variable = w2.ensembleVariable,
+    unitLabel = w2.ensembleUnit,
+): { min: number | null; max: number | null } {
+    const sampleArrays = w2.ensembleRawSamplesByVariable.get(variable);
+    if (!sampleArrays || sampleArrays.length === 0) {
+        return { min: null, max: null };
+    }
+    let rawMin = Infinity;
+    let rawMax = -Infinity;
+    for (const sample of sampleArrays) {
+        for (let i = 0; i < sample.length; i++) {
+            const raw = sample[i];
+            if (!Number.isFinite(raw)) continue;
+            const clipped = variable === "hurs" ? Math.min(raw, 100) : raw;
+            rawMin = Math.min(rawMin, clipped);
+            rawMax = Math.max(rawMax, clipped);
+        }
+    }
+    if (!Number.isFinite(rawMin) || !Number.isFinite(rawMax)) {
+        return { min: null, max: null };
+    }
+    const converted = convertMinMax(rawMin, rawMax, variable, unitLabel);
+    return { min: converted.min, max: converted.max };
+}
+
 // Grid shape constants - matching data_processing/config.py GRID_SHAPE = (600, 1440)
 const GRID_HEIGHT = 600;
 const GRID_WIDTH = 1440;
@@ -6523,8 +7112,14 @@ async function loadClimateData() {
 // ---- Window 2 data loading -----------------------------------------------
 let window2DataRequestId = 0;
 
+function setW2LoadingProgress(value: number) {
+    const clamped = Math.max(0, Math.min(100, Math.round(value)));
+    state.window2.loadingProgress = clamped;
+    render();
+}
+
 async function loadClimateDataWindow2() {
-    if (state.canvasView !== "map" || !state.splitView) return;
+    if (!state.splitView || state.window2.canvasView !== "map") return;
     const requestId = ++window2DataRequestId;
 
     state.window2.isLoading = true;
@@ -6536,34 +7131,144 @@ async function loadClimateDataWindow2() {
         if (!state.metaData) await fetchMetadata();
         if (requestId !== window2DataRequestId) return;
         const w2 = state.window2;
-        const clippedDate = clipDateToScenarioRange(w2.date, w2.scenario);
-        if (clippedDate !== w2.date) w2.date = clippedDate;
 
-        state.window2.timeRange = getTimeRangeForScenario(w2.scenario);
-        state.window2.loadingProgress = 40;
+        let activeScenarioForRange = w2.scenario;
+        if (w2.mode === "Compare" && w2.compareMode === "Scenarios") {
+            activeScenarioForRange = w2.compareScenarioA;
+        } else if (w2.mode === "Ensemble") {
+            activeScenarioForRange =
+                w2.ensembleScenarios.length > 0
+                    ? w2.ensembleScenarios[0]
+                    : w2.scenario;
+        }
+        state.window2.timeRange = getTimeRangeForScenario(activeScenarioForRange);
+        setW2LoadingProgress(30);
 
-        const request = createDataRequest({
-            variable: w2.variable,
-            date: clippedDate,
-            model: w2.model,
-            scenario: w2.scenario,
-            resolution: w2.resolution,
-        });
+        let result: { data: ClimateData; min: number; max: number; mean: number };
 
-        const result = await fetchClimateData(request);
-        if (requestId !== window2DataRequestId) return;
+        if (w2.mode === "Compare") {
+            result = await loadCompareDataForWindow2(w2, setW2LoadingProgress);
+        } else if (w2.mode === "Ensemble") {
+            result = await loadEnsembleDataForWindow2(w2, setW2LoadingProgress);
+        } else {
+            const clippedDate = clipDateToScenarioRange(w2.date, activeScenarioForRange);
+            if (clippedDate !== w2.date) w2.date = clippedDate;
+            setW2LoadingProgress(40);
 
-        const arr = dataToArray(result);
-        if (arr) {
-            const finite = Array.from(arr).filter(Number.isFinite) as number[];
-            if (finite.length) {
-                const [mn, mx] = [Math.min(...finite), Math.max(...finite)];
-                state.window2.dataMin = mn;
-                state.window2.dataMax = mx;
+            const request = createDataRequest({
+                variable: w2.variable,
+                date: clippedDate,
+                model: w2.model,
+                scenario: w2.scenario,
+                resolution: w2.resolution,
+            });
+
+            const data = await fetchClimateData(request);
+            if (requestId !== window2DataRequestId) return;
+
+            let arrayData = dataToArray(data);
+            if (!arrayData) {
+                throw new Error("No data returned for the selected parameters.");
+            }
+
+            if (w2.variable === "hurs") {
+                const clamped = new Float32Array(arrayData.length);
+                let min = Infinity;
+                let max = -Infinity;
+                let sum = 0;
+                let count = 0;
+                for (let i = 0; i < arrayData.length; i++) {
+                    const val = arrayData[i];
+                    if (!isFinite(val)) {
+                        clamped[i] = NaN;
+                        continue;
+                    }
+                    const capped = Math.min(val, 100);
+                    clamped[i] = capped;
+                    min = Math.min(min, capped);
+                    max = Math.max(max, capped);
+                    sum += capped;
+                    count += 1;
+                }
+                const mean = count > 0 ? sum / count : NaN;
+                result = {
+                    data: { ...data, data: clamped, data_encoding: "none" },
+                    min,
+                    max,
+                    mean,
+                };
+            } else {
+                const { min, max } = calculateMinMax(arrayData);
+                const mean = averageArray(arrayData, w2.variable);
+                result = { data, min, max, mean };
             }
         }
 
-        state.window2.currentData = result;
+        if (requestId !== window2DataRequestId) return;
+
+        state.window2.currentData = result.data;
+        state.window2.dataMin = result.min;
+        state.window2.dataMax = result.max;
+
+        // In Explore mode, load and cache data for all variables used in masks
+        if (
+            w2.mode === "Explore" &&
+            w2.masks &&
+            w2.masks.length > 0
+        ) {
+            const clippedDate = clipDateToScenarioRange(w2.date, activeScenarioForRange);
+            const maskVariables = new Set<string>();
+            for (const mask of w2.masks) {
+                if (mask.variable && mask.variable !== w2.variable) {
+                    maskVariables.add(mask.variable);
+                }
+            }
+            state.window2.maskVariableData.clear();
+            state.window2.maskVariableRanges.clear();
+            for (const maskVar of maskVariables) {
+                try {
+                    const maskRequest = createDataRequest({
+                        variable: maskVar,
+                        date: clippedDate,
+                        model: w2.model,
+                        scenario: w2.scenario,
+                        resolution: w2.resolution,
+                    });
+                    const maskData = await fetchClimateData(maskRequest);
+                    let maskArrayData = dataToArray(maskData);
+                    if (maskVar === "hurs" && maskArrayData) {
+                        const clamped = new Float32Array(maskArrayData.length);
+                        for (let i = 0; i < maskArrayData.length; i++) {
+                            const val = maskArrayData[i];
+                            clamped[i] =
+                                !isFinite(val) ? NaN : Math.min(val, 100);
+                        }
+                        maskArrayData = clamped;
+                        state.window2.maskVariableData.set(maskVar, {
+                            ...maskData,
+                            data: clamped,
+                            data_encoding: "none",
+                        });
+                    } else {
+                        state.window2.maskVariableData.set(maskVar, maskData);
+                    }
+                    if (maskArrayData) {
+                        const { min, max } = calculateMinMax(maskArrayData);
+                        state.window2.maskVariableRanges.set(maskVar, {
+                            min,
+                            max,
+                        });
+                    }
+                } catch (error) {
+                    console.warn(
+                        `Failed to load mask variable ${maskVar} for window 2:`,
+                        error,
+                    );
+                }
+            }
+        }
+        if (requestId !== window2DataRequestId) return;
+
         state.window2.isLoading = false;
         state.window2.loadingProgress = 100;
 
@@ -6576,6 +7281,9 @@ async function loadClimateDataWindow2() {
             state.window2.dataMin !== null &&
             state.window2.dataMax !== null
         ) {
+            const isEnsemble = w2.mode === "Ensemble";
+            const displayVariable = isEnsemble ? w2.ensembleVariable : w2.variable;
+            const displayUnit = isEnsemble ? w2.ensembleUnit : w2.selectedUnit;
             renderMapDataWindow2(
                 state.window2.currentData,
                 persistentCanvas2,
@@ -6583,11 +7291,20 @@ async function loadClimateDataWindow2() {
                 state.window2.mapPalette,
                 state.window2.dataMin,
                 state.window2.dataMax,
-                state.window2.variable,
-                state.window2.selectedUnit,
+                displayVariable,
+                displayUnit,
+                state.window2.masks && state.window2.masks.length > 0
+                    ? state.window2.masks
+                    : undefined,
+                isEnsemble ? w2.ensembleStatistics ?? undefined : undefined,
+                isEnsemble,
+                state.window2.maskVariableData.size > 0
+                    ? state.window2.maskVariableData
+                    : undefined,
+                isEnsemble ? w2.ensembleStatisticsByVariable : undefined,
+                isEnsemble ? w2.ensembleRawSamplesByVariable : undefined,
             );
-            // Re-attach to pick up any unit change in the tooltip handler.
-            setupWindow2Interactions(persistentCanvas2, state.window2.selectedUnit ?? "");
+            setupWindow2Interactions(persistentCanvas2, displayUnit ?? "");
         }
     } catch (err) {
         if (requestId !== window2DataRequestId) return;
@@ -6601,25 +7318,34 @@ async function loadClimateDataWindow2() {
 // ---- Window 2 rendering ---------------------------------------------------
 function renderWindow2Pane(vpW: number, vpH: number): string {
     const w2 = state.window2;
-    // Canvas same pixel size as the single-view canvas, centered and clipped by pane overflow:hidden
-    const canvasStyle = `position:absolute;top:0;left:50%;transform:translateX(-50%);width:${vpW}px;height:${vpH}px;cursor:grab;`;
+    const canvasStyle = `position:absolute;top:0;left:50%;transform:translateX(-50%);width:${vpW}px;height:${vpH}px;pointer-events:auto;`;
+    const w2ModeTransform = w2.mode === "Explore" ? "translateX(0%)" : w2.mode === "Compare" ? "translateX(-33.333%)" : "translateX(-66.666%)";
+    const w2ModeIndicatorTransform = w2.mode === "Explore" ? "translateX(0%)" : w2.mode === "Compare" ? "translateX(100%)" : "translateX(200%)";
+    const w2ResolutionFill = ((w2.resolution - 1) / (3 - 1)) * 100;
+    const w2CanvasIndicator = w2.canvasView === "map" ? "translateX(0%)" : "translateX(100%)";
+    const w2TabTransform = w2.panelTab === "Manual" ? "translateX(0%)" : "translateX(-50%)";
 
-    const makeSelect = (key: string, selected: string, options: string[]) =>
-        `<select data-action="w2-update-select" data-key="${key}" style="
-            background: rgba(15,23,42,0.85);
-            border: 1px solid rgba(148,163,184,0.3);
-            border-radius: 6px;
-            color: var(--text-primary);
-            font-size: 12px;
-            padding: 4px 8px;
-            cursor: pointer;
-            max-width: 130px;
-        ">${options.map(o => `<option value="${o}" ${o === selected ? "selected" : ""}>${o}</option>`).join("")}</select>`;
-
+    const w2Progress = Math.max(
+        0,
+        Math.min(100, Math.round(w2.loadingProgress)),
+    );
     const loadingHtml = w2.isLoading ? `
-        <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:5;pointer-events:none;">
-            <div style="width:32px;height:32px;border-radius:50%;border:3px solid rgba(255,255,255,0.18);border-top:3px solid #34d399;animation:sv-spin 1s linear infinite;margin-bottom:10px;"></div>
-            <div style="font-size:12px;color:var(--text-secondary);">Loading…</div>
+        <div style="${styleAttr(styles.loadingIndicator)}">
+            <div style="${styleAttr(styles.loadingSpinner)}"></div>
+            <div style="${styleAttr(styles.loadingTextGroup)}">
+                <div style="${styleAttr(
+                    styles.loadingText,
+                )}">Loading data · ${w2Progress}%</div>
+                <div style="${styleAttr(styles.loadingBar)}">
+                    <div style="${styleAttr({
+                        ...styles.loadingBarFill,
+                        width: `${w2Progress}%`,
+                    })}"></div>
+                </div>
+                <div style="${styleAttr(
+                    styles.loadingSubtext,
+                )}">Fetching climate tiles</div>
+            </div>
         </div>` : "";
 
     const errorHtml = w2.dataError ? `
@@ -6637,53 +7363,46 @@ function renderWindow2Pane(vpW: number, vpH: number): string {
 
     return `
         <div id="split-pane-2" style="flex: 0 0 ${((1 - state.splitRatio) * 100).toFixed(2)}%;position:relative;overflow:hidden;">
-            <div style="position:absolute;inset:0;pointer-events:none;">
-                <canvas id="map-canvas-2" style="${canvasStyle}pointer-events:auto;"></canvas>
+            <div style="position:absolute;inset:0;">
+                <canvas id="map-canvas-2" style="${canvasStyle}"></canvas>
+                ${renderMapSearchBar(2)}
                 ${loadingHtml}${errorHtml}${noDataHtml}
-                <!-- Mini header -->
-                <div style="
-                    position:absolute;top:12px;left:50%;transform:translateX(-50%);
-                    display:flex;align-items:center;gap:8px;flex-wrap:wrap;
-                    background:rgba(9,14,26,0.82);border:1px solid rgba(148,163,184,0.2);
-                    border-radius:10px;padding:7px 10px;z-index:15;pointer-events:auto;
-                    backdrop-filter:blur(8px);box-shadow:0 4px 18px rgba(0,0,0,0.45);
-                ">
-                    <span style="font-size:11px;font-weight:700;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.5px;white-space:nowrap;">View 2</span>
-                    ${makeSelect("w2scenario", w2.scenario, scenarios)}
-                    ${makeSelect("w2model", w2.model, models)}
-                    ${makeSelect("w2variable", w2.variable, variables)}
-                    <input
-                        type="text"
-                        data-action="w2-update-input"
-                        data-key="w2date"
-                        value="${w2.date}"
-                        style="
-                            background:rgba(15,23,42,0.85);
-                            border:1px solid rgba(148,163,184,0.3);
-                            border-radius:6px;color:var(--text-primary);
-                            font-size:12px;padding:4px 8px;width:100px;
-                        "
-                        placeholder="YYYY-MM-DD"
-                    />
-                    <button
-                        type="button"
-                        data-action="close-split-view"
-                        aria-label="Close second window"
-                        title="Close second window"
-                        style="
-                            display:flex;align-items:center;justify-content:center;
-                            width:28px;height:28px;padding:0;
-                            border:1px solid rgba(148,163,184,0.3);border-radius:6px;
-                            background:rgba(239,68,68,0.12);color:#f87171;cursor:pointer;
-                            flex-shrink:0;
-                        "
-                    >
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
-                            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-                        </svg>
+                <div style="position:absolute;top:12px;right:12px;z-index:15;pointer-events:auto;">
+                    <button type="button" data-action="close-split-view" aria-label="Close second window" title="Close second window"
+                        style="display:flex;align-items:center;justify-content:center;width:28px;height:28px;padding:0;border:1px solid rgba(148,163,184,0.3);border-radius:6px;background:rgba(239,68,68,0.12);color:#f87171;cursor:pointer;">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                     </button>
                 </div>
             </div>
+            <aside data-role="sidebar" data-window="2" class="sidebar sidebar-in-pane" style="position:absolute;right:0;top:0;bottom:0;width:${SIDEBAR_WIDTH}px;transform:${w2.sidebarOpen ? "translateX(0)" : `translateX(${SIDEBAR_WIDTH + 24}px)`};pointer-events:${w2.sidebarOpen ? "auto" : "none"};" aria-hidden="${!w2.sidebarOpen}">
+                <div class="sidebar-top">
+                  <div class="sidebar-brand"><div class="logo-dot"></div></div>
+                  <div class="tab-switch" style="${styleAttr(styles.tabSwitch)}">
+                    ${(["Manual", "Chat"] as const).map((v) => renderTabButton(v, w2.panelTab === v ? styles.tabBtnActive : undefined, "panel-tab", "2")).join("")}
+                  </div>
+                </div>
+                <div class="sidebar-content">
+                  <div class="tab-viewport">
+                    <div data-role="tab-track" class="tab-track" style="transform:${w2TabTransform}">
+                      <div class="tab-pane">${w2.canvasView === "map" ? renderManualSection({ modeTransform: w2ModeTransform, resolutionFill: w2ResolutionFill, modeIndicatorTransform: w2ModeIndicatorTransform, window: 2 }) : "Chart view for View 2"}</div>
+                      <div class="tab-pane">Chat (View 2)</div>
+                    </div>
+                  </div>
+                </div>
+                <div class="sidebar-footer">
+                  <div class="sidebar-footer-item"><button type="button" class="sidebar-footer-btn" data-action="open-save-state" data-window="2" title="Save"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Save</button>${renderConfigDropup(state, "save", "2")}</div>
+                  <div class="sidebar-footer-item"><button type="button" class="sidebar-footer-btn" data-action="open-load-state" data-window="2" title="Load"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Load</button>${renderConfigDropup(state, "load", "2")}</div>
+                  <button type="button" class="sidebar-footer-btn" data-action="generate-report" title="Report"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>Report</button>
+                </div>
+              </aside>
+              ${renderSidebarToggle(w2.sidebarOpen, "2")}
+              <div data-role="canvas-toggle" data-window="2" style="${styleAttr({ ...styles.canvasToggle, right: w2.sidebarOpen ? SIDEBAR_WIDTH + 24 : 24 })}">
+                <div style="${styleAttr(styles.canvasSwitch)}">
+                  <div data-role="canvas-indicator" style="${styleAttr({ ...styles.canvasIndicator, transform: w2CanvasIndicator })}"></div>
+                  <button type="button" aria-label="Show map" data-action="set-canvas" data-value="map" data-window="2" style="${styleAttr(mergeStyles(styles.canvasBtn, w2.canvasView === "map" ? styles.canvasBtnActive : undefined))}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.6"><path d="M4 6.5 9 4l6 2.5L20 4v14l-5 2.5L9 18 4 20.5V6.5Z"/><path d="m9 4v14m6-11.5v14"/></svg></button>
+                  <button type="button" aria-label="Show chart" data-action="set-canvas" data-value="chart" data-window="2" style="${styleAttr(mergeStyles(styles.canvasBtn, w2.canvasView === "chart" ? styles.canvasBtnActive : undefined))}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.8"><path d="M4 18h16"/><path d="M6 18 11 9l4 5 3-6"/><circle cx="6" cy="18" r="1.2"/><circle cx="11" cy="9" r="1.2"/><circle cx="15" cy="14" r="1.2"/><circle cx="18" cy="8" r="1.2"/></svg></button>
+                </div>
+              </div>
         </div>
     `;
 }
@@ -6716,9 +7435,9 @@ function setupSplitDivider() {
             pane1.style.flex = `0 0 ${(ratio * 100).toFixed(2)}%`;
             pane2.style.flex = `0 0 ${((1 - ratio) * 100).toFixed(2)}%`;
             // Move the fixed W2 legend live
-            const legends = appRoot!.querySelectorAll<HTMLElement>(".map-legend");
-            if (legends.length >= 2) {
-                legends[1].style.left = `calc(${(ratio * 100).toFixed(2)}vw + 1rem)`;
+            const w2Wrapper = appRoot!.querySelector<HTMLElement>('.legend-wrapper[data-window="2"]');
+            if (w2Wrapper) {
+                w2Wrapper.style.left = `calc(${(ratio * 100).toFixed(2)}vw + 1rem)`;
             }
         };
 
@@ -6821,38 +7540,46 @@ function render() {
             state.canvasView === "map" &&
             state.dataMin !== null &&
             state.dataMax !== null
-                ? renderMapLegend(
-                      hasProbabilityMasks
-                          ? "probability"
-                          : state.mode === "Ensemble"
-                            ? state.ensembleVariable
-                            : state.variable,
-                      hasProbabilityMasks ? 0 : state.dataMin,
-                      hasProbabilityMasks ? 100 : state.dataMax,
-                      state.metaData,
-                      hasProbabilityMasks
-                          ? undefined
-                          : state.mode === "Ensemble"
-                            ? state.ensembleUnit
-                            : state.selectedUnit,
-                      state.mode === "Compare" ||
-                          (state.mode === "Ensemble" &&
-                              isDifferenceEnsembleStatistic(
-                                  state.ensembleStatistic,
-                              )),
+                ? renderLegendWithCollapse(
+                      renderMapLegend(
+                          hasProbabilityMasks
+                              ? "probability"
+                              : state.mode === "Ensemble"
+                                ? state.ensembleVariable
+                                : state.variable,
+                          hasProbabilityMasks ? 0 : state.dataMin,
+                          hasProbabilityMasks ? 100 : state.dataMax,
+                          state.metaData,
+                          hasProbabilityMasks
+                              ? undefined
+                              : state.mode === "Ensemble"
+                                ? state.ensembleUnit
+                                : state.selectedUnit,
+                          state.mode === "Compare" ||
+                              (state.mode === "Ensemble" &&
+                                  isDifferenceEnsembleStatistic(
+                                      state.ensembleStatistic,
+                                  )),
+                          state.mapRangeOpen ? 70 : 0,
+                          hasProbabilityMasks
+                              ? {
+                                    titleOverride: "Joint Probability",
+                                    unitOverride: "%",
+                                    skipConversion: true,
+                                    inWrapper: true,
+                                    paletteControlHtml: renderLegendPaletteSelect(),
+                                    bottomControlsHtml: renderLegendUnitControl(),
+                                }
+                              : {
+                                    inWrapper: true,
+                                    paletteControlHtml: renderLegendPaletteSelect(),
+                                    bottomControlsHtml: renderLegendUnitControl(),
+                                },
+                      ),
+                      state.legendCollapsed,
+                      "1",
+                      "0.5rem",
                       state.mapRangeOpen ? 70 : 0,
-                      hasProbabilityMasks
-                          ? {
-                                titleOverride: "Joint Probability",
-                                unitOverride: "%",
-                                skipConversion: true,
-                                paletteControlHtml: renderLegendPaletteSelect(),
-                                bottomControlsHtml: renderLegendUnitControl(),
-                            }
-                          : {
-                                paletteControlHtml: renderLegendPaletteSelect(),
-                                bottomControlsHtml: renderLegendUnitControl(),
-                            },
                   )
                 : ""
         }
@@ -6861,21 +7588,55 @@ function render() {
             state.canvasView === "map" &&
             state.window2.dataMin != null &&
             state.window2.dataMax != null
-                ? renderMapLegend(
-                      state.window2.variable,
-                      state.window2.dataMin,
-                      state.window2.dataMax,
-                      state.metaData,
-                      state.window2.selectedUnit,
-                      false,
-                      0,
-                      {
-                          canvasId: "legend-gradient-canvas-w2",
-                          leftOverride: `calc(${(state.splitRatio * 100).toFixed(2)}vw + 1rem)`,
-                          paletteControlHtml: renderLegendW2PaletteSelect(),
-                          bottomControlsHtml: renderLegendW2UnitControl(),
-                      },
-                  )
+                ? (() => {
+                      const w2 = state.window2;
+                      const w2HasProbabilityMasks =
+                          w2.mode === "Ensemble" &&
+                          w2.masks.some((mask) => mask.kind === "probability");
+                      const w2Variable = w2HasProbabilityMasks
+                          ? "probability"
+                          : w2.mode === "Ensemble"
+                            ? w2.ensembleVariable
+                            : w2.variable;
+                      const w2Min = w2HasProbabilityMasks ? 0 : w2.dataMin!;
+                      const w2Max = w2HasProbabilityMasks ? 100 : w2.dataMax!;
+                      const w2Unit = w2HasProbabilityMasks
+                          ? undefined
+                          : w2.mode === "Ensemble"
+                            ? w2.ensembleUnit
+                            : w2.selectedUnit;
+                      const w2Left = `calc(${(state.splitRatio * 100).toFixed(2)}vw + 0.5rem)`;
+                      return renderLegendWithCollapse(
+                          renderMapLegend(
+                              w2Variable,
+                              w2Min,
+                              w2Max,
+                              state.metaData,
+                              w2Unit,
+                              false,
+                              0,
+                              w2HasProbabilityMasks
+                                  ? {
+                                        titleOverride: "Joint Probability",
+                                        unitOverride: "%",
+                                        skipConversion: true,
+                                        inWrapper: true,
+                                        canvasId: "legend-gradient-canvas-w2",
+                                        paletteControlHtml: renderLegendW2PaletteSelect(),
+                                        bottomControlsHtml: renderLegendW2UnitControl(),
+                                    }
+                                  : {
+                                        inWrapper: true,
+                                        canvasId: "legend-gradient-canvas-w2",
+                                        paletteControlHtml: renderLegendW2PaletteSelect(),
+                                        bottomControlsHtml: renderLegendW2UnitControl(),
+                                    },
+                          ),
+                          w2.legendCollapsed,
+                          "2",
+                          w2Left,
+                      );
+                  })()
                 : ""
         }
       <div style="${styleAttr(state.splitView && state.canvasView === 'map'
@@ -6893,13 +7654,15 @@ function render() {
                         const vpW = window.innerWidth;
                         const vpH = window.innerHeight;
                         const canvasStyle = `position:absolute;top:0;left:50%;transform:translateX(-50%);width:${vpW}px;height:${vpH}px;pointer-events:auto;`;
+                        const w1CanvasIndicator = state.canvasView === "map" ? "translateX(0%)" : "translateX(100%)";
+                        const w1TabTransform = state.panelTab === "Manual" ? "translateX(0%)" : "translateX(-50%)";
                         const paneInner = `
               <div style="position:absolute;inset:0;">
                 <canvas
                   id="map-canvas"
                   style="${canvasStyle}"
                 ></canvas>
-                ${renderMapSearchBar()}
+                ${renderMapSearchBar(1)}
                 ${renderDrawOverlay()}
                 ${renderPointOverlay()}
                 ${renderMapMarkerOverlay()}
@@ -6925,6 +7688,35 @@ function render() {
                       </div>`
                         : ""
                 }
+              </div>
+              <aside data-role="sidebar" data-window="1" class="sidebar sidebar-in-pane" style="position:absolute;right:0;top:0;bottom:0;width:${SIDEBAR_WIDTH}px;transform:${state.sidebarOpen ? "translateX(0)" : `translateX(${SIDEBAR_WIDTH + 24}px)`};pointer-events:${state.sidebarOpen ? "auto" : "none"};" aria-hidden="${!state.sidebarOpen}">
+                <div class="sidebar-top">
+                  <div class="sidebar-brand"><div class="logo-dot"></div></div>
+                  <div class="tab-switch" style="${styleAttr(styles.tabSwitch)}">
+                    ${(["Manual", "Chat"] as const).map((v) => renderTabButton(v, state.panelTab === v ? styles.tabBtnActive : undefined, "panel-tab")).join("")}
+                  </div>
+                </div>
+                <div class="sidebar-content">
+                  <div class="tab-viewport">
+                    <div data-role="tab-track" class="tab-track" style="transform:${w1TabTransform}">
+                      <div class="tab-pane">${state.canvasView === "map" ? renderManualSection({ modeTransform, resolutionFill, modeIndicatorTransform }) : renderChartSection()}</div>
+                      <div class="tab-pane">${renderChatSectionWrapper()}</div>
+                    </div>
+                  </div>
+                </div>
+                <div class="sidebar-footer">
+                  <div class="sidebar-footer-item"><button type="button" class="sidebar-footer-btn" data-action="open-save-state" data-window="1" title="Save"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Save</button>${renderConfigDropup(state, "save", "1")}</div>
+                  <div class="sidebar-footer-item"><button type="button" class="sidebar-footer-btn" data-action="open-load-state" data-window="1" title="Load"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Load</button>${renderConfigDropup(state, "load", "1")}</div>
+                  <button type="button" class="sidebar-footer-btn" data-action="generate-report" title="Report"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>Report</button>
+                </div>
+              </aside>
+              ${renderSidebarToggle(state.sidebarOpen, "1")}
+              <div data-role="canvas-toggle" data-window="1" style="${styleAttr({ ...styles.canvasToggle, right: state.sidebarOpen ? SIDEBAR_WIDTH + 24 : 24 })}">
+                <div style="${styleAttr(styles.canvasSwitch)}">
+                  <div data-role="canvas-indicator" style="${styleAttr({ ...styles.canvasIndicator, transform: w1CanvasIndicator })}"></div>
+                  <button type="button" aria-label="Show map" data-action="set-canvas" data-value="map" data-window="1" style="${styleAttr(mergeStyles(styles.canvasBtn, (state.canvasView as string) === "map" ? styles.canvasBtnActive : undefined))}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.6"><path d="M4 6.5 9 4l6 2.5L20 4v14l-5 2.5L9 18 4 20.5V6.5Z"/><path d="m9 4v14m6-11.5v14"/></svg></button>
+                  <button type="button" aria-label="Show chart" data-action="set-canvas" data-value="chart" data-window="1" style="${styleAttr(mergeStyles(styles.canvasBtn, (state.canvasView as string) === "chart" ? styles.canvasBtnActive : undefined))}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.8"><path d="M4 18h16"/><path d="M6 18 11 9l4 5 3-6"/><circle cx="6" cy="18" r="1.2"/><circle cx="11" cy="9" r="1.2"/><circle cx="15" cy="14" r="1.2"/><circle cx="18" cy="8" r="1.2"/></svg></button>
+                </div>
               </div>
             `;
                         return `
@@ -6993,6 +7785,7 @@ function render() {
 
       ${renderMapRangeOverlay()}
 
+      ${!state.splitView ? `
       <aside data-role="sidebar" class="sidebar" style="width: ${SIDEBAR_WIDTH}px; transform: ${
           state.sidebarOpen
               ? "translateX(0)"
@@ -7041,7 +7834,7 @@ function render() {
         </div>
         <div class="sidebar-footer">
           <div class="sidebar-footer-item">
-            <button type="button" class="sidebar-footer-btn" data-action="open-save-state" title="Save current settings locally or export as a JSON file">
+            <button type="button" class="sidebar-footer-btn" data-action="open-save-state" data-window="1" title="Save current settings locally or export as a JSON file">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
                 <polyline points="7 10 12 15 17 10"/>
@@ -7049,10 +7842,10 @@ function render() {
               </svg>
               Save
             </button>
-            ${renderConfigDropup(state, "save")}
+            ${renderConfigDropup(state, "save", "1")}
           </div>
           <div class="sidebar-footer-item">
-            <button type="button" class="sidebar-footer-btn" data-action="open-load-state" title="Load settings from saved configs or import a JSON file">
+            <button type="button" class="sidebar-footer-btn" data-action="open-load-state" data-window="1" title="Load settings from saved configs or import a JSON file">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
                 <polyline points="17 8 12 3 7 8"/>
@@ -7060,7 +7853,7 @@ function render() {
               </svg>
               Load
             </button>
-            ${renderConfigDropup(state, "load")}
+            ${renderConfigDropup(state, "load", "1")}
           </div>
           <button type="button" class="sidebar-footer-btn" data-action="generate-report" title="Generate a PDF report of the current view and settings">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
@@ -7132,9 +7925,12 @@ function render() {
       ${renderCompareInfo(state)}
 
       ${renderSidebarToggle(state.sidebarOpen)}
+      ` : ""}
 
       ${
-          state.canvasView === "map" && !state.mapRangeOpen
+          !state.splitView &&
+          state.canvasView === "map" &&
+          !state.mapRangeOpen
               ? renderTimeSlider({
                     date:
                         state.mode == "Ensemble"
@@ -8047,6 +8843,7 @@ function renderInput(
         min?: string;
         max?: string;
         dataRole?: string;
+        dataWindow?: "1" | "2";
     },
 ) {
     const type = opts?.type ?? "date";
@@ -8054,6 +8851,7 @@ function renderInput(
     const minAttr = opts?.min ? `min="${opts.min}"` : "";
     const maxAttr = opts?.max ? `max="${opts.max}"` : "";
     const dataRole = opts?.dataRole ? `data-role="${opts.dataRole}"` : "";
+    const dataWindow = opts?.dataWindow ? `data-window="${opts.dataWindow}"` : "";
     return `
     <input
       type="${type}"
@@ -8063,6 +8861,7 @@ function renderInput(
       ${minAttr}
       ${maxAttr}
       ${dataRole}
+      ${dataWindow}
     />
   `;
 }
@@ -8078,6 +8877,7 @@ function renderSelect(
         selectedLabel?: string;
         extraContent?: string;
         dataRole?: string;
+        dataWindow?: "1" | "2";
     },
 ) {
     const dataKey = opts?.dataKey ?? name;
@@ -8089,16 +8889,17 @@ function renderSelect(
     const displayValue = escapeHtml(opts?.selectedLabel ?? current);
     const extraContent = opts?.extraContent ?? "";
     const dataRole = opts?.dataRole ? `data-role="${opts.dataRole}"` : "";
+    const dataWindow = opts?.dataWindow ? `data-window="${opts.dataWindow}"` : "";
 
     return `
     <div class="custom-select-container">
       <div class="custom-select-info-panel" id="${uniqueId}-info" role="tooltip"></div>
       <div class="custom-select-wrapper" ${dataRole} data-key="${dataKey}" ${
           disabled ? 'data-disabled="true"' : ""
-      } ${infoType ? `data-info-type="${infoType}"` : ""}>
+      } ${infoType ? `data-info-type="${infoType}"` : ""} ${dataWindow}>
         <div class="custom-select-trigger" data-action="update-select" data-key="${dataKey}" id="${uniqueId}-trigger" ${
             disabled ? 'aria-disabled="true"' : ""
-        } tabindex="${disabled ? "-1" : "0"}">
+        } tabindex="${disabled ? "-1" : "0"}" ${dataWindow}>
           <span class="custom-select-value">${displayValue}</span>
           <svg class="custom-select-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
             <path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -8132,6 +8933,7 @@ function renderSelect(
                      data-value="${opt}" 
                      data-action="update-select" 
                      data-key="${dataKey}"
+                     ${dataWindow}
                      role="option"
                      ${opt === current ? 'aria-selected="true"' : ""}
                      tabindex="0">
@@ -8145,6 +8947,28 @@ function renderSelect(
       </div>
     </div>
   `;
+}
+
+function renderLegendWithCollapse(
+    legendHtml: string,
+    collapsed: boolean,
+    window: "1" | "2",
+    leftStyle: string,
+    offsetY = 0,
+): string {
+    const transformY = offsetY ? `transform: translateY(calc(-50% - ${offsetY}px));` : "transform: translateY(-50%);";
+    return `
+      <div class="legend-wrapper" data-window="${window}" style="left:${leftStyle}; top:50%; ${transformY}">
+        <button type="button" class="legend-toggle-btn" data-action="toggle-legend" data-window="${window}" aria-label="${collapsed ? "Show legend" : "Hide legend"}" title="${collapsed ? "Show legend" : "Hide legend"}">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            ${collapsed ? '<polyline points="9 18 15 12 9 6"/>' : '<polyline points="15 18 9 12 15 6"/>'}
+          </svg>
+        </button>
+        <div class="legend-slide-wrapper${collapsed ? " collapsed" : ""}">
+          ${legendHtml}
+        </div>
+      </div>
+    `;
 }
 
 function renderLegendPaletteSelect() {
@@ -8333,8 +9157,11 @@ function renderLegendW2PaletteSelect() {
 }
 
 function renderLegendW2UnitControl() {
-    const unitVariable = state.window2.variable;
-    const currentUnit = state.window2.selectedUnit;
+    const w2 = state.window2;
+    const unitVariable =
+        w2.mode === "Ensemble" ? w2.ensembleVariable : w2.variable;
+    const currentUnit =
+        w2.mode === "Ensemble" ? w2.ensembleUnit : w2.selectedUnit;
     return `
     <div class="legend-unit-select">
       ${renderSelect(
@@ -8351,13 +9178,16 @@ function renderTabButton(
     value: PanelTab,
     activeStyle?: Style,
     dataKey = "panel-tab",
+    dataWindow?: "1" | "2",
 ) {
+    const dataWindowAttr = dataWindow ? ` data-window="${dataWindow}"` : "";
     return `
     <button
       type="button"
       data-action="set-tab"
       data-key="${dataKey}"
       data-value="${value}"
+      ${dataWindowAttr}
       style="${styleAttr(mergeStyles(styles.tabBtn, activeStyle))}"
     >
       ${value}
@@ -8369,11 +9199,14 @@ function renderManualSection(params: {
     modeTransform: string;
     resolutionFill: number;
     modeIndicatorTransform: string;
+    window?: 1 | 2;
 }) {
-    const { modeTransform, resolutionFill, modeIndicatorTransform } = params;
+    const { modeTransform, resolutionFill, modeIndicatorTransform, window = 1 } = params;
+    const s = getWindowState(window);
+    const dataWindowOpt = window === 2 ? ("2" as const) : undefined;
     const hasProbabilityMasks =
-        state.mode === "Ensemble" &&
-        state.masks.some((mask) => mask.kind === "probability");
+        s.mode === "Ensemble" &&
+        s.masks.some((mask) => mask.kind === "probability");
 
     const renderCollapsible = (
         label: string,
@@ -8428,39 +9261,43 @@ function renderManualSection(params: {
         `;
     };
     const compareParameters =
-        state.compareMode === "Models"
+        s.compareMode === "Models"
             ? [
                   renderField(
                       "Scenario",
-                      renderSelect("scenario", scenarios, state.scenario, {
+                      renderSelect("scenario", scenarios, s.scenario, {
                           infoType: "scenario",
+                          dataWindow: dataWindowOpt,
                       }),
                   ),
-                  renderField("Date", renderInput("date", state.date)),
+                  renderField("Date", renderInput("date", s.date, { dataWindow: dataWindowOpt })),
               ]
-            : state.compareMode === "Dates"
+            : s.compareMode === "Dates"
               ? [
                     renderField(
                         "Scenario",
-                        renderSelect("scenario", scenarios, state.scenario, {
+                        renderSelect("scenario", scenarios, s.scenario, {
                             infoType: "scenario",
+                            dataWindow: dataWindowOpt,
                         }),
                     ),
                     renderField(
                         "Model",
-                        renderSelect("model", models, state.model, {
+                        renderSelect("model", models, s.model, {
                             infoType: "model",
+                            dataWindow: dataWindowOpt,
                         }),
                     ),
                 ]
               : [
                     renderField(
                         "Model",
-                        renderSelect("model", models, state.model, {
+                        renderSelect("model", models, s.model, {
                             infoType: "model",
+                            dataWindow: dataWindowOpt,
                         }),
                     ),
-                    renderField("Date", renderInput("date", state.date)),
+                    renderField("Date", renderInput("date", s.date, { dataWindow: dataWindowOpt })),
                 ];
 
     return `
@@ -8478,10 +9315,11 @@ function renderManualSection(params: {
               class="mode-btn"
               data-action="set-mode"
               data-value="${value}"
+              ${dataWindowOpt ? `data-window="${dataWindowOpt}"` : ""}
               style="${styleAttr(
                   mergeStyles(
                       styles.modeBtn,
-                      state.mode === value ? styles.modeBtnActive : undefined,
+                      s.mode === value ? styles.modeBtnActive : undefined,
                   ),
               )}"
             >
@@ -8507,34 +9345,38 @@ function renderManualSection(params: {
             <div style="${styleAttr(styles.paramGrid)}">
               ${renderField(
                   "Scenario",
-                  renderSelect("scenario", scenarios, state.scenario, {
+                  renderSelect("scenario", scenarios, s.scenario, {
                       infoType: "scenario",
                       dataRole: "scenario-selector",
+                      dataWindow: dataWindowOpt,
                   }),
               )}
               ${renderField(
                   "Model",
-                  renderSelect("model", models, state.model, {
+                  renderSelect("model", models, s.model, {
                       infoType: "model",
                       dataRole: "model-selector",
+                      dataWindow: dataWindowOpt,
                   }),
               )}
               ${renderField(
                   "Date",
                   (() => {
-                      const timeRange = getTimeRangeForScenario(state.scenario);
-                      return renderInput("date", state.date, {
+                      const timeRange = getTimeRangeForScenario(s.scenario);
+                      return renderInput("date", s.date, {
                           min: timeRange.start,
                           max: timeRange.end,
                           dataRole: "date-picker",
+                          dataWindow: dataWindowOpt,
                       });
                   })(),
               )}
               ${renderField(
                   "Variable",
-                  renderSelect("variable", variables, state.variable, {
+                  renderSelect("variable", variables, s.variable, {
                       infoType: "variable",
                       dataRole: "variable-selector",
+                      dataWindow: dataWindowOpt,
                   }),
               )}
             </div>
@@ -8553,8 +9395,9 @@ function renderManualSection(params: {
                   min="1"
                   max="3"
                   step="1"
-                  value="${state.resolution}"
+                  value="${s.resolution}"
                   data-action="set-resolution"
+                  ${dataWindowOpt ? `data-window="${dataWindowOpt}"` : ""}
                   class="resolution-slider"
                   style="${styleAttr(
                       mergeStyles(styles.range, {
@@ -8565,9 +9408,9 @@ function renderManualSection(params: {
                 <div data-role="resolution-value" style="${styleAttr(
                     styles.resolutionValue,
                 )}">${
-                    state.resolution === 1
+                    s.resolution === 1
                         ? "Low"
-                        : state.resolution === 2
+                        : s.resolution === 2
                           ? "Medium"
                           : "High"
                 }</div>
@@ -9188,12 +10031,12 @@ function renderManualSection(params: {
                     <div data-role="resolution-value" style="${styleAttr(
                         styles.resolutionValue,
                     )}">${
-                        state.resolution === 1
-                            ? "Low"
-                            : state.resolution === 2
-                              ? "Medium"
-                              : "High"
-                    }</div>
+                    s.resolution === 1
+                        ? "Low"
+                        : s.resolution === 2
+                          ? "Medium"
+                          : "High"
+                }</div>
                   </div>
                 </div>
               </div>
@@ -9739,8 +10582,9 @@ function renderManualSection(params: {
                   min="1"
                   max="3"
                   step="1"
-                  value="${state.resolution}"
+                  value="${s.resolution}"
                   data-action="set-resolution"
+                  ${dataWindowOpt ? `data-window="${dataWindowOpt}"` : ""}
                   class="resolution-slider"
                   style="${styleAttr(
                       mergeStyles(styles.range, {
@@ -9751,9 +10595,9 @@ function renderManualSection(params: {
                 <div data-role="resolution-value" style="${styleAttr(
                     styles.resolutionValue,
                 )}">${
-                    state.resolution === 1
+                    s.resolution === 1
                         ? "Low"
-                        : state.resolution === 2
+                        : s.resolution === 2
                           ? "Medium"
                           : "High"
                 }</div>
@@ -10291,11 +11135,18 @@ function renderChartLocationExtras() {
     `;
 }
 
-function renderMapSearchBar() {
-    if (state.canvasView !== "map") return "";
+/** Get the effective state for a window (1 = main, 2 = split pane 2). */
+function getWindowState(window: 1 | 2) {
+    return window === 2 ? state.window2 : state;
+}
+
+function renderMapSearchBar(window: 1 | 2 = 1) {
+    const s = getWindowState(window);
+    if (s.canvasView !== "map") return "";
+    const dataWindow = window === 2 ? ' data-window="2"' : "";
     const results =
-        state.mapLocationSearchResults.length > 0
-            ? state.mapLocationSearchResults
+        s.mapLocationSearchResults.length > 0
+            ? s.mapLocationSearchResults
                   .map(
                       (res) => `
                 <button
@@ -10305,6 +11156,7 @@ function renderMapSearchBar() {
                   data-name="${escapeHtml(res.displayName)}"
                   data-lat="${res.lat}"
                   data-lon="${res.lon}"
+                  ${dataWindow}
                 >
                   <div class="location-search-result-name">${escapeHtml(
                       res.displayName,
@@ -10318,24 +11170,23 @@ function renderMapSearchBar() {
                   .join("")
             : "";
 
-    const hasQuery = state.mapLocationSearchQuery.trim().length > 0;
-    const statusMessage = state.mapLocationSearchError
+    const hasQuery = s.mapLocationSearchQuery.trim().length > 0;
+    const statusMessage = s.mapLocationSearchError
         ? `<div class="location-search-error">${escapeHtml(
-              state.mapLocationSearchError,
+              s.mapLocationSearchError,
           )}</div>`
-        : state.mapLocationSearchLoading
+        : s.mapLocationSearchLoading
           ? `<div class="location-search-status">Searching...</div>`
-          : state.mapLocationSearchResults.length === 0 &&
+          : s.mapLocationSearchResults.length === 0 &&
               hasQuery &&
-              !state.mapLocationSearchSelection
+              !s.mapLocationSearchSelection
             ? `<div class="location-search-status">No places found. Try refining your query.</div>`
             : "";
 
     const showResultsPanel = Boolean(
-        results || (statusMessage && !state.mapLocationSearchLoading),
+        results || (statusMessage && !s.mapLocationSearchLoading),
     );
-    // In split view the search bar lives in window-1's relative container,
-    // so no sidebar shift is necessary.
+    // In split view each pane has its own search bar and sidebar.
     const shift = (!state.splitView && state.sidebarOpen) ? -SIDEBAR_WIDTH / 2 : 0;
     const wrapStyle = mergeStyles(styles.mapSearchWrap, {
         top: 18,
@@ -10343,20 +11194,22 @@ function renderMapSearchBar() {
     });
 
     return `
-      <div data-role="map-location-search" style="${styleAttr(wrapStyle)}">
+      <div data-role="map-location-search" data-window="${window}" style="${styleAttr(wrapStyle)}">
         <div class="location-search-row" style="display: flex; align-items: center; gap: 8px; position: relative;">
           <input
             type="text"
             class="location-search-input"
-            value="${escapeHtml(state.mapLocationSearchQuery)}"
+            value="${escapeHtml(s.mapLocationSearchQuery)}"
             placeholder="Search a place (e.g. Aachen)"
             data-role="map-location-search-input"
+            data-window="${window}"
             style="flex: 1;"
           />
           <button
             type="button"
             data-action="toggle-map-draw"
-            aria-label="${state.drawState.active ? "Stop drawing" : "Start drawing"}"
+            data-window="${window}"
+            aria-label="${s.drawState.active ? "Stop drawing" : "Start drawing"}"
             style="
               display: flex;
               align-items: center;
@@ -10366,23 +11219,24 @@ function renderMapSearchBar() {
               padding: 0;
               border: 1px solid rgba(148, 163, 184, 0.3);
               border-radius: 6px;
-              background: ${state.drawState.active ? "rgba(52, 211, 153, 0.1)" : "rgba(15, 23, 42, 0.85)"};
-              color: ${state.drawState.active ? "#34d399" : "var(--text-secondary)"};
+              background: ${s.drawState.active ? "rgba(52, 211, 153, 0.1)" : "rgba(15, 23, 42, 0.85)"};
+              color: ${s.drawState.active ? "#34d399" : "var(--text-secondary)"};
               cursor: pointer;
               transition: all 0.2s ease;
             "
             onmouseover="this.style.background='rgba(52, 211, 153, 0.2)';this.style.color='#34d399';"
-            onmouseout="this.style.background='${state.drawState.active ? "rgba(52, 211, 153, 0.1)" : "rgba(15, 23, 42, 0.85)"}';this.style.color='${state.drawState.active ? "#34d399" : "var(--text-secondary)"}';"
+            onmouseout="this.style.background='${s.drawState.active ? "rgba(52, 211, 153, 0.1)" : "rgba(15, 23, 42, 0.85)"}';this.style.color='${s.drawState.active ? "#34d399" : "var(--text-secondary)"}';"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
               <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
             </svg>
           </button>
-          ${(state.mapPolygon !== null && state.mapPolygon.length >= 3) || state.drawState.active ? `
+          ${(s.mapPolygon !== null && s.mapPolygon.length >= 3) || s.drawState.active ? `
           <button
             type="button"
             data-action="clear-map-draw"
+            data-window="${window}"
             aria-label="Clear drawn selection"
             title="Clear drawn selection"
             style="
@@ -10409,8 +11263,9 @@ function renderMapSearchBar() {
           <button
             type="button"
             data-action="toggle-map-options-menu"
+            data-window="${window}"
             aria-label="Map options"
-            aria-expanded="${state.mapOptionsOpen ? "true" : "false"}"
+            aria-expanded="${s.mapOptionsOpen ? "true" : "false"}"
             style="
               display: flex;
               align-items: center;
@@ -10420,13 +11275,13 @@ function renderMapSearchBar() {
               padding: 0;
               border: 1px solid rgba(148, 163, 184, 0.3);
               border-radius: 6px;
-              background: ${state.mapOptionsOpen ? "rgba(56, 189, 248, 0.14)" : "rgba(15, 23, 42, 0.85)"};
-              color: ${state.mapOptionsOpen ? "#7dd3fc" : "var(--text-secondary)"};
+              background: ${s.mapOptionsOpen ? "rgba(56, 189, 248, 0.14)" : "rgba(15, 23, 42, 0.85)"};
+              color: ${s.mapOptionsOpen ? "#7dd3fc" : "var(--text-secondary)"};
               cursor: pointer;
               transition: all 0.2s ease;
             "
             onmouseover="this.style.background='rgba(56, 189, 248, 0.18)';this.style.color='#7dd3fc';"
-            onmouseout="this.style.background='${state.mapOptionsOpen ? "rgba(56, 189, 248, 0.14)" : "rgba(15, 23, 42, 0.85)"}';this.style.color='${state.mapOptionsOpen ? "#7dd3fc" : "var(--text-secondary)"}';"
+            onmouseout="this.style.background='${s.mapOptionsOpen ? "rgba(56, 189, 248, 0.14)" : "rgba(15, 23, 42, 0.85)"}';this.style.color='${s.mapOptionsOpen ? "#7dd3fc" : "var(--text-secondary)"}';"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M3 6h18"></path>
@@ -10439,7 +11294,7 @@ function renderMapSearchBar() {
             </svg>
           </button>
           ${
-              state.mapOptionsOpen
+              s.mapOptionsOpen
                   ? `
           <div
             data-role="map-options-menu"
@@ -10461,17 +11316,17 @@ function renderMapSearchBar() {
               Map options
             </div>
             <label style="display:flex; align-items:center; gap:8px; padding:6px 4px; cursor:pointer; color:var(--text-primary); font-size:13px; font-weight:600;">
-              <input type="checkbox" data-action="toggle-map-borders" ${state.mapShowBorders ? "checked" : ""} />
+              <input type="checkbox" data-action="toggle-map-borders" data-window="${window}" ${s.mapShowBorders ? "checked" : ""} />
               Show borders
             </label>
             <label style="display:flex; align-items:center; gap:8px; padding:6px 4px; cursor:pointer; color:var(--text-primary); font-size:13px; font-weight:600;">
-              <input type="checkbox" data-action="toggle-map-cities" ${state.mapShowCities ? "checked" : ""} />
+              <input type="checkbox" data-action="toggle-map-cities" data-window="${window}" ${s.mapShowCities ? "checked" : ""} />
               Show city names
             </label>
           </div>`
                   : ""
           }
-          ${!state.splitView ? `
+          ${!state.splitView && window === 1 ? `
           <button
             type="button"
             data-action="toggle-split-view"
@@ -10504,7 +11359,7 @@ function renderMapSearchBar() {
             </svg>
           </button>` : ""}
         </div>
-        ${state.mapLocationSearchLoading ? statusMessage : ""}
+        ${s.mapLocationSearchLoading ? statusMessage : ""}
         ${
             showResultsPanel
                 ? `
@@ -11124,9 +11979,10 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
 
     attachSidebarHandlers({
         root,
-        getSidebarOpen: () => state.sidebarOpen,
-        setSidebarOpen: (isOpen) => {
-            state.sidebarOpen = isOpen;
+        getSidebarOpen: (w) => (w === "2" ? state.window2.sidebarOpen : state.sidebarOpen),
+        setSidebarOpen: (isOpen, w) => {
+            if (w === "2") state.window2.sidebarOpen = isOpen;
+            else state.sidebarOpen = isOpen;
         },
         onTimeSliderUpdate: (isOpen) => {
             updateTimeSliderPosition(isOpen, SIDEBAR_WIDTH);
@@ -11172,6 +12028,16 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         "mapRangeStart", "mapRangeEnd", "mapRangeNumSamples", "mapRangePreset",
     ];
 
+    const W2_APPLICABLE_KEYS: (keyof Window2State)[] = [
+        "mode", "canvasView", "panelTab", "scenario", "model", "variable", "date",
+        "selectedUnit", "mapPalette", "resolution", "mapShowBorders", "mapShowCities",
+        "mapPolygon", "mapMarker", "masks",
+        "compareMode", "compareScenarioA", "compareScenarioB",
+        "compareModelA", "compareModelB", "compareDateStart", "compareDateEnd",
+        "ensembleScenarios", "ensembleModels", "ensembleStatistic",
+        "ensembleDate", "ensembleVariable", "ensembleUnit",
+    ];
+
     const buildSaveData = () => {
         const saveData: Record<string, any> = { __version: 1 };
         for (const key of SAVEABLE_KEYS) {
@@ -11180,25 +12046,38 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         return saveData;
     };
 
-    const applySavedData = (data: Record<string, any>) => {
-        // Clear window-2 cache so the new state re-renders correctly
+    const applySavedData = (data: Record<string, any>, targetWindow?: "1" | "2") => {
+        const target = targetWindow ?? state.loadTargetWindow;
         clearW2Cache();
-        // Only apply known saveable keys to avoid stomping runtime state
-        for (const key of SAVEABLE_KEYS) {
-            if (key in data) {
-                (state as any)[key] = data[key];
+
+        if (target === "2") {
+            for (const key of W2_APPLICABLE_KEYS) {
+                if (key in data) {
+                    (state.window2 as any)[key] = data[key];
+                }
             }
-        }
-        state.saveDialogOpen = false;
-        state.loadDialogOpen = false;
-        render();
-        if (state.canvasView === "map") {
-            loadClimateData();
-            if (state.splitView) {
-                loadClimateDataWindow2();
-            }
+            state.saveDialogOpen = false;
+            state.loadDialogOpen = false;
+            state.saveDialogOpenForWindow = null;
+            state.loadDialogOpenForWindow = null;
+            render();
+            loadClimateDataWindow2();
         } else {
-            loadChartData();
+            for (const key of SAVEABLE_KEYS) {
+                if (key in data) {
+                    (state as any)[key] = data[key];
+                }
+            }
+            state.saveDialogOpen = false;
+            state.loadDialogOpen = false;
+            state.saveDialogOpenForWindow = null;
+            state.loadDialogOpenForWindow = null;
+            render();
+            if (state.canvasView === "map") {
+                loadClimateData();
+            } else {
+                loadChartData();
+            }
         }
     };
 
@@ -11225,6 +12104,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
         state.saveDialogOpen = false;
+        state.saveDialogOpenForWindow = null;
         render();
     };
 
@@ -11249,29 +12129,42 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         fileInput.click();
     };
 
-    const openSaveBtn = root.querySelector<HTMLButtonElement>(
+    const openSaveBtns = root.querySelectorAll<HTMLButtonElement>(
         '[data-action="open-save-state"]',
     );
-    openSaveBtn?.addEventListener("click", () => {
-        const willOpen = !state.saveDialogOpen;
-        state.saveDialogOpen = willOpen;
-        state.loadDialogOpen = false;
-        if (!state.saveConfigNameDraft.trim()) {
-            state.saveConfigNameDraft = `Config ${new Date()
-                .toISOString()
-                .slice(0, 10)}`;
-        }
-        render();
-    });
+    openSaveBtns.forEach((btn) =>
+        btn.addEventListener("click", () => {
+            const w = (btn.dataset.window || "1") as "1" | "2";
+            state.loadTargetWindow = w;
+            const willOpen = state.saveDialogOpenForWindow !== w;
+            state.saveDialogOpenForWindow = willOpen ? w : null;
+            state.saveDialogOpen = willOpen;
+            state.loadDialogOpenForWindow = null;
+            state.loadDialogOpen = false;
+            if (willOpen && !state.saveConfigNameDraft.trim()) {
+                state.saveConfigNameDraft = `Config ${new Date()
+                    .toISOString()
+                    .slice(0, 10)}`;
+            }
+            render();
+        }),
+    );
 
-    const openLoadBtn = root.querySelector<HTMLButtonElement>(
+    const openLoadBtns = root.querySelectorAll<HTMLButtonElement>(
         '[data-action="open-load-state"]',
     );
-    openLoadBtn?.addEventListener("click", () => {
-        state.loadDialogOpen = !state.loadDialogOpen;
-        state.saveDialogOpen = false;
-        render();
-    });
+    openLoadBtns.forEach((btn) =>
+        btn.addEventListener("click", () => {
+            const w = (btn.dataset.window || "1") as "1" | "2";
+            state.loadTargetWindow = w;
+            const willOpen = state.loadDialogOpenForWindow !== w;
+            state.loadDialogOpenForWindow = willOpen ? w : null;
+            state.loadDialogOpen = willOpen;
+            state.saveDialogOpenForWindow = null;
+            state.saveDialogOpen = false;
+            render();
+        }),
+    );
 
     const saveDialogCloseBtns = root.querySelectorAll<HTMLButtonElement>(
         '[data-action="close-save-dialog"]',
@@ -11279,6 +12172,8 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
     saveDialogCloseBtns.forEach((btn) =>
         btn.addEventListener("click", () => {
             state.saveDialogOpen = false;
+            state.saveDialogOpenForWindow = null;
+            state.loadDialogOpenForWindow = null;
             render();
         }),
     );
@@ -11289,65 +12184,73 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
     loadDialogCloseBtns.forEach((btn) =>
         btn.addEventListener("click", () => {
             state.loadDialogOpen = false;
+            state.loadDialogOpenForWindow = null;
+            state.saveDialogOpenForWindow = null;
             render();
         }),
     );
 
-    const saveNameInput = root.querySelector<HTMLInputElement>(
+    const saveNameInputs = root.querySelectorAll<HTMLInputElement>(
         '[data-action="save-config-name-input"]',
     );
-    saveNameInput?.addEventListener("input", () => {
-        state.saveConfigNameDraft = saveNameInput.value;
-    });
-    saveNameInput?.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") {
-            e.preventDefault();
-            const trigger = root.querySelector<HTMLButtonElement>(
-                '[data-action="save-config-locally"]',
-            );
-            trigger?.click();
-        }
+    saveNameInputs.forEach((input) => {
+        input.addEventListener("input", () => {
+            state.saveConfigNameDraft = input.value;
+        });
+        input.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") {
+                e.preventDefault();
+                const trigger = root.querySelector<HTMLButtonElement>(
+                    '[data-action="save-config-locally"]',
+                );
+                trigger?.click();
+            }
+        });
     });
 
-    const saveConfigLocalBtn = root.querySelector<HTMLButtonElement>(
+    const saveConfigLocalBtns = root.querySelectorAll<HTMLButtonElement>(
         '[data-action="save-config-locally"]',
     );
-    saveConfigLocalBtn?.addEventListener("click", () => {
-        const liveNameInput = root.querySelector<HTMLInputElement>(
-            '[data-action="save-config-name-input"]',
-        );
-        const name = (liveNameInput?.value ?? state.saveConfigNameDraft).trim();
-        state.saveConfigNameDraft = name;
-        if (!name) {
-            window.alert("Please enter a configuration name.");
-            return;
-        }
-        const nextEntry: SavedConfigEntry = {
-            name,
-            savedAt: new Date().toISOString(),
-            data: buildSaveData(),
-        };
-        const existing = getSavedConfigs().filter(
-            (entry) => entry.name.toLowerCase() !== name.toLowerCase(),
-        );
+    saveConfigLocalBtns.forEach((btn) =>
+        btn.addEventListener("click", () => {
+            const name = state.saveConfigNameDraft.trim();
+            state.saveConfigNameDraft = name;
+            if (!name) {
+                window.alert("Please enter a configuration name.");
+                return;
+            }
+            const nextEntry: SavedConfigEntry = {
+                name,
+                savedAt: new Date().toISOString(),
+                data: buildSaveData(),
+            };
+            const existing = getSavedConfigs().filter(
+                (entry) => entry.name.toLowerCase() !== name.toLowerCase(),
+            );
         setSavedConfigs([nextEntry, ...existing]);
         state.saveDialogOpen = false;
+        state.saveDialogOpenForWindow = null;
         render();
-    });
+        }),
+    );
 
-    const exportBtn = root.querySelector<HTMLButtonElement>(
+    const exportBtns = root.querySelectorAll<HTMLButtonElement>(
         '[data-action="export-state"]',
     );
-    exportBtn?.addEventListener("click", () => {
-        exportStateToFile();
-    });
+    exportBtns.forEach((btn) =>
+        btn.addEventListener("click", () => {
+            exportStateToFile();
+        }),
+    );
 
-    const importBtn = root.querySelector<HTMLButtonElement>(
+    const importBtns = root.querySelectorAll<HTMLButtonElement>(
         '[data-action="import-state"]',
     );
-    importBtn?.addEventListener("click", () => {
-        importStateFromFile();
-    });
+    importBtns.forEach((btn) =>
+        btn.addEventListener("click", () => {
+            importStateFromFile();
+        }),
+    );
 
     const loadCachedBtns = root.querySelectorAll<HTMLButtonElement>(
         '[data-action="load-cached-config"]',
@@ -11382,15 +12285,17 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         }),
     );
 
-    const reportBtn = root.querySelector<HTMLButtonElement>(
+    const reportBtns = root.querySelectorAll<HTMLButtonElement>(
         '[data-action="generate-report"]',
     );
-    reportBtn?.addEventListener("click", () => {
-        reportBtn.disabled = true;
-        reportBtn.textContent = "Generating…";
-        generateReport(state).finally(() => {
-            reportBtn.disabled = false;
-            reportBtn.innerHTML = `
+    reportBtns.forEach((btn) =>
+        btn.addEventListener("click", () => {
+            btn.disabled = true;
+            btn.textContent = "Generating…";
+            generateReport(state).finally(() => {
+                reportBtns.forEach((b) => {
+                    b.disabled = false;
+                    b.innerHTML = `
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
                   <polyline points="14 2 14 8 20 8"/>
@@ -11399,8 +12304,10 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                   <polyline points="10 9 9 9 8 9"/>
                 </svg>
                 Report`;
-        });
-    });
+                });
+            });
+        }),
+    );
     // ─────────────────────────────────────────────────────────────
 
     const canvasButtons = root.querySelectorAll<HTMLButtonElement>(
@@ -11409,23 +12316,25 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
     canvasButtons.forEach((btn) =>
         btn.addEventListener("click", () => {
             const value = btn.dataset.value as CanvasView | undefined;
-            if (value) {
-                if (value === state.canvasView) return;
+            const w = (btn.dataset.window || "1") as "1" | "2";
+            if (!value) return;
 
-                const previousView = state.canvasView;
-                const previousIndicatorTransform =
-                    previousView === "map"
-                        ? "translateX(0%)"
-                        : "translateX(100%)";
-                const nextIndicatorTransform =
-                    value === "map" ? "translateX(0%)" : "translateX(100%)";
+            const targetState = w === "2" ? state.window2 : state;
+            if (value === targetState.canvasView) return;
 
-                state.canvasView = value;
+            const previousView = targetState.canvasView;
+            const previousIndicatorTransform =
+                previousView === "map" ? "translateX(0%)" : "translateX(100%)";
+            const nextIndicatorTransform =
+                value === "map" ? "translateX(0%)" : "translateX(100%)";
 
-                if (value === "chart") {
-                    state.panelTab = "Manual";
-                }
+            targetState.canvasView = value;
 
+            if (value === "chart") {
+                targetState.panelTab = "Manual";
+            }
+
+            if (w === "1") {
                 const tutorialState = getTutorialState();
                 if (
                     tutorialState.active &&
@@ -11434,27 +12343,25 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                 ) {
                     completeCurrentStep();
                 }
+            }
 
-                render();
+            render();
 
-                if (value === "map") {
-                    loadClimateData();
-                } else {
-                    loadChartData();
-                }
+            if (w === "1") {
+                if (value === "map") loadClimateData();
+                else loadChartData();
+            } else if (value === "map") {
+                loadClimateDataWindow2();
+            }
 
-                const canvasIndicator = root.querySelector<HTMLElement>(
-                    '[data-role="canvas-indicator"]',
-                );
+            const canvasIndicator = root.querySelector<HTMLElement>(
+                `[data-role="canvas-toggle"][data-window="${w}"] [data-role="canvas-indicator"]`,
+            ) ?? root.querySelector<HTMLElement>('[data-role="canvas-indicator"]');
 
-                if (!canvasIndicator) return;
-
+            if (canvasIndicator) {
                 canvasIndicator.style.removeProperty("transition");
                 canvasIndicator.style.transform = previousIndicatorTransform;
-
                 void canvasIndicator.offsetHeight;
-                void canvasIndicator.getBoundingClientRect();
-
                 requestAnimationFrame(() => {
                     canvasIndicator.style.transition = "transform 180ms ease";
                     canvasIndicator.style.transform = nextIndicatorTransform;
@@ -11469,10 +12376,13 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
     modeButtons.forEach((btn) =>
         btn.addEventListener("click", () => {
             const value = btn.dataset.value as Mode | undefined;
-            if (value) {
-                if (value === state.mode) return;
+            const w = (btn.dataset.window || "1") as "1" | "2";
+            if (!value) return;
 
-                const previousMode = state.mode;
+            const target = w === "2" ? state.window2 : state;
+            if (value === target.mode) return;
+
+                const previousMode = target.mode;
                 const previousModeTransform =
                     previousMode === "Explore"
                         ? "translateX(0%)"
@@ -11498,23 +12408,23 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                           ? "translateX(100%)"
                           : "translateX(200%)";
 
-                state.mode = value;
+                target.mode = value;
 
                 // When switching to Compare: use current/adjusted date as first, same date +30y as second
                 if (value === "Compare") {
-                    const baseDate = state.date;
-                    state.compareDateStart = clipDateToScenarioRange(
+                    const baseDate = target.date;
+                    target.compareDateStart = clipDateToScenarioRange(
                         baseDate,
-                        state.scenario,
+                        target.scenario,
                     );
-                    state.compareDateEnd = clipDateToScenarioRange(
+                    target.compareDateEnd = clipDateToScenarioRange(
                         addYearsToDate(baseDate, 30),
-                        state.scenario,
+                        target.scenario,
                     );
                 }
                 // When switching to Ensemble: use current/adjusted date (from Explore or last adjusted)
                 if (value === "Ensemble") {
-                    state.ensembleDate = state.date;
+                    target.ensembleDate = target.date;
                 }
 
                 const tutorialState = getTutorialState();
@@ -11528,12 +12438,15 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
 
                 render();
 
-                const modeTrack = root.querySelector<HTMLElement>(
-                    '[data-role="mode-track"]',
-                );
-                const modeIndicator = root.querySelector<HTMLElement>(
-                    '[data-role="mode-indicator"]',
-                );
+                const sidebar = w === "2"
+                    ? root.querySelector<HTMLElement>('[data-role="sidebar"][data-window="2"]')
+                    : null;
+                const modeTrack = sidebar
+                    ? sidebar.querySelector<HTMLElement>('[data-role="mode-track"]')
+                    : root.querySelector<HTMLElement>('[data-role="mode-track"]');
+                const modeIndicator = sidebar
+                    ? sidebar.querySelector<HTMLElement>('[data-role="mode-indicator"]')
+                    : root.querySelector<HTMLElement>('[data-role="mode-indicator"]');
 
                 if (!modeTrack || !modeIndicator) return;
 
@@ -11551,10 +12464,11 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                 modeIndicator.style.transition = "transform 200ms ease";
                 modeTrack.style.transform = nextModeTransform;
                 modeIndicator.style.transform = nextIndicatorTransform;
-            }
-            if (state.canvasView === "map") {
-                loadClimateData();
-            }
+                if (w === "2" && state.splitView) {
+                    loadClimateDataWindow2();
+                } else if (state.canvasView === "map") {
+                    loadClimateData();
+                }
         }),
     );
 
@@ -11602,19 +12516,21 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
     tabButtons.forEach((btn) =>
         btn.addEventListener("click", () => {
             const value = btn.dataset.value as PanelTab | undefined;
-            if (value) {
-                if (value === state.panelTab) return;
+            const w = (btn.dataset.window || "1") as "1" | "2";
+            if (!value) return;
 
-                const previousTab = state.panelTab;
-                const previousTabTransform =
-                    previousTab === "Manual"
-                        ? "translateX(0%)"
-                        : "translateX(-50%)";
-                const nextTabTransform =
-                    value === "Manual" ? "translateX(0%)" : "translateX(-50%)";
+            const target = w === "2" ? state.window2 : state;
+            if (value === target.panelTab) return;
 
-                state.panelTab = value;
+            const previousTab = target.panelTab;
+            const previousTabTransform =
+                previousTab === "Manual" ? "translateX(0%)" : "translateX(-50%)";
+            const nextTabTransform =
+                value === "Manual" ? "translateX(0%)" : "translateX(-50%)";
 
+            target.panelTab = value;
+
+            if (w === "1") {
                 const tutorialState = getTutorialState();
                 if (
                     tutorialState.active &&
@@ -11623,25 +12539,28 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                 ) {
                     completeCurrentStep();
                 }
-                render();
-
-                const tabTrack = root.querySelector<HTMLElement>(
-                    '[data-role="tab-track"]',
-                );
-
-                if (!tabTrack) return;
-
-                tabTrack.style.removeProperty("transition");
-                tabTrack.style.transform = previousTabTransform;
-
-                void tabTrack.offsetHeight;
-                void tabTrack.getBoundingClientRect();
-
-                requestAnimationFrame(() => {
-                    tabTrack.style.transition = "transform 220ms ease";
-                    tabTrack.style.transform = nextTabTransform;
-                });
             }
+            render();
+
+            const sidebar = w === "2"
+                ? root.querySelector<HTMLElement>('[data-role="sidebar"][data-window="2"]')
+                : null;
+            const tabTrack = sidebar
+                ? sidebar.querySelector<HTMLElement>('[data-role="tab-track"]')
+                : root.querySelector<HTMLElement>('[data-role="tab-track"]');
+
+            if (!tabTrack) return;
+
+            tabTrack.style.removeProperty("transition");
+            tabTrack.style.transform = previousTabTransform;
+
+            void tabTrack.offsetHeight;
+            void tabTrack.getBoundingClientRect();
+
+            requestAnimationFrame(() => {
+                tabTrack.style.transition = "transform 220ms ease";
+                tabTrack.style.transform = nextTabTransform;
+            });
         }),
     );
 
@@ -11816,9 +12735,10 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
 
                 // Get mask index from wrapper if it's a mask statistic selector
                 const maskIndex = wrapper.dataset.maskIndex;
+                const dataWindow = (wrapper.dataset.window || option.dataset.window || "1") as "1" | "2";
 
                 // Trigger the change handler
-                handleSelectChange(dataKey, value, maskIndex);
+                handleSelectChange(dataKey, value, maskIndex, dataWindow);
 
                 // Handle tutorial progression - detect when a selection is made during tutorial
                 const tutorialState = getTutorialState();
@@ -11912,33 +12832,38 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         key: string,
         val: string,
         maskIndex?: string,
+        dataWindow?: "1" | "2",
     ) => {
         if (!key) return;
+        const w = dataWindow || "1";
+        const target = w === "2" ? state.window2 : state;
         let triggerMapReload = false;
         let triggerChartReload = false;
         switch (key) {
             case "scenario":
-                state.scenario = val;
-                // Automatically update date to a valid date for the selected scenario
-                state.date = getDateForScenario(val);
-                // Sync date to ensemble mode
-                state.ensembleDate = state.date;
-                // Update time range for the slider
-                state.timeRange = getTimeRangeForScenario(val);
+                target.scenario = val;
+                target.date = getDateForScenario(val);
+                target.timeRange = getTimeRangeForScenario(val);
+                if (w === "1") state.ensembleDate = state.date;
+                else state.window2.ensembleDate = state.window2.date;
                 triggerMapReload = true;
                 break;
             case "model":
-                state.model = val;
+                target.model = val;
                 triggerMapReload = true;
                 break;
             case "variable":
-                state.variable = val;
-                // Reset unit to default for new variable
-                state.selectedUnit = getDefaultUnitOption(val).label;
+                target.variable = val;
+                target.selectedUnit = getDefaultUnitOption(val).label;
                 triggerMapReload = true;
                 break;
             case "unit":
-                state.selectedUnit = val;
+                target.selectedUnit = val;
+                if (w === "2") {
+                    render();
+                    if (state.splitView) loadClimateDataWindow2();
+                    return;
+                }
                 render();
                 // Re-render map with new unit conversion
                 if (
@@ -12079,6 +13004,9 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                     state.window2.dataMin !== null &&
                     state.window2.dataMax !== null
                 ) {
+                    const w2IsEnsemble = state.window2.mode === "Ensemble";
+                    const w2DisplayVar = w2IsEnsemble ? state.window2.ensembleVariable : state.window2.variable;
+                    const w2DisplayUnit = w2IsEnsemble ? state.window2.ensembleUnit : state.window2.selectedUnit;
                     renderMapDataWindow2(
                         state.window2.currentData,
                         persistentCanvas2,
@@ -12086,8 +13014,18 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                         state.window2.mapPalette,
                         state.window2.dataMin,
                         state.window2.dataMax,
-                        state.window2.variable,
-                        state.window2.selectedUnit,
+                        w2DisplayVar,
+                        w2DisplayUnit,
+                        state.window2.masks && state.window2.masks.length > 0
+                            ? state.window2.masks
+                            : undefined,
+                        w2IsEnsemble ? state.window2.ensembleStatistics ?? undefined : undefined,
+                        w2IsEnsemble,
+                        state.window2.maskVariableData.size > 0
+                            ? state.window2.maskVariableData
+                            : undefined,
+                        w2IsEnsemble ? state.window2.ensembleStatisticsByVariable : undefined,
+                        w2IsEnsemble ? state.window2.ensembleRawSamplesByVariable : undefined,
                     );
                     const w2Pal =
                         paletteOptions.find((p) => p.name === state.window2.mapPalette) ||
@@ -12105,6 +13043,9 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                     state.window2.dataMin !== null &&
                     state.window2.dataMax !== null
                 ) {
+                    const w2IsEnsemble = state.window2.mode === "Ensemble";
+                    const w2DisplayVar = w2IsEnsemble ? state.window2.ensembleVariable : state.window2.variable;
+                    const w2DisplayUnit = w2IsEnsemble ? state.window2.ensembleUnit : state.window2.selectedUnit;
                     renderMapDataWindow2(
                         state.window2.currentData,
                         persistentCanvas2,
@@ -12112,50 +13053,52 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                         state.window2.mapPalette,
                         state.window2.dataMin,
                         state.window2.dataMax,
-                        state.window2.variable,
-                        state.window2.selectedUnit,
+                        w2DisplayVar,
+                        w2DisplayUnit,
+                        state.window2.masks && state.window2.masks.length > 0
+                            ? state.window2.masks
+                            : undefined,
+                        w2IsEnsemble ? state.window2.ensembleStatistics ?? undefined : undefined,
+                        w2IsEnsemble,
+                        state.window2.maskVariableData.size > 0
+                            ? state.window2.maskVariableData
+                            : undefined,
+                        w2IsEnsemble ? state.window2.ensembleStatisticsByVariable : undefined,
+                        w2IsEnsemble ? state.window2.ensembleRawSamplesByVariable : undefined,
                     );
-                    setupWindow2Interactions(persistentCanvas2, state.window2.selectedUnit ?? "");
+                    setupWindow2Interactions(persistentCanvas2, w2DisplayUnit ?? "");
                 }
                 return;
             case "compareMode":
-                state.compareMode = val as CompareMode;
+                target.compareMode = val as CompareMode;
                 triggerMapReload = true;
                 break;
             case "compareScenarioA":
-                // Prevent selecting the same scenario as B
-                if (val === state.compareScenarioB) {
-                    // If trying to select the same as B, swap them
-                    state.compareScenarioB = state.compareScenarioA;
+                if (val === target.compareScenarioB) {
+                    target.compareScenarioB = target.compareScenarioA;
                 }
-                state.compareScenarioA = val;
+                target.compareScenarioA = val;
                 triggerMapReload = true;
                 break;
             case "compareScenarioB":
-                // Prevent selecting the same scenario as A
-                if (val === state.compareScenarioA) {
-                    // If trying to select the same as A, swap them
-                    state.compareScenarioA = state.compareScenarioB;
+                if (val === target.compareScenarioA) {
+                    target.compareScenarioA = target.compareScenarioB;
                 }
-                state.compareScenarioB = val;
+                target.compareScenarioB = val;
                 triggerMapReload = true;
                 break;
             case "compareModelA":
-                // Prevent selecting the same model as B
-                if (val === state.compareModelB) {
-                    // If trying to select the same as B, swap them
-                    state.compareModelB = state.compareModelA;
+                if (val === target.compareModelB) {
+                    target.compareModelB = target.compareModelA;
                 }
-                state.compareModelA = val;
+                target.compareModelA = val;
                 triggerMapReload = true;
                 break;
             case "compareModelB":
-                // Prevent selecting the same model as A
-                if (val === state.compareModelA) {
-                    // If trying to select the same as A, swap them
-                    state.compareModelA = state.compareModelB;
+                if (val === target.compareModelA) {
+                    target.compareModelA = target.compareModelB;
                 }
-                state.compareModelB = val;
+                target.compareModelB = val;
                 triggerMapReload = true;
                 break;
             case "chartVariable":
@@ -12185,19 +13128,56 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                 return;
             case "ensembleVariable":
                 if (
-                    state.mode === "Ensemble" &&
-                    state.masks.some((mask) => mask.kind === "probability")
+                    target.mode === "Ensemble" &&
+                    target.masks.some((mask) => mask.kind === "probability")
                 ) {
                     return;
                 }
-                state.ensembleVariable = val;
-                state.ensembleUnit = getDefaultUnitOption(val).label;
+                target.ensembleVariable = val;
+                target.ensembleUnit = getDefaultUnitOption(val).label;
                 triggerMapReload = true;
                 break;
             case "ensembleUnit":
-                state.ensembleUnit = val;
+                target.ensembleUnit = val;
                 render();
-                // Re-render map with new unit conversion
+                if (w === "2") {
+                    if (
+                        state.splitView &&
+                        state.window2.currentData &&
+                        persistentCanvas2 &&
+                        state.window2.dataMin !== null &&
+                        state.window2.dataMax !== null &&
+                        state.window2.mode === "Ensemble"
+                    ) {
+                        renderMapDataWindow2(
+                            state.window2.currentData,
+                            persistentCanvas2,
+                            paletteOptions,
+                            state.window2.mapPalette,
+                            state.window2.dataMin,
+                            state.window2.dataMax,
+                            state.window2.ensembleVariable,
+                            state.window2.ensembleUnit,
+                            state.window2.masks,
+                            state.window2.ensembleStatistics ?? undefined,
+                            true,
+                            state.window2.maskVariableData.size > 0
+                                ? state.window2.maskVariableData
+                                : undefined,
+                            state.window2.ensembleStatisticsByVariable,
+                            state.window2.ensembleRawSamplesByVariable,
+                        );
+                        const w2Pal =
+                            paletteOptions.find(
+                                (p) => p.name === state.window2.mapPalette,
+                            ) || paletteOptions[0];
+                        drawLegendGradient(
+                            "legend-gradient-canvas-w2",
+                            w2Pal.colors,
+                        );
+                    }
+                    return;
+                }
                 if (
                     state.currentData &&
                     appRoot &&
@@ -12227,7 +13207,6 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                             state.ensembleRawSamplesByVariable,
                         );
 
-                        // Redraw gradient with new palette
                         const palette =
                             paletteOptions.find(
                                 (p) => p.name === state.mapPalette,
@@ -12266,88 +13245,120 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                 }
                 return;
             case "ensembleStatistic":
-                state.ensembleStatistic = val as EnsembleStatistic;
+                target.ensembleStatistic = val as EnsembleStatistic;
                 triggerMapReload = true;
                 break;
             case "maskStatistic": {
-                // Use the mask index passed from the click handler
                 if (maskIndex !== undefined) {
                     const index = Number.parseInt(maskIndex, 10);
+                    const masks = target.masks;
                     if (
                         !Number.isNaN(index) &&
                         index >= 0 &&
-                        index < state.masks.length
+                        masks &&
+                        index < masks.length
                     ) {
                         const stat = val as EnsembleStatistic;
-                        const mask = state.masks[index];
+                        const mask = masks[index];
                         mask.statistic = stat;
-                        if (state.mode === "Ensemble") {
+                        if (target.mode === "Ensemble") {
                             const maskVariable =
-                                mask.variable || state.ensembleVariable;
-                            const maskUnit = mask.unit || state.ensembleUnit;
+                                mask.variable ||
+                                (target === state.window2
+                                    ? state.window2.ensembleVariable
+                                    : state.ensembleVariable);
+                            const maskUnit =
+                                mask.unit ||
+                                (target === state.window2
+                                    ? state.window2.ensembleUnit
+                                    : state.ensembleUnit);
                             const range =
                                 mask.kind === "probability"
-                                    ? getEnsembleProbabilityMaskRange(
-                                          maskVariable,
-                                          maskUnit,
-                                      )
-                                    : getEnsembleMaskRange(
-                                          stat,
-                                          maskVariable,
-                                          maskUnit,
-                                      );
+                                    ? target === state.window2
+                                        ? getEnsembleProbabilityMaskRangeForWindow2(
+                                              state.window2,
+                                              maskVariable,
+                                              maskUnit,
+                                          )
+                                        : getEnsembleProbabilityMaskRange(
+                                              maskVariable,
+                                              maskUnit,
+                                          )
+                                    : target === state.window2
+                                      ? getEnsembleMaskRangeForWindow2(
+                                            stat,
+                                            state.window2,
+                                            maskVariable,
+                                            maskUnit,
+                                        )
+                                      : getEnsembleMaskRange(
+                                            stat,
+                                            maskVariable,
+                                            maskUnit,
+                                        );
                             mask.lowerBound = range.min;
                             mask.upperBound = range.max;
                             mask.lowerEdited = false;
                             mask.upperEdited = false;
                         }
                         render();
-                        // In Ensemble mode, preload selected statistic immediately so masks
-                        // (e.g. std while viewing mean) are available without first switching
-                        // the displayed map statistic.
                         if (
-                            state.mode === "Ensemble" &&
-                            state.canvasView === "map"
+                            target.mode === "Ensemble" &&
+                            (w === "2"
+                                ? state.splitView && state.window2.canvasView === "map"
+                                : state.canvasView === "map")
                         ) {
-                            void loadClimateData();
+                            if (w === "2") void loadClimateDataWindow2();
+                            else void loadClimateData();
                         }
                     }
                 }
                 return;
             }
             case "maskVariable": {
-                // Use the mask index passed from the click handler
                 if (maskIndex !== undefined) {
                     const index = Number.parseInt(maskIndex, 10);
+                    const masks = target.masks;
                     if (
                         !Number.isNaN(index) &&
                         index >= 0 &&
-                        index < state.masks.length
+                        masks &&
+                        index < masks.length
                     ) {
-                        const m = state.masks[index];
+                        const m = masks[index];
                         m.variable = val;
                         m.unit = getDefaultUnitOption(val).label;
-                        if (state.mode === "Ensemble") {
+                        if (target.mode === "Ensemble") {
                             const stat = m.statistic || "mean";
                             const range =
                                 m.kind === "probability"
-                                    ? getEnsembleProbabilityMaskRange(
-                                          m.variable,
-                                          m.unit,
-                                      )
-                                    : getEnsembleMaskRange(
-                                          stat,
-                                          m.variable,
-                                          m.unit,
-                                      );
+                                    ? target === state.window2
+                                        ? getEnsembleProbabilityMaskRangeForWindow2(
+                                              state.window2,
+                                              m.variable,
+                                              m.unit,
+                                          )
+                                        : getEnsembleProbabilityMaskRange(
+                                              m.variable,
+                                              m.unit,
+                                          )
+                                    : target === state.window2
+                                      ? getEnsembleMaskRangeForWindow2(
+                                            stat,
+                                            state.window2,
+                                            m.variable,
+                                            m.unit,
+                                        )
+                                      : getEnsembleMaskRange(
+                                            stat,
+                                            m.variable,
+                                            m.unit,
+                                        );
                             m.lowerBound = range.min;
                             m.upperBound = range.max;
                             m.lowerEdited = false;
                             m.upperEdited = false;
                         } else {
-                            // Reset bounds to unrestricted – old bounds were for the previous variable
-                            // (e.g. temp K); applying them to the new variable (e.g. humidity %)
-                            // would fail every pixel. Unrestricted = "full range" until user sets bounds.
                             m.lowerBound = null;
                             m.upperBound = null;
                             m.lowerEdited = false;
@@ -12355,54 +13366,103 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                         }
                         render();
                         if (
-                            (state.mode === "Explore" ||
-                                state.mode === "Ensemble") &&
-                            state.canvasView === "map"
+                            (target.mode === "Explore" ||
+                                target.mode === "Ensemble") &&
+                            (w === "2"
+                                ? state.splitView && state.window2.canvasView === "map"
+                                : state.canvasView === "map")
                         ) {
-                            // Reload so we fetch/cache the new mask variable/statistics.
-                            void loadClimateData();
-                            render(); // show loading state
+                            if (w === "2") void loadClimateDataWindow2();
+                            else void loadClimateData();
+                            render();
                         }
                     }
                 }
                 return;
             }
             case "maskUnit": {
-                // Use the mask index passed from the click handler
                 if (maskIndex !== undefined) {
                     const index = Number.parseInt(maskIndex, 10);
+                    const masks = target.masks;
                     if (
                         !Number.isNaN(index) &&
                         index >= 0 &&
-                        index < state.masks.length
+                        masks &&
+                        index < masks.length
                     ) {
-                        const mask = state.masks[index];
+                        const mask = masks[index];
                         mask.unit = val;
-                        if (state.mode === "Ensemble") {
+                        if (target.mode === "Ensemble") {
                             const range =
                                 mask.kind === "probability"
-                                    ? getEnsembleProbabilityMaskRange(
-                                          mask.variable || state.ensembleVariable,
-                                          mask.unit,
-                                      )
-                                    : getEnsembleMaskRange(
-                                          mask.statistic || "mean",
-                                          mask.variable || state.ensembleVariable,
-                                          mask.unit,
-                                      );
+                                    ? target === state.window2
+                                        ? getEnsembleProbabilityMaskRangeForWindow2(
+                                              state.window2,
+                                              mask.variable || state.window2.ensembleVariable,
+                                              mask.unit,
+                                          )
+                                        : getEnsembleProbabilityMaskRange(
+                                              mask.variable || state.ensembleVariable,
+                                              mask.unit,
+                                          )
+                                    : target === state.window2
+                                      ? getEnsembleMaskRangeForWindow2(
+                                            mask.statistic || "mean",
+                                            state.window2,
+                                            mask.variable || state.window2.ensembleVariable,
+                                            mask.unit,
+                                        )
+                                      : getEnsembleMaskRange(
+                                            mask.statistic || "mean",
+                                            mask.variable || state.ensembleVariable,
+                                            mask.unit,
+                                        );
                             mask.lowerBound = range.min;
                             mask.upperBound = range.max;
                             mask.lowerEdited = false;
                             mask.upperEdited = false;
                         }
                         render();
-                        if (
-                            state.mode === "Ensemble" &&
-                            state.canvasView === "map"
-                        ) {
-                            // Unit changes do not change raw ensemble data, only interpretation.
-                            // Re-render with cached arrays instead of re-fetching from the API.
-                            if (
+                        if (target.mode === "Ensemble") {
+                            if (w === "2") {
+                                if (
+                                    state.splitView &&
+                                    state.window2.currentData &&
+                                    persistentCanvas2 &&
+                                    state.window2.dataMin !== null &&
+                                    state.window2.dataMax !== null
+                                ) {
+                                    const w2IsEnsemble = true;
+                                    const w2DisplayVar = state.window2.ensembleVariable;
+                                    const w2DisplayUnit = state.window2.ensembleUnit;
+                                    renderMapDataWindow2(
+                                        state.window2.currentData,
+                                        persistentCanvas2,
+                                        paletteOptions,
+                                        state.window2.mapPalette,
+                                        state.window2.dataMin,
+                                        state.window2.dataMax,
+                                        w2DisplayVar,
+                                        w2DisplayUnit,
+                                        state.window2.masks,
+                                        state.window2.ensembleStatistics ?? undefined,
+                                        w2IsEnsemble,
+                                        state.window2.maskVariableData.size > 0
+                                            ? state.window2.maskVariableData
+                                            : undefined,
+                                        state.window2.ensembleStatisticsByVariable,
+                                        state.window2.ensembleRawSamplesByVariable,
+                                    );
+                                    const w2Pal =
+                                        paletteOptions.find(
+                                            (p) => p.name === state.window2.mapPalette,
+                                        ) || paletteOptions[0];
+                                    drawLegendGradient(
+                                        "legend-gradient-canvas-w2",
+                                        w2Pal.colors,
+                                    );
+                                }
+                            } else if (
                                 state.currentData &&
                                 appRoot &&
                                 state.dataMin !== null &&
@@ -12490,7 +13550,9 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         // which can crash the page (e.g. when changing variable with masks).
         const doRenderAndReload = () => {
             render();
-            if (state.canvasView === "map" && triggerMapReload) {
+            if (w === "2" && triggerMapReload && state.splitView) {
+                loadClimateDataWindow2();
+            } else if (state.canvasView === "map" && triggerMapReload) {
                 loadClimateData();
                 const hasPoint = state.mapMarker !== null;
                 const hasPolygon =
@@ -12503,6 +13565,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                 }
             }
             if (
+                w === "1" &&
                 state.canvasView === "chart" &&
                 (triggerChartReload || triggerMapReload)
             ) {
@@ -12992,8 +14055,10 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         // Commit the date change (updates state and reloads data)
         const commitDateChange = () => {
             const key = input.dataset.key;
+            const w = (input.dataset.window || "1") as "1" | "2";
             if (!key) return;
             const value = input.value;
+            const target = w === "2" ? state.window2 : state;
 
             // Validate date format (YYYY-MM-DD) and that it's a valid date
             const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
@@ -13005,11 +14070,11 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                 // Invalid date - restore previous value
                 const currentValue =
                     key === "date"
-                        ? state.date
+                        ? target.date
                         : key === "compareDateStart"
-                          ? state.compareDateStart
+                          ? target.compareDateStart
                           : key === "compareDateEnd"
-                            ? state.compareDateEnd
+                            ? target.compareDateEnd
                             : key === "chartRangeStart"
                               ? state.chartRangeStart
                               : key === "chartRangeEnd"
@@ -13026,7 +14091,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             // Clip date to valid range for scenario (only for main date input)
             let clippedValue = value;
             if (key === "date") {
-                clippedValue = clipDateToScenarioRange(value, state.scenario);
+                clippedValue = clipDateToScenarioRange(value, target.scenario);
                 // Update input field if date was clipped
                 if (clippedValue !== value) {
                     input.value = clippedValue;
@@ -13036,32 +14101,32 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             // Get current value to check if it changed
             const currentValue =
                 key === "date"
-                    ? state.date
+                    ? target.date
                     : key === "compareDateStart"
-                      ? state.compareDateStart
+                      ? target.compareDateStart
                       : key === "compareDateEnd"
-                        ? state.compareDateEnd
-                        : key === "chartRangeStart"
-                          ? state.chartRangeStart
-                          : key === "chartRangeEnd"
-                            ? state.chartRangeEnd
-                            : state.chartDate;
+                        ? target.compareDateEnd
+                        : key === "ensembleDate"
+                          ? target.ensembleDate
+                          : key === "chartRangeStart"
+                            ? state.chartRangeStart
+                            : key === "chartRangeEnd"
+                              ? state.chartRangeEnd
+                              : state.chartDate;
 
             if (currentValue === clippedValue) return; // No change, skip update
 
             switch (key) {
                 case "date":
-                    state.date = clippedValue;
-                    // Sync date to ensemble mode
-                    state.ensembleDate = clippedValue;
+                    target.date = clippedValue;
+                    if (w === "1") state.ensembleDate = clippedValue;
+                    else state.window2.ensembleDate = clippedValue;
                     break;
                 case "compareDateStart":
-                    state.compareDateStart = value;
-
+                    target.compareDateStart = value;
                     break;
                 case "compareDateEnd":
-                    state.compareDateEnd = value;
-
+                    target.compareDateEnd = value;
                     break;
                 case "chartDate":
                     state.chartDate = value;
@@ -13073,7 +14138,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                     state.chartRangeEnd = value;
                     break;
                 case "ensembleDate":
-                    state.ensembleDate = value;
+                    target.ensembleDate = value;
                     break;
             }
 
@@ -13093,7 +14158,16 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             // Only re-render and reload if the date actually changed
 
             render();
-            if (
+            if (w === "2" && state.splitView) {
+                if (
+                    key === "date" ||
+                    (target.mode === "Compare" &&
+                        (key === "compareDateStart" || key === "compareDateEnd")) ||
+                    (target.mode === "Ensemble" && key === "ensembleDate")
+                ) {
+                    loadClimateDataWindow2();
+                }
+            } else if (
                 key === "date" ||
                 (state.mode === "Compare" &&
                     (key === "compareDateStart" || key === "compareDateEnd")) ||
@@ -13108,6 +14182,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                 }
             }
             if (
+                w === "1" &&
                 state.canvasView === "chart" &&
                 (key === "chartDate" ||
                     key === "chartRangeStart" ||
@@ -13175,10 +14250,11 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
     const resolutionValues = root.querySelectorAll<HTMLElement>(
         '[data-role="resolution-value"]',
     );
-    const updateResolutionUI = (value: number) => {
+    const updateResolutionUI = (value: number, windowFilter?: "1" | "2") => {
         const fill = ((value - 1) / (3 - 1)) * 100;
         const label = value === 1 ? "Low" : value === 2 ? "Medium" : "High";
         resolutionInputs.forEach((el) => {
+            if (windowFilter && (el.dataset.window || "1") !== windowFilter) return;
             el.value = String(value);
             el.style.setProperty("--slider-fill", `${fill}%`);
         });
@@ -13189,10 +14265,14 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
     resolutionInputs.forEach((input) =>
         input.addEventListener("input", () => {
             const value = Number.parseInt(input.value, 10);
+            const w = (input.dataset.window || "1") as "1" | "2";
             if (!Number.isNaN(value)) {
-                state.resolution = value;
-                updateResolutionUI(value);
-                if (state.canvasView === "map") {
+                const target = w === "2" ? state.window2 : state;
+                target.resolution = value;
+                updateResolutionUI(value, w);
+                if (w === "2" && state.splitView) {
+                    loadClimateDataWindow2();
+                } else if (state.canvasView === "map") {
                     loadClimateData();
                 }
             }
@@ -13799,8 +14879,14 @@ async function init() {
             if (updates.splitView === true && state.splitView) {
                 loadClimateDataWindow2();
             }
-            // When agent changes window2 fields while split view is active, reload W2
-            if (updates.window2 && state.splitView) {
+            // When agent changes window2 fields only (not pane 1 params), reload W2
+            if (
+                updates.window2 &&
+                state.splitView &&
+                !exploreChanged &&
+                !ensembleChanged &&
+                !compareChanged
+            ) {
                 loadClimateDataWindow2();
             }
         } else if (updates.mapPalette && state.currentData) {
@@ -13928,6 +15014,20 @@ async function init() {
             state.splitView = false;
             persistentCanvas2?.remove();
             persistentCanvas2 = null;
+            render();
+            return;
+        }
+
+        if (action === "toggle-legend") {
+            e.preventDefault();
+            e.stopPropagation();
+            const w = (actionElement?.getAttribute("data-window") ||
+                "1") as "1" | "2";
+            if (w === "2") {
+                state.window2.legendCollapsed = !state.window2.legendCollapsed;
+            } else {
+                state.legendCollapsed = !state.legendCollapsed;
+            }
             render();
             return;
         }

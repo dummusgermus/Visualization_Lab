@@ -652,6 +652,28 @@ export function renderMapDataWindow2(
     max: number,
     variable?: string,
     selectedUnit?: string,
+    masks?: Array<{
+        lowerBound: number | null;
+        upperBound: number | null;
+        lowerEdited: boolean;
+        upperEdited: boolean;
+        statistic?: "mean" | "std" | "median" | "iqr" | "percentile" | "extremes";
+        variable?: string;
+        unit?: string;
+        kind?: "binary" | "probability";
+        probabilityThreshold?: number;
+    }>,
+    ensembleStatistics?: Map<"mean" | "std" | "median" | "iqr" | "percentile" | "extremes", Float32Array> | null,
+    isEnsembleMode?: boolean,
+    maskVariableData?: Map<string, ClimateData>,
+    ensembleStatisticsByVariable?: Map<
+        string,
+        Map<"mean" | "std" | "median" | "iqr" | "percentile" | "extremes", Float32Array>
+    > | null,
+    ensembleRawSamplesByVariable?: Map<
+        string,
+        Array<Float32Array | Float64Array>
+    > | null,
 ): void {
     if (!mapCanvas) return;
     try {
@@ -664,12 +686,12 @@ export function renderMapDataWindow2(
             max,
             variable,
             selectedUnit,
-            [],
-            null,
-            false,
-            undefined,
-            null,
-            null,
+            masks ?? [],
+            ensembleStatistics ?? null,
+            isEnsembleMode ?? false,
+            maskVariableData,
+            ensembleStatisticsByVariable ?? null,
+            ensembleRawSamplesByVariable ?? null,
             true, // isW2
         );
     } catch (err) {

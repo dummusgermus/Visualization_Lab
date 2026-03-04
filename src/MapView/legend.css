@@ -1,3 +1,67 @@
+/* Collapsible legend wrapper */
+.legend-wrapper {
+    position: fixed;
+    top: 50%;
+    z-index: 30;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 0;
+    /* Let children decide hit-testing so the map remains draggable behind the legend area */
+    pointer-events: none;
+}
+
+.legend-wrapper .map-legend {
+    position: relative;
+    left: auto;
+    top: auto;
+    transform: none;
+    pointer-events: auto;
+}
+
+.legend-toggle-btn {
+    flex-shrink: 0;
+    width: 26px;
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--dark-bg-sidebar);
+    border: 1px solid var(--border-subtle);
+    border-radius: 999px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    /* Re-enable hit testing on the button even though the wrapper is pointer-events:none */
+    pointer-events: auto;
+    box-shadow: 0 10px 24px var(--shadow-dark);
+    padding: 0;
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease,
+        box-shadow 0.15s ease;
+}
+
+.legend-toggle-btn:hover,
+.legend-toggle-btn:focus-visible {
+    background: rgba(255, 255, 255, 0.09);
+    border-color: var(--border-medium);
+    color: var(--text-primary);
+    box-shadow: 0 14px 32px var(--shadow-darker);
+}
+
+.legend-slide-wrapper {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    transform: translateX(0);
+    transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1),
+        opacity 200ms ease;
+}
+
+.legend-slide-wrapper.collapsed {
+    transform: translateX(-140px);
+    opacity: 0;
+    pointer-events: none;
+}
+
 .map-legend {
     position: fixed;
     top: 50%;
@@ -174,4 +238,54 @@
 .legend-bottom-controls {
     width: 100%;
     margin-top: 8px;
+}
+
+.legend-wrapper {
+    position: fixed;
+    display: flex;
+    align-items: center;
+    z-index: 31;
+}
+
+.legend-toggle-btn {
+    width: 26px;
+    height: 40px;
+    margin-right: 6px;
+    border-radius: 999px;
+    border: 1px solid var(--border-subtle);
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    box-shadow: 0 10px 24px var(--shadow-dark);
+    padding: 0;
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease,
+        box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+.legend-toggle-btn:hover,
+.legend-toggle-btn:focus-visible {
+    background: rgba(255, 255, 255, 0.09);
+    border-color: var(--border-medium);
+    color: var(--text-primary);
+    box-shadow: 0 14px 32px var(--shadow-darker);
+    transform: translateY(-1px);
+}
+
+.legend-toggle-btn svg {
+    pointer-events: none;
+}
+
+.legend-slide-wrapper {
+    transform: translateX(0);
+    transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1),
+        opacity 180ms ease;
+}
+
+.legend-slide-wrapper.collapsed {
+    transform: translateX(-150px);
+    opacity: 0;
+    pointer-events: none;
 }

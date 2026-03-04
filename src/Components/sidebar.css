@@ -1,3 +1,19 @@
+.sidebar-in-pane {
+    position: absolute !important;
+}
+
+#split-pane-1 .sidebar-toggle,
+#split-pane-2 .sidebar-toggle {
+    position: absolute !important;
+    z-index: 100 !important;
+    pointer-events: auto !important;
+}
+
+#split-pane-1 [data-role="canvas-toggle"],
+#split-pane-2 [data-role="canvas-toggle"] {
+    position: absolute !important;
+}
+
 .sidebar {
     position: fixed;
     top: 0;

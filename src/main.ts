@@ -12048,9 +12048,12 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
 
     const applySavedData = (data: Record<string, any>, targetWindow?: "1" | "2") => {
         const target = targetWindow ?? state.loadTargetWindow;
-        clearW2Cache();
 
         if (target === "2") {
+            // Only clear Window 2's cached tiles when we are actually
+            // applying a config to Window 2. Leaving the cache intact
+            // keeps panning responsive when loading configs into Window 1.
+            clearW2Cache();
             for (const key of W2_APPLICABLE_KEYS) {
                 if (key in data) {
                     (state.window2 as any)[key] = data[key];

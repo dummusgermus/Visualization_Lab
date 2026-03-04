@@ -1351,6 +1351,9 @@ export type AppState = {
         end: string;
     } | null;
     compareInfoOpen: boolean;
+    saveDialogOpen: boolean;
+    loadDialogOpen: boolean;
+    saveConfigNameDraft: string;
     masks: Array<{
         id: number | null;
         lowerBound: number | null;
@@ -1509,6 +1512,9 @@ const state: AppState = {
     timeRange: null,
     metaData: undefined,
     compareInfoOpen: false,
+    saveDialogOpen: false,
+    loadDialogOpen: false,
+    saveConfigNameDraft: "",
     maskVariableData: new Map<string, ClimateData>(),
     maskVariableRanges: new Map<string, { min: number; max: number }>(),
     chartRequestId: 0,
@@ -1586,6 +1592,45 @@ let mapInfoResizeState: {
     startHeight: 0,
 };
 const LOCATION_SEARCH_DEBOUNCE_MS = 500;
+const CONFIG_CACHE_STORAGE_KEY = "polyoracle-saved-configs-v1";
+
+type SavedConfigEntry = {
+    name: string;
+    savedAt: string;
+    data: Record<string, any>;
+};
+
+function getSavedConfigs(): SavedConfigEntry[] {
+    try {
+        const raw = localStorage.getItem(CONFIG_CACHE_STORAGE_KEY);
+        if (!raw) return [];
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed)) return [];
+        const configs = parsed
+            .filter(
+                (entry): entry is SavedConfigEntry =>
+                    entry &&
+                    typeof entry === "object" &&
+                    typeof entry.name === "string" &&
+                    typeof entry.savedAt === "string" &&
+                    entry.data &&
+                    typeof entry.data === "object",
+            )
+            .map((entry) => ({
+                name: entry.name.trim(),
+                savedAt: entry.savedAt,
+                data: entry.data,
+            }))
+            .filter((entry) => entry.name.length > 0);
+        return configs.sort((a, b) => b.savedAt.localeCompare(a.savedAt));
+    } catch {
+        return [];
+    }
+}
+
+function setSavedConfigs(entries: SavedConfigEntry[]) {
+    localStorage.setItem(CONFIG_CACHE_STORAGE_KEY, JSON.stringify(entries));
+}
 
 function toKebab(input: string) {
     return input.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`);
@@ -1862,6 +1907,97 @@ function renderCompareInfo(state: AppState): string {
       </div>
       ${modal}
     `;
+}
+
+function renderConfigDropup(state: AppState, panel: "save" | "load"): string {
+    const savedConfigs = getSavedConfigs();
+    const savedConfigRows =
+        savedConfigs.length === 0
+            ? `<div class="sidebar-footer-dropup-empty">No saved configurations yet.</div>`
+            : savedConfigs
+                  .map((entry) => {
+                      const encodedName = encodeURIComponent(entry.name);
+                      const savedAt = new Date(entry.savedAt);
+                      const savedLabel = Number.isNaN(savedAt.getTime())
+                          ? entry.savedAt
+                          : savedAt.toLocaleString();
+                      return `
+              <div class="sidebar-footer-dropup-row">
+                <div class="sidebar-footer-dropup-row-meta">
+                  <div class="sidebar-footer-dropup-row-title">${escapeHtml(entry.name)}</div>
+                  <div class="sidebar-footer-dropup-row-subtitle">Saved ${escapeHtml(savedLabel)}</div>
+                </div>
+                <button type="button" class="sidebar-footer-dropup-delete-btn" data-action="delete-cached-config" data-config-name="${escapeHtml(
+                    encodedName,
+                )}" aria-label="Delete saved configuration">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="3 6 5 6 21 6"></polyline>
+                    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path>
+                    <path d="M10 11v6"></path>
+                    <path d="M14 11v6"></path>
+                    <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"></path>
+                  </svg>
+                </button>
+                <button type="button" class="sidebar-footer-dropup-inline-btn" data-action="load-cached-config" data-config-name="${escapeHtml(
+                    encodedName,
+                )}">Load</button>
+              </div>
+            `;
+                  })
+                  .join("");
+
+    const savePanel = state.saveDialogOpen
+        ? `
+      <div class="sidebar-footer-dropup-panel" role="dialog" aria-label="Save configuration">
+          <div class="sidebar-footer-dropup-header">
+            <div class="sidebar-footer-dropup-title">Save configuration</div>
+            <button type="button" class="sidebar-footer-dropup-close" data-action="close-save-dialog" aria-label="Close save dialog">✕</button>
+          </div>
+          <div class="sidebar-footer-dropup-body">
+            <div class="sidebar-footer-dropup-help">
+              Save this configuration locally with a name, or export it as a JSON file.
+            </div>
+            <input
+              type="text"
+              data-action="save-config-name-input"
+              value="${escapeHtml(state.saveConfigNameDraft)}"
+              placeholder="My config"
+              class="sidebar-footer-dropup-input"
+            />
+          </div>
+          <div class="sidebar-footer-dropup-footer">
+            <button type="button" class="sidebar-footer-dropup-btn sidebar-footer-dropup-btn-muted" data-action="close-save-dialog">Cancel</button>
+            <button type="button" class="sidebar-footer-dropup-btn sidebar-footer-dropup-btn-primary" data-action="save-config-locally">Save</button>
+            <button type="button" class="sidebar-footer-dropup-btn sidebar-footer-dropup-btn-primary" data-action="export-state">Export</button>
+          </div>
+      </div>
+    `
+        : "";
+
+    const loadPanel = state.loadDialogOpen
+        ? `
+      <div class="sidebar-footer-dropup-panel sidebar-footer-dropup-panel-wide" role="dialog" aria-label="Load configuration">
+          <div class="sidebar-footer-dropup-header">
+            <div class="sidebar-footer-dropup-title">Load configuration</div>
+            <button type="button" class="sidebar-footer-dropup-close" data-action="close-load-dialog" aria-label="Close load dialog">✕</button>
+          </div>
+          <div class="sidebar-footer-dropup-body">
+            <div class="sidebar-footer-dropup-help">
+              Choose one of your saved configurations.
+            </div>
+            <div class="sidebar-footer-dropup-list">
+              ${savedConfigRows}
+            </div>
+          </div>
+          <div class="sidebar-footer-dropup-footer">
+            <button type="button" class="sidebar-footer-dropup-btn sidebar-footer-dropup-btn-muted" data-action="close-load-dialog">Close</button>
+            <button type="button" class="sidebar-footer-dropup-btn sidebar-footer-dropup-btn-primary" data-action="import-state">Import JSON</button>
+          </div>
+      </div>
+    `
+        : "";
+
+    return panel === "save" ? savePanel : loadPanel;
 }
 
 async function checkApiAvailability() {
@@ -6904,22 +7040,28 @@ function render() {
           </div>
         </div>
         <div class="sidebar-footer">
-          <button type="button" class="sidebar-footer-btn" data-action="export-state" title="Export current settings to a JSON file">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-              <polyline points="7 10 12 15 17 10"/>
-              <line x1="12" y1="15" x2="12" y2="3"/>
-            </svg>
-            Export
-          </button>
-          <button type="button" class="sidebar-footer-btn" data-action="import-state" title="Load settings from a JSON file">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-              <polyline points="17 8 12 3 7 8"/>
-              <line x1="12" y1="3" x2="12" y2="15"/>
-            </svg>
-            Load
-          </button>
+          <div class="sidebar-footer-item">
+            <button type="button" class="sidebar-footer-btn" data-action="open-save-state" title="Save current settings locally or export as a JSON file">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="7 10 12 15 17 10"/>
+                <line x1="12" y1="15" x2="12" y2="3"/>
+              </svg>
+              Save
+            </button>
+            ${renderConfigDropup(state, "save")}
+          </div>
+          <div class="sidebar-footer-item">
+            <button type="button" class="sidebar-footer-btn" data-action="open-load-state" title="Load settings from saved configs or import a JSON file">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="17 8 12 3 7 8"/>
+                <line x1="12" y1="3" x2="12" y2="15"/>
+              </svg>
+              Load
+            </button>
+            ${renderConfigDropup(state, "load")}
+          </div>
           <button type="button" class="sidebar-footer-btn" data-action="generate-report" title="Generate a PDF report of the current view and settings">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
@@ -11030,31 +11172,63 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         "mapRangeStart", "mapRangeEnd", "mapRangeNumSamples", "mapRangePreset",
     ];
 
-    const exportBtn = root.querySelector<HTMLButtonElement>(
-        '[data-action="export-state"]',
-    );
-    exportBtn?.addEventListener("click", () => {
+    const buildSaveData = () => {
         const saveData: Record<string, any> = { __version: 1 };
         for (const key of SAVEABLE_KEYS) {
             saveData[key] = (state as any)[key];
         }
+        return saveData;
+    };
+
+    const applySavedData = (data: Record<string, any>) => {
+        // Clear window-2 cache so the new state re-renders correctly
+        clearW2Cache();
+        // Only apply known saveable keys to avoid stomping runtime state
+        for (const key of SAVEABLE_KEYS) {
+            if (key in data) {
+                (state as any)[key] = data[key];
+            }
+        }
+        state.saveDialogOpen = false;
+        state.loadDialogOpen = false;
+        render();
+        if (state.canvasView === "map") {
+            loadClimateData();
+            if (state.splitView) {
+                loadClimateDataWindow2();
+            }
+        } else {
+            loadChartData();
+        }
+    };
+
+    const exportStateToFile = () => {
+        const saveData = buildSaveData();
+        const rawName = state.saveConfigNameDraft.trim();
+        const normalizedName = rawName
+            ? rawName
+                  .toLowerCase()
+                  .replace(/[^a-z0-9_-]+/g, "-")
+                  .replace(/^-+|-+$/g, "")
+            : "";
+        const safeName =
+            normalizedName || `polyoracle-${new Date().toISOString().slice(0, 10)}`;
         const blob = new Blob([JSON.stringify(saveData, null, 2)], {
             type: "application/json",
         });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = `polyoracle-${new Date().toISOString().slice(0, 10)}.json`;
+        a.download = `${safeName}.json`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
-    });
+        state.saveDialogOpen = false;
+        render();
+    };
 
-    const importBtn = root.querySelector<HTMLButtonElement>(
-        '[data-action="import-state"]',
-    );
-    importBtn?.addEventListener("click", () => {
+    const importStateFromFile = () => {
         const fileInput = document.createElement("input");
         fileInput.type = "file";
         fileInput.accept = ".json,application/json";
@@ -11065,23 +11239,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             reader.onload = (ev) => {
                 try {
                     const data = JSON.parse(ev.target?.result as string);
-                    // Clear window-2 cache so the new state re-renders correctly
-                    clearW2Cache();
-                    // Only apply known saveable keys to avoid stomping runtime state
-                    for (const key of SAVEABLE_KEYS) {
-                        if (key in data) {
-                            (state as any)[key] = data[key];
-                        }
-                    }
-                    render();
-                    if (state.canvasView === "map") {
-                        loadClimateData();
-                        if (state.splitView) {
-                            loadClimateDataWindow2();
-                        }
-                    } else {
-                        loadChartData();
-                    }
+                    applySavedData(data);
                 } catch {
                     console.error("Failed to parse state file");
                 }
@@ -11089,7 +11247,140 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             reader.readAsText(file);
         });
         fileInput.click();
+    };
+
+    const openSaveBtn = root.querySelector<HTMLButtonElement>(
+        '[data-action="open-save-state"]',
+    );
+    openSaveBtn?.addEventListener("click", () => {
+        const willOpen = !state.saveDialogOpen;
+        state.saveDialogOpen = willOpen;
+        state.loadDialogOpen = false;
+        if (!state.saveConfigNameDraft.trim()) {
+            state.saveConfigNameDraft = `Config ${new Date()
+                .toISOString()
+                .slice(0, 10)}`;
+        }
+        render();
     });
+
+    const openLoadBtn = root.querySelector<HTMLButtonElement>(
+        '[data-action="open-load-state"]',
+    );
+    openLoadBtn?.addEventListener("click", () => {
+        state.loadDialogOpen = !state.loadDialogOpen;
+        state.saveDialogOpen = false;
+        render();
+    });
+
+    const saveDialogCloseBtns = root.querySelectorAll<HTMLButtonElement>(
+        '[data-action="close-save-dialog"]',
+    );
+    saveDialogCloseBtns.forEach((btn) =>
+        btn.addEventListener("click", () => {
+            state.saveDialogOpen = false;
+            render();
+        }),
+    );
+
+    const loadDialogCloseBtns = root.querySelectorAll<HTMLButtonElement>(
+        '[data-action="close-load-dialog"]',
+    );
+    loadDialogCloseBtns.forEach((btn) =>
+        btn.addEventListener("click", () => {
+            state.loadDialogOpen = false;
+            render();
+        }),
+    );
+
+    const saveNameInput = root.querySelector<HTMLInputElement>(
+        '[data-action="save-config-name-input"]',
+    );
+    saveNameInput?.addEventListener("input", () => {
+        state.saveConfigNameDraft = saveNameInput.value;
+    });
+    saveNameInput?.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+            e.preventDefault();
+            const trigger = root.querySelector<HTMLButtonElement>(
+                '[data-action="save-config-locally"]',
+            );
+            trigger?.click();
+        }
+    });
+
+    const saveConfigLocalBtn = root.querySelector<HTMLButtonElement>(
+        '[data-action="save-config-locally"]',
+    );
+    saveConfigLocalBtn?.addEventListener("click", () => {
+        const liveNameInput = root.querySelector<HTMLInputElement>(
+            '[data-action="save-config-name-input"]',
+        );
+        const name = (liveNameInput?.value ?? state.saveConfigNameDraft).trim();
+        state.saveConfigNameDraft = name;
+        if (!name) {
+            window.alert("Please enter a configuration name.");
+            return;
+        }
+        const nextEntry: SavedConfigEntry = {
+            name,
+            savedAt: new Date().toISOString(),
+            data: buildSaveData(),
+        };
+        const existing = getSavedConfigs().filter(
+            (entry) => entry.name.toLowerCase() !== name.toLowerCase(),
+        );
+        setSavedConfigs([nextEntry, ...existing]);
+        state.saveDialogOpen = false;
+        render();
+    });
+
+    const exportBtn = root.querySelector<HTMLButtonElement>(
+        '[data-action="export-state"]',
+    );
+    exportBtn?.addEventListener("click", () => {
+        exportStateToFile();
+    });
+
+    const importBtn = root.querySelector<HTMLButtonElement>(
+        '[data-action="import-state"]',
+    );
+    importBtn?.addEventListener("click", () => {
+        importStateFromFile();
+    });
+
+    const loadCachedBtns = root.querySelectorAll<HTMLButtonElement>(
+        '[data-action="load-cached-config"]',
+    );
+    loadCachedBtns.forEach((btn) =>
+        btn.addEventListener("click", () => {
+            const encodedName = btn.dataset.configName;
+            if (!encodedName) return;
+            const name = decodeURIComponent(encodedName);
+            const entry = getSavedConfigs().find(
+                (saved) => saved.name.toLowerCase() === name.toLowerCase(),
+            );
+            if (!entry) return;
+            applySavedData(entry.data);
+        }),
+    );
+
+    const deleteCachedBtns = root.querySelectorAll<HTMLButtonElement>(
+        '[data-action="delete-cached-config"]',
+    );
+    deleteCachedBtns.forEach((btn) =>
+        btn.addEventListener("click", () => {
+            const encodedName = btn.dataset.configName;
+            if (!encodedName) return;
+            const name = decodeURIComponent(encodedName);
+            const remaining = getSavedConfigs().filter(
+                (entry) => entry.name.toLowerCase() !== name.toLowerCase(),
+            );
+            setSavedConfigs(remaining);
+            state.loadDialogOpen = true;
+            render();
+        }),
+    );
 
     const reportBtn = root.querySelector<HTMLButtonElement>(
         '[data-action="generate-report"]',

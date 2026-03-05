@@ -1359,6 +1359,7 @@ export type AppState = {
         date: string;
         selectedUnit: string;
         mode: Mode;
+        stateSnapshot?: Record<string, any>;
     } | null;
     configDescriptionEditorOpen: boolean;
     configDescriptionInfoOpen: boolean;
@@ -2031,19 +2032,57 @@ function renderCompareInfo(state: AppState): string {
     `;
 }
 
+function buildDescriptionSnapshotFromState(state: AppState): Record<string, any> {
+    const snapshot = {
+        scenario: state.scenario,
+        model: state.model,
+        variable: state.variable,
+        date: state.date,
+        selectedUnit: state.selectedUnit,
+        mode: state.mode,
+        masks: state.masks,
+        mapShowBorders: state.mapShowBorders,
+        mapShowCities: state.mapShowCities,
+        mapPolygon: state.mapPolygon,
+        mapMarker: state.mapMarker,
+        mapRangeStart: state.mapRangeStart,
+        mapRangeEnd: state.mapRangeEnd,
+        mapRangeNumSamples: state.mapRangeNumSamples,
+        mapRangePreset: state.mapRangePreset,
+    };
+    // Deep-clone so later in-place mutations (e.g. masks) don't mutate the snapshot.
+    try {
+        return JSON.parse(JSON.stringify(snapshot));
+    } catch {
+        return snapshot;
+    }
+}
+
 function renderConfigNotes(state: AppState): string {
     if (!state.configDescription || state.canvasView !== "map") return "";
     const d = state.configDescription;
-    // Only show notes when key parameters match those present when the description was saved.
-    if (
-        d.scenario !== state.scenario ||
-        d.model !== state.model ||
-        d.variable !== state.variable ||
-        d.date !== state.date ||
-        d.selectedUnit !== state.selectedUnit ||
-        d.mode !== state.mode
-    ) {
-        return "";
+    // Only show notes when the configuration matches the one they were saved for.
+    if (d.stateSnapshot) {
+        const currentSnapshot = buildDescriptionSnapshotFromState(state);
+        try {
+            if (JSON.stringify(currentSnapshot) !== JSON.stringify(d.stateSnapshot)) {
+                return "";
+            }
+        } catch {
+            return "";
+        }
+    } else {
+        // Backwards-compat: fall back to comparing the main selection fields
+        if (
+            d.scenario !== state.scenario ||
+            d.model !== state.model ||
+            d.variable !== state.variable ||
+            d.date !== state.date ||
+            d.selectedUnit !== state.selectedUnit ||
+            d.mode !== state.mode
+        ) {
+            return "";
+        }
     }
     const overlayStyle = styles.infoModalOverlay;
     const modalStyle = mergeStyles(styles.infoModal, {
@@ -12224,6 +12263,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             date: state.date,
             selectedUnit: state.selectedUnit,
             mode: state.mode,
+            stateSnapshot: buildDescriptionSnapshotFromState(state),
         };
         // If no explicit config name has been set yet, use the description title
         // so users don't have to type the name twice.

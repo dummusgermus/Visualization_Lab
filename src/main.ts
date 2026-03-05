@@ -13,7 +13,6 @@ import {
     completeCurrentStep,
     endTutorial,
     getTutorialState,
-    renderTutorialButton,
     renderTutorialOverlay,
     startTutorial,
     TUTORIAL_STEPS,
@@ -1351,6 +1350,20 @@ export type AppState = {
         end: string;
     } | null;
     compareInfoOpen: boolean;
+    configDescription: {
+        title: string;
+        body: string;
+        scenario: string;
+        model: string;
+        variable: string;
+        date: string;
+        selectedUnit: string;
+        mode: Mode;
+    } | null;
+    configDescriptionEditorOpen: boolean;
+    configDescriptionInfoOpen: boolean;
+    configDescriptionDraftTitle: string;
+    configDescriptionDraftBody: string;
     saveDialogOpen: boolean;
     loadDialogOpen: boolean;
     saveDialogOpenForWindow: "1" | "2" | null;
@@ -1563,6 +1576,11 @@ const state: AppState = {
     timeRange: null,
     metaData: undefined,
     compareInfoOpen: false,
+    configDescription: null,
+    configDescriptionEditorOpen: false,
+    configDescriptionInfoOpen: false,
+    configDescriptionDraftTitle: "",
+    configDescriptionDraftBody: "",
     saveDialogOpen: false,
     loadDialogOpen: false,
     saveDialogOpenForWindow: null,
@@ -2013,11 +2031,88 @@ function renderCompareInfo(state: AppState): string {
     `;
 }
 
+function renderConfigNotes(state: AppState): string {
+    if (!state.configDescription || state.canvasView !== "map") return "";
+    const d = state.configDescription;
+    // Only show notes when key parameters match those present when the description was saved.
+    if (
+        d.scenario !== state.scenario ||
+        d.model !== state.model ||
+        d.variable !== state.variable ||
+        d.date !== state.date ||
+        d.selectedUnit !== state.selectedUnit ||
+        d.mode !== state.mode
+    ) {
+        return "";
+    }
+    const overlayStyle = styles.infoModalOverlay;
+    const modalStyle = mergeStyles(styles.infoModal, {
+        alignSelf: "center",
+        marginLeft: "auto",
+        marginRight: "auto",
+    });
+    const description = state.configDescription;
+    const bodyText = description.body?.trim() || "";
+    const bodyHtml = bodyText
+        ? `<p style="display:block; margin:0; line-height:1.6; white-space:pre-wrap; word-break: break-word;">${escapeHtml(
+              bodyText,
+          )}</p>`
+        : `<p style="display:block; margin:0; line-height:1.6; white-space:normal; word-break: break-word;">No additional notes were saved for this scenario.</p>`;
+
+    const modal = state.configDescriptionInfoOpen
+        ? `
+      <div data-role="config-description-info-overlay" class="config-description-info-overlay" style="${styleAttr(
+          overlayStyle,
+      )}">
+        <div style="${styleAttr(
+            modalStyle,
+        )}" role="dialog" aria-modal="true" aria-label="${escapeHtml(
+            description.title || "Scenario notes",
+        )}">
+          <div style="${styleAttr(styles.infoModalHeader)}">
+            <div style="${styleAttr(styles.infoModalTitle)}">${escapeHtml(
+                description.title || "Scenario notes",
+            )}</div>
+            <button type="button" data-action="close-config-description-info" style="${styleAttr(
+                styles.infoModalClose,
+            )}" aria-label="Close notes dialog">✕</button>
+          </div>
+          <div style="${styleAttr(styles.infoModalBody)}">
+            ${bodyHtml}
+          </div>
+          <div style="${styleAttr(styles.infoModalFooter)}">
+            <button type="button" data-action="close-config-description-info" style="${styleAttr(
+                styles.infoModalConfirm,
+            )}">Close</button>
+          </div>
+        </div>
+      </div>
+    `
+        : "";
+
+    return `
+      <button
+        type="button"
+        class="tutorial-start-btn"
+        data-action="open-config-description-info"
+        title="Show scenario notes"
+        aria-label="Show scenario notes"
+      >
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M6 3h11a1 1 0 0 1 1 1v13.5L15.5 17H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z" />
+          <path d="M9 7h6" />
+          <path d="M9 11h4" />
+        </svg>
+      </button>
+      ${modal}
+    `;
+}
+
 function renderConfigDropup(state: AppState, panel: "save" | "load", window: "1" | "2"): string {
     const savedConfigs = getSavedConfigs();
     const savedConfigRows =
         savedConfigs.length === 0
-            ? `<div class="sidebar-footer-dropup-empty">No saved configurations yet.</div>`
+            ? `<div class="sidebar-footer-dropup-empty">No saved scenarios yet.</div>`
             : savedConfigs
                   .map((entry) => {
                       const encodedName = encodeURIComponent(entry.name);
@@ -2033,7 +2128,7 @@ function renderConfigDropup(state: AppState, panel: "save" | "load", window: "1"
                 </div>
                 <button type="button" class="sidebar-footer-dropup-delete-btn" data-action="delete-cached-config" data-config-name="${escapeHtml(
                     encodedName,
-                )}" aria-label="Delete saved configuration">
+                )}" aria-label="Delete saved scenario">
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
                     <polyline points="3 6 5 6 21 6"></polyline>
                     <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path>
@@ -2053,14 +2148,14 @@ function renderConfigDropup(state: AppState, panel: "save" | "load", window: "1"
     const savePanel =
         state.saveDialogOpen && state.saveDialogOpenForWindow === window
             ? `
-      <div class="sidebar-footer-dropup-panel" role="dialog" aria-label="Save configuration">
+      <div class="sidebar-footer-dropup-panel" role="dialog" aria-label="Save scenario">
           <div class="sidebar-footer-dropup-header">
-            <div class="sidebar-footer-dropup-title">Save configuration</div>
+            <div class="sidebar-footer-dropup-title">Save scenario</div>
             <button type="button" class="sidebar-footer-dropup-close" data-action="close-save-dialog" aria-label="Close save dialog">✕</button>
           </div>
           <div class="sidebar-footer-dropup-body">
             <div class="sidebar-footer-dropup-help">
-              Save this configuration locally with a name, or export it as a JSON file.
+              Save this scenario locally with a name, or export it as a JSON file.
             </div>
             <input
               type="text"
@@ -2069,6 +2164,13 @@ function renderConfigDropup(state: AppState, panel: "save" | "load", window: "1"
               placeholder="My config"
               class="sidebar-footer-dropup-input"
             />
+            <button
+              type="button"
+              class="sidebar-footer-dropup-inline-btn"
+              data-action="open-config-description-editor"
+            >
+              ${state.configDescription ? "Edit description" : "Add description"}
+            </button>
           </div>
           <div class="sidebar-footer-dropup-footer">
             <button type="button" class="sidebar-footer-dropup-btn sidebar-footer-dropup-btn-muted" data-action="close-save-dialog">Cancel</button>
@@ -2082,14 +2184,14 @@ function renderConfigDropup(state: AppState, panel: "save" | "load", window: "1"
     const loadPanel =
         state.loadDialogOpen && state.loadDialogOpenForWindow === window
             ? `
-      <div class="sidebar-footer-dropup-panel sidebar-footer-dropup-panel-wide" role="dialog" aria-label="Load configuration">
+      <div class="sidebar-footer-dropup-panel sidebar-footer-dropup-panel-wide" role="dialog" aria-label="Load scenario">
           <div class="sidebar-footer-dropup-header">
-            <div class="sidebar-footer-dropup-title">Load configuration</div>
+            <div class="sidebar-footer-dropup-title">Load scenario</div>
             <button type="button" class="sidebar-footer-dropup-close" data-action="close-load-dialog" aria-label="Close load dialog">✕</button>
           </div>
           <div class="sidebar-footer-dropup-body">
             <div class="sidebar-footer-dropup-help">
-              Choose one of your saved configurations.
+              Choose one of your saved scenarios.
             </div>
             <div class="sidebar-footer-dropup-list">
               ${savedConfigRows}
@@ -2104,6 +2206,67 @@ function renderConfigDropup(state: AppState, panel: "save" | "load", window: "1"
         : "";
 
     return panel === "save" ? savePanel : loadPanel;
+}
+
+function renderConfigDescriptionEditor(state: AppState): string {
+    if (!state.configDescriptionEditorOpen) return "";
+    const overlayStyle = styles.infoModalOverlay;
+    const modalStyle = mergeStyles(styles.infoModal, {
+        width: "min(640px, 96vw)",
+        maxWidth: "640px",
+    });
+    const titleValue =
+        state.configDescriptionDraftTitle ||
+        state.configDescription?.title ||
+        state.saveConfigNameDraft ||
+        "";
+    const bodyValue =
+        state.configDescriptionDraftBody ||
+        state.configDescription?.body ||
+        "";
+
+    return `
+      <div data-role="config-description-editor-overlay" class="config-description-editor-overlay" style="${styleAttr(
+          overlayStyle,
+      )}">
+        <div style="${styleAttr(
+            modalStyle,
+        )}" role="dialog" aria-modal="true" aria-label="Scenario description">
+          <div style="${styleAttr(styles.infoModalHeader)}">
+            <div style="${styleAttr(
+                styles.infoModalTitle,
+            )}">Scenario description</div>
+            <button type="button" data-action="close-config-description-editor" style="${styleAttr(
+                styles.infoModalClose,
+            )}" aria-label="Close description editor">✕</button>
+          </div>
+          <div style="${styleAttr(styles.infoModalBody)}">
+            <label style="display:block;margin-bottom:18px;font-size:13px;font-weight:500;">
+              <span style="display:block;margin-bottom:6px;">Title</span>
+              <input
+                type="text"
+                data-role="config-description-title-input"
+                value="${escapeHtml(titleValue)}"
+                style="margin-top:8px;width:100%;padding:8px 10px;border-radius:8px;border:1px solid var(--border-default);background:rgba(15,23,42,0.9);color:white;font-size:13px;outline:none;"
+              />
+            </label>
+            <label style="display:block;font-size:13px;font-weight:500;">
+              <span style="display:block;margin-bottom:6px;">Description</span>
+              <textarea
+                data-role="config-description-body-input"
+                rows="6"
+                style="margin-top:8px;width:100%;padding:8px 10px;border-radius:8px;border:1px solid var(--border-default);background:rgba(15,23,42,0.9);color:white;font-size:13px;resize:vertical;outline:none;"
+              >${escapeHtml(bodyValue)}</textarea>
+            </label>
+          </div>
+          <div style="${styleAttr(styles.infoModalFooter)}">
+            <button type="button" data-action="save-config-description" style="${styleAttr(
+                styles.infoModalConfirm,
+            )}">Save description</button>
+          </div>
+        </div>
+      </div>
+    `;
 }
 
 async function checkApiAvailability() {
@@ -7947,8 +8110,9 @@ function render() {
               : ""
       }
 
-      ${renderTutorialButton()}
       ${renderTutorialOverlay(getTutorialState())}
+      ${renderConfigDescriptionEditor(state)}
+      ${renderConfigNotes(state)}
     </div>
   `;
 
@@ -12026,6 +12190,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         "mapShowBorders", "mapShowCities",
         "mapPolygon", "chartPolygon", "mapMarker",
         "mapRangeStart", "mapRangeEnd", "mapRangeNumSamples", "mapRangePreset",
+        "configDescription",
     ];
 
     const W2_APPLICABLE_KEYS: (keyof Window2State)[] = [
@@ -12037,6 +12202,35 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         "ensembleScenarios", "ensembleModels", "ensembleStatistic",
         "ensembleDate", "ensembleVariable", "ensembleUnit",
     ];
+
+    function commitConfigDescriptionDraft() {
+        const draftTitle = state.configDescriptionDraftTitle?.trim() ?? "";
+        const draftBody = state.configDescriptionDraftBody?.trim() ?? "";
+        if (!draftTitle && !draftBody) {
+            // If there is already a saved description, leave it as-is.
+            return;
+        }
+        const baseTitle =
+            draftTitle ||
+            state.saveConfigNameDraft.trim() ||
+            state.configDescription?.title ||
+            "Scenario description";
+        state.configDescription = {
+            title: baseTitle,
+            body: draftBody,
+            scenario: state.scenario,
+            model: state.model,
+            variable: state.variable,
+            date: state.date,
+            selectedUnit: state.selectedUnit,
+            mode: state.mode,
+        };
+        // If no explicit config name has been set yet, use the description title
+        // so users don't have to type the name twice.
+        if (!state.saveConfigNameDraft.trim() && draftTitle) {
+            state.saveConfigNameDraft = draftTitle;
+        }
+    }
 
     const buildSaveData = () => {
         const saveData: Record<string, any> = { __version: 1 };
@@ -12216,10 +12410,11 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
     );
     saveConfigLocalBtns.forEach((btn) =>
         btn.addEventListener("click", () => {
+            commitConfigDescriptionDraft();
             const name = state.saveConfigNameDraft.trim();
             state.saveConfigNameDraft = name;
             if (!name) {
-                window.alert("Please enter a configuration name.");
+                window.alert("Please enter a scenario name.");
                 return;
             }
             const nextEntry: SavedConfigEntry = {
@@ -12242,6 +12437,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
     );
     exportBtns.forEach((btn) =>
         btn.addEventListener("click", () => {
+            commitConfigDescriptionDraft();
             exportStateToFile();
         }),
     );
@@ -12268,6 +12464,68 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             );
             if (!entry) return;
             applySavedData(entry.data);
+        }),
+    );
+
+    const openConfigDescriptionEditorBtns =
+        root.querySelectorAll<HTMLButtonElement>(
+            '[data-action="open-config-description-editor"]',
+        );
+    openConfigDescriptionEditorBtns.forEach((btn) =>
+        btn.addEventListener("click", () => {
+            const existing = state.configDescription;
+            if (existing) {
+                state.configDescriptionDraftTitle = existing.title;
+                state.configDescriptionDraftBody = existing.body;
+            } else {
+                if (!state.configDescriptionDraftTitle) {
+                    state.configDescriptionDraftTitle = state.saveConfigNameDraft;
+                }
+            }
+            state.configDescriptionEditorOpen = true;
+            render();
+        }),
+    );
+
+    const closeConfigDescriptionEditorBtns =
+        root.querySelectorAll<HTMLButtonElement>(
+            '[data-action="close-config-description-editor"]',
+        );
+    closeConfigDescriptionEditorBtns.forEach((btn) =>
+        btn.addEventListener("click", () => {
+            state.configDescriptionEditorOpen = false;
+            render();
+        }),
+    );
+
+    const configDescriptionTitleInputs =
+        root.querySelectorAll<HTMLInputElement>(
+            '[data-role="config-description-title-input"]',
+        );
+    configDescriptionTitleInputs.forEach((input) => {
+        input.addEventListener("input", () => {
+            state.configDescriptionDraftTitle = input.value;
+        });
+    });
+
+    const configDescriptionBodyInputs =
+        root.querySelectorAll<HTMLTextAreaElement>(
+            '[data-role="config-description-body-input"]',
+        );
+    configDescriptionBodyInputs.forEach((input) => {
+        input.addEventListener("input", () => {
+            state.configDescriptionDraftBody = input.value;
+        });
+    });
+
+    const saveConfigDescriptionBtns = root.querySelectorAll<HTMLButtonElement>(
+        '[data-action="save-config-description"]',
+    );
+    saveConfigDescriptionBtns.forEach((btn) =>
+        btn.addEventListener("click", () => {
+            commitConfigDescriptionDraft();
+            state.configDescriptionEditorOpen = false;
+            render();
         }),
     );
 
@@ -14410,6 +14668,25 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
     infoCloseBtns.forEach((btn) =>
         btn.addEventListener("click", () => {
             state.compareInfoOpen = false;
+            render();
+        }),
+    );
+
+    const notesOpenBtn = root.querySelector<HTMLButtonElement>(
+        '[data-action="open-config-description-info"]',
+    );
+    notesOpenBtn?.addEventListener("click", () => {
+        if (!state.configDescription) return;
+        state.configDescriptionInfoOpen = true;
+        render();
+    });
+
+    const notesCloseBtns = root.querySelectorAll<HTMLButtonElement>(
+        '[data-action="close-config-description-info"]',
+    );
+    notesCloseBtns.forEach((btn) =>
+        btn.addEventListener("click", () => {
+            state.configDescriptionInfoOpen = false;
             render();
         }),
     );

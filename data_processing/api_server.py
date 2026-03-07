@@ -698,6 +698,122 @@ def fetch_pixel_data_batch(request: PixelDataBatchRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/pixel-data-stream")
+def fetch_pixel_data_stream(request: PixelDataBatchRequest):
+    """
+    Stream pixel time-series for many model/scenario combinations via SSE.
+
+    Accepts the same body as /pixel-data-batch but instead of collecting all
+    results before responding, it emits a Server-Sent Event for each combo the
+    moment its data is ready.  The client can render progressive chart updates
+    as results trickle in rather than waiting for the slowest model.
+
+    Each SSE event is a JSON object::
+        {"combo_idx": int, "model": str, "scenario": str,
+         "timestamps": [...], "values": [...], "status": "ok" | "error"}
+    A final {"status": "done"} event signals the end of the stream.
+    """
+    import json as _json
+    from fastapi.responses import StreamingResponse as _StreamResp
+
+    try:
+        x0, x1, y0, y1 = _validate_logic_box(
+            request.x0, request.x1, request.y0, request.y1
+        )
+        center_x = (x0 + x1) // 2
+        center_y = (y0 + y1) // 2
+
+        def _load_one(ci: int, combo: PixelDataBatchCombo) -> dict:
+            """
+            Load the full time series for one combo using load_pixel_time_series,
+            which parallelises date reads internally (MAX_WORKERS threads).
+            This is the same function the benchmark SSE-sim used, ensuring
+            parity with measured performance.
+            """
+            try:
+                entries = data_loader.load_pixel_time_series(
+                    variable=request.variable,
+                    model=combo.model,
+                    start_time=combo.start_date,
+                    end_time=combo.end_date,
+                    scenario=combo.scenario,
+                    resolution=request.resolution,
+                    step_days=request.step_days,
+                    window_box=(x0, x1, y0, y1),
+                )
+            except Exception as exc:
+                return {
+                    "combo_idx": ci, "model": combo.model,
+                    "scenario": combo.scenario,
+                    "timestamps": [], "values": [],
+                    "valid_count": 0, "nan_count": 0,
+                    "status": "error", "error": str(exc),
+                }
+
+            timestamps, values = [], []
+            for entry in (entries or []):
+                if entry is None:
+                    continue
+                ts = entry.get("time")
+                arr = entry.get("data")
+                if ts is None:
+                    continue
+                ts_str = ts if isinstance(ts, str) else ts.strftime("%Y-%m-%d")
+                timestamps.append(ts_str)
+                if arr is None:
+                    values.append(None)
+                else:
+                    lx = min(arr.shape[1] - 1, center_x - x0)
+                    ly = min(arr.shape[0] - 1, center_y - y0)
+                    val = float(arr[ly, lx])
+                    values.append(val if np.isfinite(val) else None)
+
+            finite = [v for v in values if v is not None]
+            return {
+                "combo_idx": ci,
+                "model": combo.model,
+                "scenario": combo.scenario,
+                "timestamps": timestamps,
+                "values": values,
+                "valid_count": len(finite),
+                "nan_count": len(values) - len(finite),
+                "status": "ok",
+            }
+
+        n_workers = min(config.BATCH_WORKERS, len(request.combinations)) if request.combinations else 1
+
+        def _event_generator():
+            with ThreadPoolExecutor(max_workers=n_workers) as pool:
+                future_map = {
+                    pool.submit(_load_one, ci, combo): ci
+                    for ci, combo in enumerate(request.combinations)
+                }
+                for fut in as_completed(future_map):
+                    try:
+                        result = fut.result()
+                        yield f"data: {_json.dumps(result)}\n\n"
+                    except Exception as exc:
+                        ci = future_map[fut]
+                        combo = request.combinations[ci]
+                        yield f"data: {_json.dumps({'combo_idx': ci, 'model': combo.model, 'scenario': combo.scenario, 'status': 'error', 'error': str(exc)})}\n\n"
+            yield 'data: {"status": "done"}\n\n'
+
+        return _StreamResp(
+            _event_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+                "Connection": "keep-alive",
+            },
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/aggregate-on-demand")
 def aggregate_on_demand(request: OnDemandAggregateRequest):
     """

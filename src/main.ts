@@ -58,6 +58,7 @@ import {
     fetchClimateData,
     fetchMetadata,
     fetchPixelData,
+    fetchPixelDataStream,
     type Metadata,
     normalizeScenario,
 } from "./Utils/dataClient";
@@ -6259,8 +6260,79 @@ async function loadChartData() {
                       state.chartPolygon.length >= 3;
 
             if (usePixelApi) {
-                console.log("Using pixel-data API for efficient loading");
-                // Use pixel-data API for efficient loading
+                if (
+                    (state.chartLocation === "Point" ||
+                        state.chartLocation === "Search") &&
+                    state.chartPoint
+                ) {
+                    // ── SSE fast path ───────────────────────────────────────────────────
+                    // Fire ALL scenario×model combos in one /pixel-data-stream request.
+                    // The server fans them out via a ThreadPoolExecutor and emits each
+                    // result as an SSE event the moment it completes, giving progressive
+                    // chart updates instead of a single burst after the slowest model.
+                    const [_isx, _isClientY] = latLonToGridIndices(
+                        state.chartPoint.lat,
+                        state.chartPoint.lon,
+                    );
+                    const _isOvY = GRID_HEIGHT - 1 - _isClientY;
+                    // Build flat list: all scenario×model combos with per-scenario dates
+                    const _isCombos = activeScenarios.flatMap((sc) => {
+                        const d = clipDateToRange(
+                            state.chartDate,
+                            getTimeRangeForScenario(sc),
+                        );
+                        return activeModels.map((model) => ({
+                            model,
+                            scenarioLabel: sc,
+                            scenario: normalizeScenario(sc),
+                            date: d,
+                        }));
+                    });
+                    await fetchPixelDataStream(
+                        {
+                            variable: state.chartVariable,
+                            x0: _isx, x1: _isx, y0: _isOvY, y1: _isOvY,
+                            resolution: "low",
+                            step_days: 1,
+                            combinations: _isCombos.map((c) => ({
+                                model: c.model,
+                                scenario: c.scenario,
+                                start_date: c.date,
+                                end_date: c.date,
+                            })),
+                        },
+                        (event) => {
+                            if (event.status !== "ok") return;
+                            const _ic = _isCombos[event.combo_idx] ??
+                                _isCombos.find((c) =>
+                                    c.model === event.model &&
+                                    c.scenario === event.scenario);
+                            if (!_ic) return;
+                            const value = event.values?.[0] ?? null;
+                            if (value !== null && isFinite(value)) {
+                                const rawValue = state.chartVariable === "hurs"
+                                    ? Math.min(value, 100) : value;
+                                samples.push({
+                                    scenario: _ic.scenarioLabel,
+                                    model: event.model,
+                                    rawValue,
+                                    dateUsed: _ic.date,
+                                });
+                            }
+                            state.chartLoadingProgress = {
+                                total: totalRequests,
+                                done: state.chartLoadingProgress.done + 1,
+                            };
+                            setLoadingProgress(
+                                Math.min(98, Math.round(
+                                    (state.chartLoadingProgress.done / totalRequests) * 100,
+                                )),
+                            );
+                            updateChartPreview(samples);
+                        },
+                    );
+                } else {
+                // Draw: per-scenario aggregate-on-demand (already batches all models)
                 for (const scenario of activeScenarios) {
                     const dateForScenario = clipDateToRange(
                         state.chartDate,
@@ -6529,6 +6601,7 @@ async function loadChartData() {
                         throw error;
                     }
                 }
+                } // end else: Draw per-scenario aggregate
             } else {
                 // World location: use old method (load full map)
                 for (const scenario of activeScenarios) {
@@ -6692,34 +6765,58 @@ async function loadChartData() {
                                 ),
                         );
 
-                        await pLimit(
-                            combinations.map(
-                                ({ model, scenario }) =>
-                                    async () => {
-                                        try {
-                                            const pointSamples =
-                                                await loadRangePointSamples({
-                                                    variable: state.chartVariable,
-                                                    model,
-                                                    scenario,
-                                                    point: _point,
-                                                    rangeStart,
-                                                    rangeEnd,
-                                                    useFixedAnnualSamples,
-                                                    fixedReferenceDate,
-                                                });
-                                            samples.push(...pointSamples);
-                                        } catch (error) {
-                                            console.warn(
-                                                `Range samples failed for ${model}/${scenario}:`,
-                                                error,
-                                            );
-                                        } finally {
-                                            _onRangeTaskDone();
-                                        }
-                                    },
-                            ),
-                            PARALLEL_REQUEST_LIMIT,
+                        const [_rx, _rClientY] = latLonToGridIndices(
+                            _point.lat,
+                            _point.lon,
+                        );
+                        const _rOvY = GRID_HEIGHT - 1 - _rClientY;
+
+                        // SSE stream: fire all scenario×model combos at once;
+                        // each result triggers a live preview update as it arrives.
+                        // step_days targets ~60 data points for the range so the
+                        // server's load_pixel_time_series doesn't loop through 200+
+                        // dates sequentially (which was causing the 27-second freeze).
+                        const _rangeDays = Math.max(1,
+                            (parseDate(rangeEnd).getTime() - parseDate(rangeStart).getTime()) / 86400000);
+                        const _sseStepDays = useFixedAnnualSamples
+                            ? 365
+                            : Math.max(7, Math.round(_rangeDays / 60));
+                        await fetchPixelDataStream(
+                            {
+                                variable: state.chartVariable,
+                                x0: _rx, x1: _rx, y0: _rOvY, y1: _rOvY,
+                                resolution: "low",
+                                step_days: _sseStepDays,
+                                combinations: combinations.map(({ model, scenario }) => {
+                                    const sr = getTimeRangeForScenario(scenario);
+                                    return {
+                                        model,
+                                        scenario: normalizeScenario(scenario),
+                                        start_date: clipDateToRange(rangeStart, sr),
+                                        end_date:   clipDateToRange(rangeEnd,   sr),
+                                    };
+                                }),
+                            },
+                            (event) => {
+                                if (event.status !== "ok") return;
+                                const _rc = combinations[event.combo_idx] ??
+                                    combinations.find((c) => c.model === event.model);
+                                if (!_rc) return;
+                                for (let _ri = 0; _ri < (event.timestamps?.length ?? 0); _ri++) {
+                                    const value = event.values[_ri];
+                                    if (value !== null && isFinite(value)) {
+                                        const rawValue = state.chartVariable === "hurs"
+                                            ? Math.min(value, 100) : value;
+                                        samples.push({
+                                            scenario: _rc.scenario,
+                                            model: event.model,
+                                            rawValue,
+                                            dateUsed: event.timestamps[_ri],
+                                        });
+                                    }
+                                }
+                                _onRangeTaskDone();
+                            },
                         );
                     } else if (
                         state.chartLocation === "Draw" &&

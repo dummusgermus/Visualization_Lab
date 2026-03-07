@@ -503,6 +503,85 @@ export async function fetchAggregateOnDemand(
     }
 }
 
+// ─── SSE pixel-data stream ────────────────────────────────────────────────────
+
+/**
+ * A single Server-Sent Event emitted by /pixel-data-stream.
+ * `status === "done"` signals the end of the stream.
+ */
+export interface PixelDataStreamEvent {
+    combo_idx: number;
+    model: string;
+    scenario: string | null;
+    timestamps: string[];
+    values: (number | null)[];
+    valid_count: number;
+    nan_count: number;
+    status: "ok" | "error" | "done" | "timeout";
+    error?: string;
+}
+
+/**
+ * Opens a POST /pixel-data-stream SSE connection.  The server fans out all
+ * combinations to a thread pool and emits one SSE event per combo as it
+ * completes.  `onEvent` is called for each event; the promise resolves when
+ * the "done" sentinel is received or the stream closes.
+ */
+export async function fetchPixelDataStream(
+    request: PixelDataBatchRequest,
+    onEvent: (event: PixelDataStreamEvent) => void,
+    options?: { apiUrl?: string },
+): Promise<void> {
+    const apiUrl = options?.apiUrl || API_BASE_URL;
+    const url = `${apiUrl}/pixel-data-stream`;
+
+    const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            ...request,
+            resolution: request.resolution || "low",
+            step_days: request.step_days || 1,
+        }),
+    });
+
+    if (!response.ok) {
+        const errText = await response.text().catch(() => response.statusText);
+        throw new DataClientError(
+            `Pixel data stream failed: HTTP ${response.status} — ${errText}`,
+            response.status,
+        );
+    }
+    if (!response.body) {
+        throw new DataClientError("Pixel data stream: no response body");
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    try {
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop() ?? "";
+            for (const line of lines) {
+                if (!line.startsWith("data: ")) continue;
+                try {
+                    const event = JSON.parse(line.slice(6)) as PixelDataStreamEvent;
+                    onEvent(event);
+                    if (event.status === "done" || event.status === "timeout") return;
+                } catch {
+                    // skip malformed event line
+                }
+            }
+        }
+    } finally {
+        reader.releaseLock();
+    }
+}
+
 export async function checkApiHealth(options?: {
     apiUrl?: string;
 }): Promise<boolean> {

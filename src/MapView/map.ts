@@ -126,6 +126,37 @@ export function getCurrentZoomLevel(): number {
     return currentTransform.k;
 }
 
+/** Returns the current Window-1 map pan/zoom as a plain serialisable object. */
+export function getMapTransform(): { k: number; x: number; y: number } {
+    return { k: currentTransform.k, x: currentTransform.x, y: currentTransform.y };
+}
+
+/** Returns the current Window-2 map pan/zoom as a plain serialisable object. */
+export function getW2MapTransform(): { k: number; x: number; y: number } {
+    return { k: w2Transform.k, x: w2Transform.x, y: w2Transform.y };
+}
+
+/** Restores the Window-1 map pan/zoom from a previously saved transform object. */
+export function applyMapTransform(t: { k: number; x: number; y: number }): void {
+    if (!t || !Number.isFinite(t.k) || !Number.isFinite(t.x) || !Number.isFinite(t.y)) return;
+    const next = d3.zoomIdentity.translate(t.x, t.y).scale(t.k);
+    currentTransform = next;
+    if (zoomBehavior && cachedMapCanvas) {
+        d3.select(cachedMapCanvas).call(zoomBehavior.transform, next);
+    }
+    transformCallback?.();
+}
+
+/** Restores the Window-2 map pan/zoom from a previously saved transform object. */
+export function applyW2MapTransform(t: { k: number; x: number; y: number }): void {
+    if (!t || !Number.isFinite(t.k) || !Number.isFinite(t.x) || !Number.isFinite(t.y)) return;
+    const next = d3.zoomIdentity.translate(t.x, t.y).scale(t.k);
+    w2Transform = next;
+    if (w2ZoomBehavior && w2CachedMapCanvas) {
+        d3.select(w2CachedMapCanvas).call(w2ZoomBehavior.transform, next);
+    }
+}
+
 export function setMapOverlayVisibility(options: {
     showBorders?: boolean;
     showLabels?: boolean;

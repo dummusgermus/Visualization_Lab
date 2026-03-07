@@ -693,7 +693,20 @@ export async function generateReport(state: AppState): Promise<void> {
             pdf.text(`Saved: ${savedDate}`, MARGIN, y);
             y += LINE_H + 1;
 
-            // User description (title + body) if present
+            // Thumbnail screenshot (if captured at save time)
+            const thumbnail: string | undefined = (entry.data as any)._thumbnail;
+            if (thumbnail) {
+                const img = new Image();
+                img.src = thumbnail;
+                const nativeW = img.naturalWidth  || window.innerWidth;
+                const nativeH = img.naturalHeight || window.innerHeight;
+                const aspect  = nativeH / nativeW;
+                const thumbDisplayW = CONTENT_W; // full content width
+                const thumbDisplayH = thumbDisplayW * aspect;
+                if (y + thumbDisplayH + 2 > PAGE_H - 15) { pdf.addPage(); y = MARGIN; }
+                pdf.addImage(thumbnail, "JPEG", MARGIN, y, thumbDisplayW, thumbDisplayH);
+                y += thumbDisplayH + 3;
+            }
             const cd = entry.data?.configDescription as {
                 title?: string;
                 body?: string;

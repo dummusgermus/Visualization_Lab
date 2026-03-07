@@ -19,8 +19,12 @@ import {
 } from "./Components/tutorial";
 import { drawLegendGradient, renderMapLegend } from "./MapView/legend";
 import {
+    applyMapTransform,
+    applyW2MapTransform,
     clearW2Cache,
     getCurrentZoomLevel,
+    getMapTransform,
+    getW2MapTransform,
     isW2CacheReady,
     projectLonLatToCanvas,
     renderMapData,
@@ -63,6 +67,7 @@ import {
 } from "./Utils/mockChartData";
 import { registerStateUpdateCallback } from "./Utils/stateUpdate";
 import { generateReport } from "./Utils/reportGenerator";
+import { captureThumbnailDataUrl } from "./Utils/screenshot";
 import {
     convertMinMax,
     convertValue,
@@ -12277,6 +12282,9 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         for (const key of SAVEABLE_KEYS) {
             saveData[key] = (state as any)[key];
         }
+        // Persist current map pan/zoom for both windows
+        saveData._mapTransform   = getMapTransform();
+        saveData._w2MapTransform = getW2MapTransform();
         return saveData;
     };
 
@@ -12299,6 +12307,8 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             state.loadDialogOpenForWindow = null;
             render();
             loadClimateDataWindow2();
+            // Restore map position for window 2
+            if (data._w2MapTransform) applyW2MapTransform(data._w2MapTransform);
         } else {
             for (const key of SAVEABLE_KEYS) {
                 if (key in data) {
@@ -12315,6 +12325,8 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             } else {
                 loadChartData();
             }
+            // Restore map position for window 1
+            if (data._mapTransform) applyMapTransform(data._mapTransform);
         }
     };
 
@@ -12449,7 +12461,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         '[data-action="save-config-locally"]',
     );
     saveConfigLocalBtns.forEach((btn) =>
-        btn.addEventListener("click", () => {
+        btn.addEventListener("click", async () => {
             commitConfigDescriptionDraft();
             const name = state.saveConfigNameDraft.trim();
             state.saveConfigNameDraft = name;
@@ -12457,10 +12469,14 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                 window.alert("Please enter a scenario name.");
                 return;
             }
+            // Capture a thumbnail of the current view before closing the dialog
+            const thumbnail = captureThumbnailDataUrl();
+            const saveData = buildSaveData();
+            if (thumbnail) saveData._thumbnail = thumbnail;
             const nextEntry: SavedConfigEntry = {
                 name,
                 savedAt: new Date().toISOString(),
-                data: buildSaveData(),
+                data: saveData,
             };
             const existing = getSavedConfigs().filter(
                 (entry) => entry.name.toLowerCase() !== name.toLowerCase(),

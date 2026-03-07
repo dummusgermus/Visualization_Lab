@@ -204,6 +204,43 @@ export async function captureMapScreenshot(
 }
 
 /**
+ * Captures the current viewport (map canvases + legend overlays) and returns
+ * a JPEG data URL downscaled to ≤ THUMB_W px wide.  Intended for embedding a
+ * small preview image alongside a saved scenario in localStorage.
+ *
+ * For split-view, both halves are composited into one thumbnail side-by-side.
+ * For chart/non-map views the same composite is used as a best-effort capture.
+ *
+ * Returns a data URL string (suitable for <img src> or jsPDF addImage), or
+ * null if capture fails.
+ */
+export function captureThumbnailDataUrl(
+    thumbWidth = 1200,
+): string | null {
+    try {
+        const composite = compositeViewport();
+        if (!composite) return null;
+
+        const vw = composite.width;
+        const vh = composite.height;
+        const scale = Math.min(thumbWidth / vw, 1);
+        const outW = Math.round(vw * scale);
+        const outH = Math.round(vh * scale);
+
+        const out = document.createElement("canvas");
+        out.width  = outW;
+        out.height = outH;
+        const ctx = out.getContext("2d");
+        if (!ctx) return null;
+        ctx.drawImage(composite, 0, 0, outW, outH);
+
+        return out.toDataURL("image/jpeg", 0.90);
+    } catch {
+        return null;
+    }
+}
+
+/**
  * Debug helper: triggers a download of the canvas as JPEG.
  */
 function saveScreenshotDebug(canvas: HTMLCanvasElement): void {

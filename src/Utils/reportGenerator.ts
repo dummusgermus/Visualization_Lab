@@ -338,11 +338,114 @@ function addTwoImages(
     return labelY + 5;
 }
 
+// ─── Saved configs (from localStorage) ──────────────────────────────────────
+
+const CONFIG_CACHE_STORAGE_KEY = "polyoracle-saved-configs-v1";
+
+type SavedConfigEntry = {
+    name: string;
+    savedAt: string;
+    data: Record<string, any>;
+};
+
+function getSavedConfigsFromStorage(): SavedConfigEntry[] {
+    try {
+        const raw = localStorage.getItem(CONFIG_CACHE_STORAGE_KEY);
+        if (!raw) return [];
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed)) return [];
+        return parsed
+            .filter(
+                (e): e is SavedConfigEntry =>
+                    e && typeof e === "object" &&
+                    typeof e.name === "string" &&
+                    typeof e.savedAt === "string" &&
+                    e.data && typeof e.data === "object",
+            )
+            .sort((a, b) => b.savedAt.localeCompare(a.savedAt));
+    } catch {
+        return [];
+    }
+}
+
+/** Builds "Label: value" lines from a raw saved-config data object. */
+function buildSavedConfigLines(data: Record<string, any>): string[] {
+    const lines: string[] = [];
+    const f = (label: string, key: string) => {
+        const v = data[key];
+        if (v !== null && v !== undefined && v !== "") lines.push(`${label}: ${v}`);
+    };
+    const fList = (label: string, key: string) => {
+        const v = data[key];
+        if (Array.isArray(v) && v.length > 0) lines.push(`${label}: ${v.join(", ")}`);
+    };
+
+    f("Mode", "mode");
+    f("View", "canvasView");
+
+    const mode: string = data["mode"] ?? "";
+    const view: string = data["canvasView"] ?? "map";
+
+    if (view === "map") {
+        if (mode === "Explore") {
+            f("Variable",  "variable");
+            f("Scenario",  "scenario");
+            f("Model",     "model");
+            f("Date",      "date");
+            f("Unit",      "selectedUnit");
+            f("Palette",   "mapPalette");
+        } else if (mode === "Compare") {
+            f("Compare Mode",  "compareMode");
+            f("Scenario A",    "compareScenarioA");
+            f("Scenario B",    "compareScenarioB");
+            f("Model A",       "compareModelA");
+            f("Model B",       "compareModelB");
+            f("Variable",      "variable");
+            f("Date A",        "compareDateStart");
+            f("Date B",        "compareDateEnd");
+            f("Unit",          "selectedUnit");
+            f("Palette",       "mapPalette");
+        } else if (mode === "Ensemble") {
+            f("Variable",        "ensembleVariable");
+            fList("Scenarios",   "ensembleScenarios");
+            fList("Models",      "ensembleModels");
+            f("Statistic",       "ensembleStatistic");
+            f("Date",            "ensembleDate");
+            f("Unit",            "ensembleUnit");
+            f("Palette",         "mapPalette");
+        }
+    } else {
+        // Chart view
+        f("Variable",     "chartVariable");
+        f("Chart Mode",   "chartMode");
+        fList("Scenarios","chartScenarios");
+        fList("Models",   "chartModels");
+        f("Date",         "chartDate");
+        f("Unit",         "chartUnit");
+        f("Location",     "chartLocationName");
+    }
+
+    // Masks
+    const masks: Array<any> = Array.isArray(data["masks"]) ? data["masks"] : [];
+    const activeMasks = masks.filter(
+        (m) => m.lowerBound !== null || m.upperBound !== null,
+    );
+    activeMasks.forEach((m, i) => {
+        const lo = m.lowerBound !== null ? Number(m.lowerBound).toFixed(2) : "−∞";
+        const hi = m.upperBound !== null ? Number(m.upperBound).toFixed(2) : "+∞";
+        const varLabel = m.variable ? ` (${m.variable})` : "";
+        lines.push(`Mask ${i + 1}${varLabel}: ${lo} – ${hi}`);
+    });
+
+    return lines;
+}
+
 // ─── Main export ─────────────────────────────────────────────────────────────
 
 /**
  * Generates and downloads a PDF report of the current application state,
- * including screenshot(s), settings summary, and full chat history.
+ * including screenshot(s), settings summary, full chat history, and all
+ * saved scenarios.
  */
 export async function generateReport(state: AppState): Promise<void> {
     const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
@@ -547,6 +650,77 @@ export async function generateReport(state: AppState): Promise<void> {
             const fullText = cleaned + stateNote;
             y = writeWrapped(pdf, fullText, MARGIN + 4, y, CONTENT_W - 4);
             y += 2; // small gap between messages
+        }
+    }
+
+    // ── Saved Scenarios ────────────────────────────────────────────────────
+
+    const savedConfigs = getSavedConfigsFromStorage();
+
+    if (savedConfigs.length > 0) {
+        pdf.addPage();
+        y = MARGIN;
+
+        // Accent bar
+        pdf.setFillColor(...COLORS.accent);
+        pdf.rect(MARGIN, y, CONTENT_W, 1.2, "F");
+        y += 6;
+
+        pdf.setFontSize(14);
+        pdf.setFont("helvetica", "bold");
+        setColor(pdf, COLORS.dark);
+        pdf.text(`Saved Scenarios  (${savedConfigs.length})`, MARGIN, y);
+        y += 7;
+        y = drawDivider(pdf, y);
+
+        for (const entry of savedConfigs) {
+            if (y > PAGE_H - 40) { pdf.addPage(); y = MARGIN; }
+
+            // Entry name + timestamp
+            pdf.setFontSize(10);
+            pdf.setFont("helvetica", "bold");
+            setColor(pdf, COLORS.dark);
+            pdf.text(entry.name, MARGIN, y);
+            y += LINE_H;
+
+            const savedDate = new Date(entry.savedAt).toLocaleString(undefined, {
+                dateStyle: "medium",
+                timeStyle: "short",
+            });
+            pdf.setFontSize(8);
+            pdf.setFont("helvetica", "italic");
+            setColor(pdf, COLORS.light);
+            pdf.text(`Saved: ${savedDate}`, MARGIN, y);
+            y += LINE_H + 1;
+
+            // User description (title + body) if present
+            const cd = entry.data?.configDescription as {
+                title?: string;
+                body?: string;
+            } | null | undefined;
+            if (cd?.body) {
+                pdf.setFontSize(8.5);
+                pdf.setFont("helvetica", "italic");
+                setColor(pdf, COLORS.dark);
+                y = writeWrapped(pdf, cd.body, MARGIN + 2, y, CONTENT_W - 2);
+                y += 2;
+            }
+
+            // Settings lines
+            const settingLines = buildSavedConfigLines(entry.data);
+            if (settingLines.length > 0) {
+                pdf.setFontSize(8.5);
+                pdf.setFont("helvetica", "normal");
+                setColor(pdf, COLORS.medium);
+                for (const line of settingLines) {
+                    if (y > PAGE_H - 15) { pdf.addPage(); y = MARGIN; }
+                    pdf.text(line, MARGIN + 2, y);
+                    y += LINE_H;
+                }
+            }
+
+            y += 3;
+            y = drawDivider(pdf, y);
         }
     }
 

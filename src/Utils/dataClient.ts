@@ -113,93 +113,123 @@ function listToArray(list: number[][], _shape: [number, number]): Float32Array {
     return arr;
 }
 
+// In-memory cache: key → Promise<ClimateData>. Prevents duplicate in-flight
+// requests for identical parameters and avoids re-fetching on re-renders.
+const _tileCache = new Map<string, Promise<ClimateData>>();
+
+/** Clear the in-memory climate tile cache (e.g. when the user changes the API URL). */
+export function clearTileCache(): void {
+    _tileCache.clear();
+}
+
+function _tileCacheKey(request: DataRequest, apiUrl: string): string {
+    const scenario = request.scenario
+        ? normalizeScenario(request.scenario)
+        : "auto";
+    const fmt = request.data_format ?? "base64";
+    return `${apiUrl}|${request.variable}|${request.time}|${request.model}|${scenario}|${request.resolution ?? "medium"}|${fmt}`;
+}
+
 export async function fetchClimateData(
     request: DataRequest,
     options?: { apiUrl?: string },
 ): Promise<ClimateData> {
     const apiUrl = options?.apiUrl || API_BASE_URL;
     const url = `${apiUrl}/data`;
+    const cacheKey = _tileCacheKey(request, apiUrl);
 
-    try {
-        const response = await fetch(url, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "Cache-Control": "no-cache, no-store, must-revalidate",
-                "Pragma": "no-cache",
-                "Expires": "0",
-            },
-            body: JSON.stringify({
-                ...request,
-                scenario: request.scenario
-                    ? normalizeScenario(request.scenario)
-                    : undefined,
-                data_format: request.data_format || "base64",
-            }),
-        });
+    const cached = _tileCache.get(cacheKey);
+    if (cached) return cached;
 
-        if (!response.ok) {
-            const error = await response
-                .json()
-                .catch(() => ({ detail: response.statusText }));
+    const pending = (async (): Promise<ClimateData> => {
+        try {
+            const response = await fetch(url, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    ...request,
+                    scenario: request.scenario
+                        ? normalizeScenario(request.scenario)
+                        : undefined,
+                    data_format: request.data_format || "base64",
+                }),
+            });
+
+            if (!response.ok) {
+                const error = await response
+                    .json()
+                    .catch(() => ({ detail: response.statusText }));
+                throw new DataClientError(
+                    error.detail ||
+                        `HTTP ${response.status}: ${response.statusText}`,
+                    response.status,
+                    error,
+                );
+            }
+
+            return await response.json();
+        } catch (error) {
+            // Evict failed entries so a retry can succeed
+            _tileCache.delete(cacheKey);
+            if (error instanceof DataClientError) throw error;
             throw new DataClientError(
-                error.detail ||
-                    `HTTP ${response.status}: ${response.statusText}`,
-                response.status,
+                `Failed to fetch data: ${
+                    error instanceof Error ? error.message : String(error)
+                }`,
+                undefined,
                 error,
             );
         }
+    })();
 
-        return await response.json();
-    } catch (error) {
-        if (error instanceof DataClientError) {
-            throw error;
-        }
-        throw new DataClientError(
-            `Failed to fetch data: ${
-                error instanceof Error ? error.message : String(error)
-            }`,
-            undefined,
-            error,
-        );
-    }
+    _tileCache.set(cacheKey, pending);
+    return pending;
+}
+
+// Cached metadata promise – metadata is static for the lifetime of the page.
+let _metadataCache: Promise<Metadata> | null = null;
+
+/** Force the next fetchMetadata call to re-request from the server. */
+export function invalidateMetadataCache(): void {
+    _metadataCache = null;
 }
 
 export async function fetchMetadata(options?: {
     apiUrl?: string;
 }): Promise<Metadata> {
     const apiUrl = options?.apiUrl || API_BASE_URL;
-    const url = `${apiUrl}/metadata`;
 
-    try {
-        const response = await fetch(url, {
-            method: "GET",
-            headers: {
-                "Content-Type": "application/json",
-                "Cache-Control": "no-cache, no-store, must-revalidate",
-                "Pragma": "no-cache",
-                "Expires": "0",
-            },
-        });
+    if (_metadataCache) return _metadataCache;
 
-        if (!response.ok) {
+    _metadataCache = (async (): Promise<Metadata> => {
+        const url = `${apiUrl}/metadata`;
+        try {
+            const response = await fetch(url, {
+                method: "GET",
+                headers: { "Content-Type": "application/json" },
+            });
+
+            if (!response.ok) {
+                throw new DataClientError(
+                    `HTTP ${response.status}: ${response.statusText}`,
+                    response.status,
+                );
+            }
+
+            return await response.json();
+        } catch (error) {
+            // Evict so a retry can succeed
+            _metadataCache = null;
+            if (error instanceof DataClientError) throw error;
             throw new DataClientError(
-                `HTTP ${response.status}: ${response.statusText}`,
-                response.status,
+                `Failed to fetch metadata: ${
+                    error instanceof Error ? error.message : String(error)
+                }`,
             );
         }
+    })();
 
-        return await response.json();
-    } catch (error) {
-        if (error instanceof DataClientError) {
-            throw error;
-        }
-        throw new DataClientError(
-            `Failed to fetch metadata: ${
-                error instanceof Error ? error.message : String(error)
-            }`,
-        );
-    }
+    return _metadataCache;
 }
 
 export function dataToArray(

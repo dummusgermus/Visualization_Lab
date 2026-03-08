@@ -1691,6 +1691,11 @@ let mapInfoDelayTimer: number | null = null;
 let mapRangeRequestId = 0;
 let mapRangeDelayTimer: number | null = null;
 let climateDataRequestId = 0;
+// Track which resolution was in use when ensemble stats were last computed so that
+// the fast-path cache is invalidated on resolution changes (different quality levels
+// return different grid shapes from OpenVisus).
+let _ensembleStatsCachedResolution: number | null = null;
+let _w2EnsembleStatsCachedResolution: number | null = null;
 let mapInfoDragPosition: { left: number; top: number } | null = null;
 let mapInfoDragState: {
     active: boolean;
@@ -5031,13 +5036,38 @@ async function loadEnsembleData(
 
     for (const targetVariable of variablesToProcess) {
         const neededStats = requestedStatsByVariable.get(targetVariable)!;
+
+        // ------------------------------------------------------------------
+        // Fast path: reuse already-computed raw samples and statistics so we
+        // don't re-fetch tiles or re-run the expensive per-pixel loop when
+        // only a new mask variable was added.
+        // ------------------------------------------------------------------
+        const cachedRaw = state.ensembleRawSamplesByVariable.get(targetVariable);
+        const cachedStats = state.ensembleStatisticsByVariable.get(targetVariable);
+        if (cachedRaw && cachedStats && [...neededStats].every((s) => cachedStats.has(s))
+            && _ensembleStatsCachedResolution === state.resolution) {
+            rawSamplesByVariable.set(targetVariable, cachedRaw);
+            statsByVariable.set(targetVariable, cachedStats);
+            rangesByVariable.set(
+                targetVariable,
+                state.ensembleStatisticRangesByVariable.get(targetVariable) ?? new Map(),
+            );
+            completedRequests += requestsPerVariable;
+            const progress = 10 + Math.round((completedRequests / totalRequests) * 78);
+            onProgress?.(Math.min(88, progress));
+            continue;
+        }
+
         const allDataArrays: (Float32Array | Float64Array)[] = [];
         const allShapes: Array<[number, number]> = [];
 
-        for (let i = 0; i < activeScenarios.length; i++) {
-            const scenario = activeScenarios[i];
-            for (let j = 0; j < activeModels.length; j++) {
-                const model = activeModels[j];
+        // Build all (scenario × model) fetch tasks and run them in parallel,
+        // rate-limited to PARALLEL_REQUEST_LIMIT concurrent requests.
+        const combos = activeScenarios.flatMap((scenario) =>
+            activeModels.map((model) => ({ scenario, model }))
+        );
+        const fetchResults = await pLimit(
+            combos.map(({ scenario, model }) => async () => {
                 const request = createDataRequest({
                     variable: targetVariable,
                     date: ensembleDate,
@@ -5045,26 +5075,29 @@ async function loadEnsembleData(
                     scenario,
                     resolution: state.resolution,
                 });
-
                 try {
                     const data = await fetchClimateData(request);
                     const arrayData = dataToArray(data);
-                    if (arrayData) {
-                        allDataArrays.push(arrayData);
-                        allShapes.push(data.shape);
-                    }
+                    return arrayData ? { arrayData, shape: data.shape } : null;
                 } catch (error) {
                     console.warn(
                         `Failed to fetch data for ${targetVariable} (${scenario}/${model}):`,
                         error,
                     );
-                    // Continue with remaining combinations
+                    return null;
                 } finally {
                     completedRequests += 1;
                     const progress =
                         10 + Math.round((completedRequests / totalRequests) * 78);
                     onProgress?.(Math.min(88, progress));
                 }
+            }),
+            PARALLEL_REQUEST_LIMIT,
+        );
+        for (const result of fetchResults) {
+            if (result.status === "fulfilled" && result.value) {
+                allDataArrays.push(result.value.arrayData);
+                allShapes.push(result.value.shape);
             }
         }
 
@@ -5103,8 +5136,15 @@ async function loadEnsembleData(
             statsRanges.set(stat, { min: Infinity, max: -Infinity });
         }
 
-        // Compute requested statistics for this variable
+        // Compute requested statistics for this variable.
+        // Yield the main thread every STAT_CHUNK pixels so the UI stays
+        // responsive during the (potentially ~900 k iteration) loop.
+        const STAT_CHUNK = 60_000;
         for (let i = 0; i < length; i++) {
+            if (i > 0 && i % STAT_CHUNK === 0) {
+                await new Promise<void>((resolve) => setTimeout(resolve, 0));
+            }
+
             const values: number[] = [];
             for (const arrayData of allDataArrays) {
                 const val = arrayData[i];
@@ -5203,6 +5243,7 @@ async function loadEnsembleData(
     state.ensembleStatisticsByVariable = statsByVariable;
     state.ensembleStatisticRangesByVariable = rangesByVariable;
     state.ensembleRawSamplesByVariable = rawSamplesByVariable;
+    _ensembleStatsCachedResolution = state.resolution;
 
     // Sync unedited ensemble mask bounds to newly computed ranges
     if (state.masks.length > 0) {
@@ -5455,13 +5496,33 @@ async function loadEnsembleDataForWindow2(
 
     for (const targetVariable of variablesToProcess) {
         const neededStats = requestedStatsByVariable.get(targetVariable)!;
+
+        // Fast path: reuse already-computed raw samples and statistics.
+        const w2CachedRaw = w2.ensembleRawSamplesByVariable?.get(targetVariable);
+        const w2CachedStats = w2.ensembleStatisticsByVariable?.get(targetVariable);
+        if (w2CachedRaw && w2CachedStats && [...neededStats].every((s) => w2CachedStats.has(s))
+            && _w2EnsembleStatsCachedResolution === w2.resolution) {
+            rawSamplesByVariable.set(targetVariable, w2CachedRaw);
+            statsByVariable.set(targetVariable, w2CachedStats);
+            rangesByVariable.set(
+                targetVariable,
+                w2.ensembleStatisticRangesByVariable?.get(targetVariable) ?? new Map(),
+            );
+            completedRequests += requestsPerVariable;
+            const progress = 10 + Math.round((completedRequests / totalRequests) * 78);
+            onProgress?.(Math.min(88, progress));
+            continue;
+        }
+
         const allDataArrays: (Float32Array | Float64Array)[] = [];
         const allShapes: Array<[number, number]> = [];
 
-        for (let i = 0; i < activeScenarios.length; i++) {
-            const scenario = activeScenarios[i];
-            for (let j = 0; j < activeModels.length; j++) {
-                const model = activeModels[j];
+        // Parallel fetch for all (scenario × model) combinations.
+        const combosW2 = activeScenarios.flatMap((scenario) =>
+            activeModels.map((model) => ({ scenario, model }))
+        );
+        const fetchResultsW2 = await pLimit(
+            combosW2.map(({ scenario, model }) => async () => {
                 const request = createDataRequest({
                     variable: targetVariable,
                     date: ensembleDate,
@@ -5469,25 +5530,29 @@ async function loadEnsembleDataForWindow2(
                     scenario,
                     resolution: w2.resolution,
                 });
-
                 try {
                     const data = await fetchClimateData(request);
                     const arrayData = dataToArray(data);
-                    if (arrayData) {
-                        allDataArrays.push(arrayData);
-                        allShapes.push(data.shape);
-                    }
+                    return arrayData ? { arrayData, shape: data.shape } : null;
                 } catch (error) {
                     console.warn(
                         `Failed to fetch data for ${targetVariable} (${scenario}/${model}):`,
                         error,
                     );
+                    return null;
                 } finally {
                     completedRequests += 1;
                     const progress =
                         10 + Math.round((completedRequests / totalRequests) * 78);
                     onProgress?.(Math.min(88, progress));
                 }
+            }),
+            PARALLEL_REQUEST_LIMIT,
+        );
+        for (const result of fetchResultsW2) {
+            if (result.status === "fulfilled" && result.value) {
+                allDataArrays.push(result.value.arrayData);
+                allShapes.push(result.value.shape);
             }
         }
 
@@ -5525,7 +5590,12 @@ async function loadEnsembleDataForWindow2(
             statsRanges.set(stat, { min: Infinity, max: -Infinity });
         }
 
+        const STAT_CHUNK_W2 = 60_000;
         for (let i = 0; i < length; i++) {
+            if (i > 0 && i % STAT_CHUNK_W2 === 0) {
+                await new Promise<void>((resolve) => setTimeout(resolve, 0));
+            }
+
             const values: number[] = [];
             for (const arrayData of allDataArrays) {
                 const val = arrayData[i];
@@ -5621,6 +5691,7 @@ async function loadEnsembleDataForWindow2(
     w2.ensembleStatisticsByVariable = statsByVariable;
     w2.ensembleStatisticRangesByVariable = rangesByVariable;
     w2.ensembleRawSamplesByVariable = rawSamplesByVariable;
+    _w2EnsembleStatsCachedResolution = w2.resolution;
 
     if (w2.masks.length > 0) {
         for (const mask of w2.masks) {
@@ -7626,7 +7697,6 @@ function renderWindow2Pane(vpW: number, vpH: number): string {
     const w2ModeTransform = w2.mode === "Explore" ? "translateX(0%)" : w2.mode === "Compare" ? "translateX(-33.333%)" : "translateX(-66.666%)";
     const w2ModeIndicatorTransform = w2.mode === "Explore" ? "translateX(0%)" : w2.mode === "Compare" ? "translateX(100%)" : "translateX(200%)";
     const w2ResolutionFill = ((w2.resolution - 1) / (3 - 1)) * 100;
-    const w2CanvasIndicator = w2.canvasView === "map" ? "translateX(0%)" : "translateX(100%)";
     const w2TabTransform = w2.panelTab === "Manual" ? "translateX(0%)" : "translateX(-50%)";
 
     const w2Progress = Math.max(
@@ -7700,13 +7770,6 @@ function renderWindow2Pane(vpW: number, vpH: number): string {
                 </div>
               </aside>
               ${renderSidebarToggle(w2.sidebarOpen, "2")}
-              <div data-role="canvas-toggle" data-window="2" style="${styleAttr({ ...styles.canvasToggle, right: w2.sidebarOpen ? SIDEBAR_WIDTH + 24 : 24 })}">
-                <div style="${styleAttr(styles.canvasSwitch)}">
-                  <div data-role="canvas-indicator" style="${styleAttr({ ...styles.canvasIndicator, transform: w2CanvasIndicator })}"></div>
-                  <button type="button" aria-label="Show map" data-action="set-canvas" data-value="map" data-window="2" style="${styleAttr(mergeStyles(styles.canvasBtn, w2.canvasView === "map" ? styles.canvasBtnActive : undefined))}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.6"><path d="M4 6.5 9 4l6 2.5L20 4v14l-5 2.5L9 18 4 20.5V6.5Z"/><path d="m9 4v14m6-11.5v14"/></svg></button>
-                  <button type="button" aria-label="Show chart" data-action="set-canvas" data-value="chart" data-window="2" style="${styleAttr(mergeStyles(styles.canvasBtn, w2.canvasView === "chart" ? styles.canvasBtnActive : undefined))}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.8"><path d="M4 18h16"/><path d="M6 18 11 9l4 5 3-6"/><circle cx="6" cy="18" r="1.2"/><circle cx="11" cy="9" r="1.2"/><circle cx="15" cy="14" r="1.2"/><circle cx="18" cy="8" r="1.2"/></svg></button>
-                </div>
-              </div>
         </div>
     `;
 }
@@ -7826,8 +7889,6 @@ function render() {
             : state.mode === "Compare"
               ? "translateX(100%)"
               : "translateX(200%)";
-    const canvasIndicatorTransform =
-        state.canvasView === "map" ? "translateX(0%)" : "translateX(100%)";
     const tabTransform =
         state.panelTab === "Manual" ? "translateX(0%)" : "translateX(-50%)";
     const hasProbabilityMasks =
@@ -7958,7 +8019,6 @@ function render() {
                         const vpW = window.innerWidth;
                         const vpH = window.innerHeight;
                         const canvasStyle = `position:absolute;top:0;left:50%;transform:translateX(-50%);width:${vpW}px;height:${vpH}px;pointer-events:auto;`;
-                        const w1CanvasIndicator = state.canvasView === "map" ? "translateX(0%)" : "translateX(100%)";
                         const w1TabTransform = state.panelTab === "Manual" ? "translateX(0%)" : "translateX(-50%)";
                         const paneInner = `
               <div style="position:absolute;inset:0;">
@@ -8015,13 +8075,6 @@ function render() {
                 </div>
               </aside>
               ${renderSidebarToggle(state.sidebarOpen, "1")}
-              <div data-role="canvas-toggle" data-window="1" style="${styleAttr({ ...styles.canvasToggle, right: state.sidebarOpen ? SIDEBAR_WIDTH + 24 : 24 })}">
-                <div style="${styleAttr(styles.canvasSwitch)}">
-                  <div data-role="canvas-indicator" style="${styleAttr({ ...styles.canvasIndicator, transform: w1CanvasIndicator })}"></div>
-                  <button type="button" aria-label="Show map" data-action="set-canvas" data-value="map" data-window="1" style="${styleAttr(mergeStyles(styles.canvasBtn, (state.canvasView as string) === "map" ? styles.canvasBtnActive : undefined))}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.6"><path d="M4 6.5 9 4l6 2.5L20 4v14l-5 2.5L9 18 4 20.5V6.5Z"/><path d="m9 4v14m6-11.5v14"/></svg></button>
-                  <button type="button" aria-label="Show chart" data-action="set-canvas" data-value="chart" data-window="1" style="${styleAttr(mergeStyles(styles.canvasBtn, (state.canvasView as string) === "chart" ? styles.canvasBtnActive : undefined))}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.8"><path d="M4 18h16"/><path d="M6 18 11 9l4 5 3-6"/><circle cx="6" cy="18" r="1.2"/><circle cx="11" cy="9" r="1.2"/><circle cx="15" cy="14" r="1.2"/><circle cx="18" cy="8" r="1.2"/></svg></button>
-                </div>
-              </div>
             `;
                         return `
               <div id="split-pane-1" style="flex: 0 0 ${(state.splitRatio * 100).toFixed(2)}%;position:relative;overflow:hidden;">${paneInner}</div>
@@ -8171,60 +8224,6 @@ function render() {
           </button>
         </div>
       </aside>
-
-      <div data-role="canvas-toggle" style="${styleAttr({
-          ...styles.canvasToggle,
-          right: state.sidebarOpen ? SIDEBAR_WIDTH + 24 : 24,
-      })}">
-        <div style="${styleAttr(styles.canvasSwitch)}">
-          <div data-role="canvas-indicator" style="${styleAttr({
-              ...styles.canvasIndicator,
-              transform: canvasIndicatorTransform,
-          })}"></div>
-          <button
-            type="button"
-            aria-label="Show map canvas"
-            data-action="set-canvas"
-            data-value="map"
-            style="${styleAttr(
-                mergeStyles(
-                    styles.canvasBtn,
-                    state.canvasView === "map"
-                        ? styles.canvasBtnActive
-                        : undefined,
-                ),
-            )}"
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.6">
-              <path d="M4 6.5 9 4l6 2.5L20 4v14l-5 2.5L9 18 4 20.5V6.5Z" />
-              <path d="m9 4v14m6-11.5v14" />
-            </svg>
-          </button>
-          <button
-            type="button"
-            aria-label="Show chart canvas"
-            data-action="set-canvas"
-            data-value="chart"
-            style="${styleAttr(
-                mergeStyles(
-                    styles.canvasBtn,
-                    state.canvasView === "chart"
-                        ? styles.canvasBtnActive
-                        : undefined,
-                ),
-            )}"
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.8">
-              <path d="M4 18h16" />
-              <path d="M6 18 11 9l4 5 3-6" />
-              <circle cx="6" cy="18" r="1.2" />
-              <circle cx="11" cy="9" r="1.2" />
-              <circle cx="15" cy="14" r="1.2" />
-              <circle cx="18" cy="8" r="1.2" />
-            </svg>
-          </button>
-        </div>
-      </div>
 
       ${renderCompareInfo(state)}
 
@@ -11505,7 +11504,7 @@ function renderMapSearchBar(window: 1 | 2 = 1) {
             type="text"
             class="location-search-input"
             value="${escapeHtml(s.mapLocationSearchQuery)}"
-            placeholder="Search a place (e.g. Aachen)"
+            placeholder="Search a place"
             data-role="map-location-search-input"
             data-window="${window}"
             style="flex: 1;"
@@ -12724,66 +12723,6 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
     );
     // ─────────────────────────────────────────────────────────────
 
-    const canvasButtons = root.querySelectorAll<HTMLButtonElement>(
-        '[data-action="set-canvas"]',
-    );
-    canvasButtons.forEach((btn) =>
-        btn.addEventListener("click", () => {
-            const value = btn.dataset.value as CanvasView | undefined;
-            const w = (btn.dataset.window || "1") as "1" | "2";
-            if (!value) return;
-
-            const targetState = w === "2" ? state.window2 : state;
-            if (value === targetState.canvasView) return;
-
-            const previousView = targetState.canvasView;
-            const previousIndicatorTransform =
-                previousView === "map" ? "translateX(0%)" : "translateX(100%)";
-            const nextIndicatorTransform =
-                value === "map" ? "translateX(0%)" : "translateX(100%)";
-
-            targetState.canvasView = value;
-
-            if (value === "chart") {
-                targetState.panelTab = "Manual";
-            }
-
-            if (w === "1") {
-                const tutorialState = getTutorialState();
-                if (
-                    tutorialState.active &&
-                    tutorialState.currentStep === 13 &&
-                    value === "chart"
-                ) {
-                    completeCurrentStep();
-                }
-            }
-
-            render();
-
-            if (w === "1") {
-                if (value === "map") loadClimateData();
-                else loadChartData();
-            } else if (value === "map") {
-                loadClimateDataWindow2();
-            }
-
-            const canvasIndicator = root.querySelector<HTMLElement>(
-                `[data-role="canvas-toggle"][data-window="${w}"] [data-role="canvas-indicator"]`,
-            ) ?? root.querySelector<HTMLElement>('[data-role="canvas-indicator"]');
-
-            if (canvasIndicator) {
-                canvasIndicator.style.removeProperty("transition");
-                canvasIndicator.style.transform = previousIndicatorTransform;
-                void canvasIndicator.offsetHeight;
-                requestAnimationFrame(() => {
-                    canvasIndicator.style.transition = "transform 180ms ease";
-                    canvasIndicator.style.transform = nextIndicatorTransform;
-                });
-            }
-        }),
-    );
-
     const modeButtons = root.querySelectorAll<HTMLButtonElement>(
         '[data-action="set-mode"]',
     );
@@ -13740,6 +13679,8 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                         index < masks.length
                     ) {
                         const m = masks[index];
+                        // No-op: same variable reselected – preserve user-edited bounds
+                        if (val === m.variable) return;
                         m.variable = val;
                         m.unit = getDefaultUnitOption(val).label;
                         if (target.mode === "Ensemble") {
@@ -13805,6 +13746,8 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                         index < masks.length
                     ) {
                         const mask = masks[index];
+                        // No-op: same unit reselected – preserve user-edited bounds
+                        if (val === mask.unit) return;
                         mask.unit = val;
                         if (target.mode === "Ensemble") {
                             const range =

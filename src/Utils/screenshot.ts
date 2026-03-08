@@ -41,9 +41,9 @@ export function drawLegendOverlaysOntoCanvas(ctx: CanvasRenderingContext2D): voi
         // ── Panel background + border ─────────────────────────────────────
         ctx.save();
         rrectPath(ctx, x, y, w, h, 10);
-        ctx.fillStyle = "rgba(9, 14, 26, 0.93)";
+        ctx.fillStyle = "rgb(9, 14, 26)"; // fully opaque so it looks solid in screenshots/PDFs
         ctx.fill();
-        ctx.strokeStyle = "rgba(100, 116, 139, 0.45)";
+        ctx.strokeStyle = "rgba(100, 116, 139, 0.9)";
         ctx.lineWidth = 1;
         ctx.stroke();
         ctx.restore();

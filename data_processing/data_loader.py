@@ -135,18 +135,28 @@ def load_data(
 
 
 def load_data_batch(requests: list) -> list:
-    results = []
-    for req in requests:
-        try:
-            result = load_data(**req)
-            results.append(result)
-        except Exception as e:
-            results.append({
-                'error': str(e),
-                'request': req,
-            })
+    """Load multiple climate tiles in parallel using a thread pool."""
+    if not requests:
+        return []
 
-    return results
+    def _load_one(indexed_req):
+        idx, req = indexed_req
+        try:
+            return idx, load_data(**req)
+        except Exception as e:  # noqa: BLE001
+            return idx, {'error': str(e), 'request': req}
+
+    max_workers = min(config.MAX_WORKERS, len(requests))
+    ordered = [None] * len(requests)
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(_load_one, (i, req)): i
+            for i, req in enumerate(requests)
+        }
+        for future in as_completed(futures):
+            idx, result = future.result()
+            ordered[idx] = result
+    return ordered
 
 
 def load_variables(

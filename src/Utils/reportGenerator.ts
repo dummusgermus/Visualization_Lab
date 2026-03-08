@@ -9,6 +9,7 @@
 
 import { jsPDF } from "jspdf";
 import html2canvas from "html2canvas";
+import anyAscii from "any-ascii";
 import type { AppState, Window2State } from "../main";
 import { compositeViewport } from "./screenshot";
 import { describeScreenshotForReport } from "./chatClient";
@@ -27,29 +28,72 @@ const COLORS = {
 // ─── Screenshot capture ─────────────────────────────────────────────────────
 
 /**
- * Captures the full viewport (all map canvases + legend HTML overlays)
- * and returns a JPEG data URL at full resolution.
+ * Captures the full viewport using html2canvas so that HTML overlays
+ * (map-info panel, range view, legend, etc.) are included alongside the
+ * WebGL/2D map canvases.  Falls back to the canvas-only composite on error.
  */
-function captureMapView(): string | null {
-    const canvas = compositeViewport();
-    return canvas ? canvas.toDataURL("image/jpeg", 0.92) : null;
+async function captureMapView(): Promise<string | null> {
+    try {
+        const offscreen = await html2canvas(document.body, {
+            useCORS: true,
+            allowTaint: false,
+            backgroundColor: "#0f121a",
+            scale: window.devicePixelRatio ?? 1,
+            logging: false,
+            ignoreElements: (el) =>
+                el.matches('[data-role="sidebar"], [data-action="toggle-sidebar"]'),
+        });
+        return offscreen.toDataURL("image/jpeg", 0.92);
+    } catch {
+        // Fallback: canvas-only composite (no HTML overlays)
+        const canvas = compositeViewport();
+        return canvas ? canvas.toDataURL("image/jpeg", 0.92) : null;
+    }
 }
 
 /**
  * Captures one horizontal half of the viewport — used for split-view reports.
  * @param side "left" = first half, "right" = second half
  */
-function captureMapViewHalf(side: "left" | "right"): string | null {
-    const vw = window.innerWidth;
-    // Use the actual pane boundary from the DOM rather than assuming 50/50
-    const pane2 = document.getElementById("split-pane-2");
-    const splitX = pane2 ? Math.round(pane2.getBoundingClientRect().left) : Math.floor(vw / 2);
-    const leftW  = splitX;
-    const rightW = vw - splitX;
-    const startX = side === "right" ? splitX : 0;
-    const width  = side === "right" ? rightW : leftW;
-    const canvas = compositeViewport(startX, width);
-    return canvas ? canvas.toDataURL("image/jpeg", 0.92) : null;
+async function captureMapViewHalf(side: "left" | "right"): Promise<string | null> {
+    try {
+        const full = await html2canvas(document.body, {
+            useCORS: true,
+            allowTaint: false,
+            backgroundColor: "#0f121a",
+            scale: window.devicePixelRatio ?? 1,
+            logging: false,
+            ignoreElements: (el) =>
+                el.matches('[data-role="sidebar"], [data-action="toggle-sidebar"]'),
+        });
+        const vw = full.width;
+        const vh = full.height;
+        const pane2 = document.getElementById("split-pane-2");
+        const dpr = window.devicePixelRatio ?? 1;
+        const splitX = pane2
+            ? Math.round(pane2.getBoundingClientRect().left * dpr)
+            : Math.floor(vw / 2);
+        const startX = side === "right" ? splitX : 0;
+        const width  = side === "right" ? vw - splitX : splitX;
+        const out = document.createElement("canvas");
+        out.width  = width;
+        out.height = vh;
+        const ctx = out.getContext("2d");
+        if (!ctx) return null;
+        ctx.drawImage(full, startX, 0, width, vh, 0, 0, width, vh);
+        return out.toDataURL("image/jpeg", 0.92);
+    } catch {
+        // Fallback: canvas-only composite
+        const vw = window.innerWidth;
+        const pane2 = document.getElementById("split-pane-2");
+        const splitX = pane2 ? Math.round(pane2.getBoundingClientRect().left) : Math.floor(vw / 2);
+        const leftW  = splitX;
+        const rightW = vw - splitX;
+        const startX = side === "right" ? splitX : 0;
+        const width  = side === "right" ? rightW : leftW;
+        const canvas = compositeViewport(startX, width);
+        return canvas ? canvas.toDataURL("image/jpeg", 0.92) : null;
+    }
 }
 
 /**
@@ -255,8 +299,35 @@ function sectionHeader(
 
 /**
  * Wraps text and writes it to the PDF, automatically adding pages when needed.
+ * Pre-splits on explicit newlines first so agent-formatted text doesn't overflow.
  * Returns the new y position.
  */
+/** Replace Unicode characters that fall outside Windows-1252 with safe equivalents.
+ *  jsPDF's built-in Helvetica uses CP1252 metrics; chars outside that range are
+ *  measured as zero-width by splitTextToSize, causing text to bleed off the page.
+ *
+ *  CP1252 covers U+0000–U+00FF (Latin-1) plus a set of extra chars in U+0080–U+009F:
+ *    0x80=€  0x82=‚  0x83=ƒ  0x84=„  0x85=…  0x86=†  0x87=‡  0x88=ˆ  0x89=‰
+ *    0x8A=Š  0x8B=‹  0x8C=Œ  0x8E=Ž  0x91='  0x92='  0x93="  0x94="  0x95=•
+ *    0x96=–  0x97=—  0x98=˜  0x99=™  0x9A=š  0x9B=›  0x9C=œ  0x9E=ž  0x9F=Ÿ
+ *  All of those are kept as-is (jsPDF maps them correctly).
+ *  U+00B0 (°) is valid CP1252 and is intentionally kept. */
+function toCP1252Safe(s: string): string {
+    return s
+        // U+2212 MINUS SIGN: not in CP1252 — replace with ASCII hyphen-minus
+        .replace(/\u2212/g, "-")
+        // U+00D7 × and U+00F7 ÷ are in CP1252 (Latin-1), but Helvetica lacks them
+        .replace(/\u00D7/g, "x")
+        .replace(/\u00F7/g, "/")
+        // Strip C1 control range entries that have NO CP1252 mapping (0x81,0x8D,0x8F,0x90,0x9D)
+        .replace(/[\u0081\u008D\u008F\u0090\u009D]/g, "")
+        // Transliterate any remaining non-CP1252 characters (Cyrillic, CJK, Arabic, etc.)
+        // to their closest Latin ASCII equivalent using any-ascii, then strip anything
+        // still outside the CP1252 range (should be rare after transliteration).
+        .replace(/[^\x00-\xFF\u20AC\u201A\u0192\u201E\u2026\u2020\u2021\u02C6\u2030\u0160\u2039\u0152\u017D\u2018\u2019\u201C\u201D\u2022\u2013\u2014\u02DC\u2122\u0161\u203A\u0153\u017E\u0178]/g,
+            (ch) => anyAscii(ch));
+}
+
 function writeWrapped(
     pdf: jsPDF,
     text: string,
@@ -265,14 +336,21 @@ function writeWrapped(
     maxWidth: number,
     lineHeight: number = LINE_H,
 ): number {
-    const lines = pdf.splitTextToSize(text, maxWidth);
-    for (const line of lines) {
-        if (y > PAGE_H - 15) {
-            pdf.addPage();
-            y = MARGIN;
+    // Split on explicit newlines first so markdown paragraph breaks are honoured.
+    // toCP1252Safe is applied here so splitTextToSize gets correct CP1252 widths.
+    const paragraphs = toCP1252Safe(text).split(/\r?\n/);
+    for (const para of paragraphs) {
+        // jsPDF splitTextToSize wraps long paragraphs; force-truncate any single
+        // word that is still wider than maxWidth to prevent it bleeding off the page.
+        const lines: string[] = pdf.splitTextToSize(para.length > 0 ? para : " ", maxWidth);
+        for (const line of lines) {
+            if (y > PAGE_H - 15) {
+                pdf.addPage();
+                y = MARGIN;
+            }
+            pdf.text(line as string, x, y);
+            y += lineHeight;
         }
-        pdf.text(line as string, x, y);
-        y += lineHeight;
     }
     return y;
 }
@@ -292,7 +370,7 @@ function addImageFitWidth(
     const displayW = displayH / aspect;
     const xOffset  = MARGIN + (CONTENT_W - displayW) / 2;
     pdf.addImage(dataUrl, "JPEG", xOffset, yStart, displayW, displayH);
-    return yStart + displayH + 3;
+    return yStart + displayH + 8; // 8 mm margin below image
 }
 
 function addTwoImages(
@@ -328,14 +406,14 @@ function addTwoImages(
     pdf.addImage(rightUrl, "JPEG", xRight, yStart, dispRW, dispRH);
 
     // Labels below images
-    const labelY = yStart + totalH + 2;
+    const labelY = yStart + totalH + 3;
     pdf.setFontSize(8);
     pdf.setFont("helvetica", "normal");
     setColor(pdf, COLORS.medium);
     pdf.text("View 1 (Left panel)",  xLeft,  labelY);
     pdf.text("View 2 (Right panel)", xRight, labelY);
 
-    return labelY + 5;
+    return labelY + 8; // 8 mm margin below the label row
 }
 
 // ─── Saved configs (from localStorage) ──────────────────────────────────────
@@ -449,6 +527,15 @@ function buildSavedConfigLines(data: Record<string, any>): string[] {
  */
 export async function generateReport(state: AppState): Promise<void> {
     const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+    // Patch pdf.text so every call site is automatically CP1252-safe,
+    // regardless of which helper function produced the string.
+    const _origText = pdf.text.bind(pdf) as typeof pdf.text;
+    (pdf as any).text = (text: string | string[], x: number, y: number, options?: any, transform?: any) => {
+        const safe = typeof text === "string" ? toCP1252Safe(text)
+                   : Array.isArray(text)      ? (text as string[]).map(toCP1252Safe)
+                   : text;
+        return _origText(safe as any, x, y, options, transform);
+    };
 
     // ── Page 1: Title ──────────────────────────────────────────────────────
 
@@ -482,9 +569,11 @@ export async function generateReport(state: AppState): Promise<void> {
     const isSplitMap = state.splitView && state.canvasView === "map";
 
     if (isSplitMap) {
-        // Capture each half of the viewport (including the legend overlay)
-        const leftUrl  = captureMapViewHalf("left");
-        const rightUrl = captureMapViewHalf("right");
+        // Capture each half of the viewport (including HTML overlays)
+        const [leftUrl, rightUrl] = await Promise.all([
+            captureMapViewHalf("left"),
+            captureMapViewHalf("right"),
+        ]);
 
         if (leftUrl && rightUrl) {
             y = addTwoImages(pdf, leftUrl, rightUrl, y);
@@ -522,7 +611,7 @@ export async function generateReport(state: AppState): Promise<void> {
 
     } else if (state.canvasView === "map") {
         // Single map view — composite all canvas layers + legend HTML
-        const imgUrl = captureMapView();
+        const imgUrl = await captureMapView();
         if (imgUrl) y = addImageFitWidth(pdf, imgUrl, y);
 
         // AI description

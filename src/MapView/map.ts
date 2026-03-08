@@ -42,6 +42,9 @@ let w2CachedIsDifference = false;
 let w2CachedValueLookup: (Float32Array | Float64Array | null)[] | null = null;
 let w2CachedVariable: string | undefined = undefined;
 let w2CachedSelectedUnit: string | undefined = undefined;
+// W2-specific overlay visibility (independent from W1)
+let w2ShowBorders = true;
+let w2ShowLabels = true;
 
 function isDifferenceEnsembleStatistic(
     stat: "mean" | "std" | "median" | "iqr" | "percentile" | "extremes",
@@ -166,6 +169,20 @@ export function setMapOverlayVisibility(options: {
         const targetCanvas = document.querySelector<HTMLCanvasElement>("#map-canvas");
         if (targetCanvas) {
             redrawCachedMap(targetCanvas);
+        }
+    }
+}
+
+export function setMapOverlayVisibilityW2(options: {
+    showBorders?: boolean;
+    showLabels?: boolean;
+}) {
+    if (typeof options.showBorders === "boolean") w2ShowBorders = options.showBorders;
+    if (typeof options.showLabels === "boolean") w2ShowLabels = options.showLabels;
+    if (w2CachedMapCanvas) {
+        const targetCanvas = document.querySelector<HTMLCanvasElement>("#map-canvas-2");
+        if (targetCanvas) {
+            redrawW2CachedMap(targetCanvas);
         }
     }
 }
@@ -626,6 +643,7 @@ function redrawW2CachedMap(canvas: HTMLCanvasElement): void {
         w2CachedMapCanvas.width,
         w2CachedMapCanvas.height,
         { x: w2Transform.x, y: w2Transform.y, k: w2Transform.k },
+        { showBorders: w2ShowBorders, showLabels: w2ShowLabels },
     );
 }
 
@@ -1376,6 +1394,41 @@ export function zoomToLocation(
         .call(zoomBehavior.transform, nextTransform);
     currentTransform = nextTransform;
     transformCallback?.();
+}
+
+export function zoomToLocationW2(
+    canvas: HTMLCanvasElement,
+    lon: number,
+    lat: number,
+    zoomLevel = 3.2,
+    durationMs = 550,
+): void {
+    if (!w2CachedMapCanvas || !w2ZoomBehavior) return;
+    const rect = canvas.getBoundingClientRect();
+    const mapWidth = w2CachedMapCanvas.width;
+    const mapHeight = w2CachedMapCanvas.height;
+
+    let normalizedLon = lon;
+    while (normalizedLon > 180) normalizedLon -= 360;
+    while (normalizedLon < -180) normalizedLon += 360;
+
+    const projectedX = ((normalizedLon + 180) / 360) * mapWidth;
+    const projectedY = ((90 - lat) / 150) * mapHeight;
+
+    const candidates = [projectedX - mapWidth, projectedX, projectedX + mapWidth];
+    let bestTargetX = rect.width / 2 - projectedX * zoomLevel;
+    let bestDistance = Math.abs(bestTargetX - w2Transform.x);
+    for (const candidateX of candidates) {
+        const targetX = rect.width / 2 - candidateX * zoomLevel;
+        const distance = Math.abs(targetX - w2Transform.x);
+        if (distance < bestDistance) { bestDistance = distance; bestTargetX = targetX; }
+    }
+
+    const targetY = rect.height / 2 - projectedY * zoomLevel;
+    const nextTransform = d3.zoomIdentity.translate(bestTargetX, targetY).scale(zoomLevel);
+    d3.select(canvas).transition().duration(durationMs).ease(d3.easeCubicOut)
+        .call(w2ZoomBehavior.transform, nextTransform);
+    w2Transform = nextTransform;
 }
 
 function updateTooltip(

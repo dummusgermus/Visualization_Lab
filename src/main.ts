@@ -36,6 +36,8 @@ import {
     setupMapInteractions,
     setupWindow2Interactions,
     zoomToLocation,
+    zoomToLocationW2,
+    setMapOverlayVisibilityW2,
 } from "./MapView/map";
 import {
     attachTimeSliderHandlers,
@@ -1423,6 +1425,8 @@ export type Window2State = {
     mapLocationSearchLoading: boolean;
     mapLocationSearchError: string | null;
     mapLocationSearchSelection: string | null;
+    mapLocationSearchFocused: boolean;
+    mapLocationSearchCursor: { start: number; end: number };
     mapOptionsOpen: boolean;
     mapShowBorders: boolean;
     mapShowCities: boolean;
@@ -1647,6 +1651,8 @@ const state: AppState = {
         mapLocationSearchLoading: false,
         mapLocationSearchError: null,
         mapLocationSearchSelection: null,
+        mapLocationSearchFocused: false,
+        mapLocationSearchCursor: { start: 0, end: 0 },
         mapOptionsOpen: false,
         mapShowBorders: true,
         mapShowCities: true,
@@ -1727,6 +1733,8 @@ let locationSearchDebounce: number | null = null;
 let locationSearchRequestId = 0;
 let mapLocationSearchDebounce: number | null = null;
 let mapLocationSearchRequestId = 0;
+let mapLocationSearchDebounceW2: number | null = null;
+let mapLocationSearchRequestIdW2 = 0;
 let mapInfoRequestId = 0;
 let mapInfoDelayTimer: number | null = null;
 let mapRangeRequestId = 0;
@@ -3736,6 +3744,78 @@ async function handleMapLocationSearch(query: string) {
         state.mapLocationSearchLoading = false;
         render();
     }
+}
+
+function applyMapSearchedLocationW2(result: LocationSearchResult) {
+    if (mapLocationSearchDebounceW2 !== null) {
+        window.clearTimeout(mapLocationSearchDebounceW2);
+        mapLocationSearchDebounceW2 = null;
+    }
+    const w2 = state.window2;
+    w2.mapLocationSearchError = null;
+    w2.mapLocationSearchResults = [];
+    w2.mapLocationSearchLoading = false;
+    w2.mapLocationSearchQuery = result.displayName;
+    w2.mapLocationSearchSelection = result.displayName;
+    setMapMarkerW2(result.lat, result.lon, result.displayName);
+    render();
+    if (persistentCanvas2) {
+        const targetZoom = Math.max(3.2, 3.2);
+        zoomToLocationW2(persistentCanvas2, result.lon, result.lat, targetZoom);
+        renderMapMarkerPositionW2();
+    }
+    scheduleMapInfoOpenW2();
+    openMapRangeOverlayW2();
+}
+
+async function handleMapLocationSearchW2(query: string) {
+    const trimmed = query.trim();
+    const requestId = ++mapLocationSearchRequestIdW2;
+    const w2 = state.window2;
+    w2.mapLocationSearchQuery = query;
+    w2.mapLocationSearchError = null;
+    w2.mapLocationSearchResults = [];
+    w2.mapLocationSearchSelection = null;
+
+    if (!trimmed) {
+        w2.mapLocationSearchLoading = false;
+        w2.mapLocationSearchResults = [];
+        w2.mapLocationSearchError = null;
+        render();
+        return;
+    }
+
+    w2.mapLocationSearchLoading = true;
+    render();
+
+    try {
+        const results = await fetchLocationSuggestions(trimmed);
+        if (requestId !== mapLocationSearchRequestIdW2) return;
+        w2.mapLocationSearchResults = results;
+        if (!results.length) w2.mapLocationSearchError = "No places found for that query.";
+    } catch (error) {
+        if (requestId !== mapLocationSearchRequestIdW2) return;
+        w2.mapLocationSearchError = error instanceof Error ? error.message : "Search failed.";
+    } finally {
+        if (requestId !== mapLocationSearchRequestIdW2) return;
+        w2.mapLocationSearchLoading = false;
+        render();
+    }
+}
+
+function startMapDrawingW2() {
+    const w2 = state.window2;
+    if (w2.canvasView !== "map") return;
+    w2.mapPolygon = null;
+    w2.mapMarker = null;
+    w2.mapInfoOpen = false;
+    closeMapRangeOverlayW2();
+    w2.drawState = { active: true, points: [], previewPoint: null };
+    render();
+}
+
+function stopMapDrawingW2() {
+    state.window2.drawState = { active: false, points: [], previewPoint: null };
 }
 
 function updateMapMarkerNameOnly(placeName: string) {
@@ -15084,44 +15164,53 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
     };
 
     mapSearchInputs.forEach((input) => {
+        const isW2 = input.dataset.window === "2";
         input.addEventListener("focus", () => {
-            state.mapLocationSearchFocused = true;
+            if (isW2) state.window2.mapLocationSearchFocused = true;
+            else state.mapLocationSearchFocused = true;
         });
         const syncCursor = () => {
             const start = input.selectionStart ?? input.value.length;
             const end = input.selectionEnd ?? input.value.length;
-            state.mapLocationSearchCursor = { start, end };
+            if (isW2) {
+                state.window2.mapLocationSearchCursor = { start, end };
+            } else {
+                state.mapLocationSearchCursor = { start, end };
+            }
         };
         input.addEventListener("input", () => {
-            const hadResults = state.mapLocationSearchResults.length > 0;
-            const wasLoading = state.mapLocationSearchLoading;
-            const hadError = Boolean(state.mapLocationSearchError);
-
-            state.mapLocationSearchQuery = input.value;
-            state.mapLocationSearchError = null;
-            state.mapLocationSearchSelection = null;
-            state.mapLocationSearchFocused = true;
-            syncCursor();
-
-            clearMapSearchDebounce();
-
-            const trimmed = input.value.trim();
-
-            if (!trimmed) {
-                state.mapLocationSearchResults = [];
-                state.mapLocationSearchLoading = false;
-                render();
-                return;
+            if (isW2) {
+                const w2 = state.window2;
+                w2.mapLocationSearchQuery = input.value;
+                w2.mapLocationSearchError = null;
+                w2.mapLocationSearchSelection = null;
+                w2.mapLocationSearchFocused = true;
+                const wStart = input.selectionStart ?? input.value.length;
+                const wEnd = input.selectionEnd ?? input.value.length;
+                w2.mapLocationSearchCursor = { start: wStart, end: wEnd };
+                if (mapLocationSearchDebounceW2 !== null) { window.clearTimeout(mapLocationSearchDebounceW2); mapLocationSearchDebounceW2 = null; }
+                const hadW2Results = w2.mapLocationSearchResults.length > 0;
+                const wasW2Loading = w2.mapLocationSearchLoading;
+                const hadW2Error = Boolean(w2.mapLocationSearchError);
+                const trimmed = input.value.trim();
+                if (!trimmed) { w2.mapLocationSearchResults = []; w2.mapLocationSearchLoading = false; render(); return; }
+                if (hadW2Results || wasW2Loading || hadW2Error) { w2.mapLocationSearchResults = []; w2.mapLocationSearchLoading = false; render(); }
+                mapLocationSearchDebounceW2 = window.setTimeout(() => { void handleMapLocationSearchW2(input.value); }, LOCATION_SEARCH_DEBOUNCE_MS);
+            } else {
+                const hadResults = state.mapLocationSearchResults.length > 0;
+                const wasLoading = state.mapLocationSearchLoading;
+                const hadError = Boolean(state.mapLocationSearchError);
+                state.mapLocationSearchQuery = input.value;
+                state.mapLocationSearchError = null;
+                state.mapLocationSearchSelection = null;
+                state.mapLocationSearchFocused = true;
+                syncCursor();
+                clearMapSearchDebounce();
+                const trimmed = input.value.trim();
+                if (!trimmed) { state.mapLocationSearchResults = []; state.mapLocationSearchLoading = false; render(); return; }
+                if (hadResults || wasLoading || hadError) { state.mapLocationSearchResults = []; state.mapLocationSearchLoading = false; render(); }
+                mapLocationSearchDebounce = window.setTimeout(() => { triggerMapSearch(input.value); }, LOCATION_SEARCH_DEBOUNCE_MS);
             }
-            if (hadResults || wasLoading || hadError) {
-                state.mapLocationSearchResults = [];
-                state.mapLocationSearchLoading = false;
-                render();
-            }
-
-            mapLocationSearchDebounce = window.setTimeout(() => {
-                triggerMapSearch(input.value);
-            }, LOCATION_SEARCH_DEBOUNCE_MS);
         });
         input.addEventListener("keyup", syncCursor);
         input.addEventListener("click", syncCursor);
@@ -15129,8 +15218,13 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         input.addEventListener("keydown", (e) => {
             if (e.key === "Enter") {
                 e.preventDefault();
-                clearMapSearchDebounce();
-                triggerMapSearch(input.value);
+                if (isW2) {
+                    if (mapLocationSearchDebounceW2 !== null) { window.clearTimeout(mapLocationSearchDebounceW2); mapLocationSearchDebounceW2 = null; }
+                    void handleMapLocationSearchW2(input.value);
+                } else {
+                    clearMapSearchDebounce();
+                    triggerMapSearch(input.value);
+                }
             }
         });
     });
@@ -15141,17 +15235,34 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             const lon = Number(resultEl.dataset.lon);
             const name = resultEl.dataset.name ?? "Selected place";
             if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
-            applyMapSearchedLocation({ displayName: name, lat, lon });
+            if (resultEl.dataset.window === "2") {
+                applyMapSearchedLocationW2({ displayName: name, lat, lon });
+            } else {
+                applyMapSearchedLocation({ displayName: name, lat, lon });
+            }
         });
     });
 
     if (state.mapLocationSearchFocused) {
         const input = root.querySelector<HTMLInputElement>(
-            '[data-role="map-location-search-input"]',
+            '[data-role="map-location-search-input"]:not([data-window="2"])',
         );
         if (input) {
             setTimeout(() => input.focus(), 0);
             const { start, end } = state.mapLocationSearchCursor;
+            const safeStart = Math.min(start, input.value.length);
+            const safeEnd = Math.min(end, input.value.length);
+            setTimeout(() => input.setSelectionRange(safeStart, safeEnd), 0);
+        }
+    }
+
+    if (state.window2.mapLocationSearchFocused) {
+        const input = root.querySelector<HTMLInputElement>(
+            '[data-role="map-location-search-input"][data-window="2"]',
+        );
+        if (input) {
+            setTimeout(() => input.focus(), 0);
+            const { start, end } = state.window2.mapLocationSearchCursor;
             const safeStart = Math.min(start, input.value.length);
             const safeEnd = Math.min(end, input.value.length);
             setTimeout(() => input.setSelectionRange(safeStart, safeEnd), 0);
@@ -16083,28 +16194,35 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         setTimeout(() => renderMapMarkerPositionW2(), 0);
     }
 
-    const mapDrawToggleBtn = root.querySelector<HTMLButtonElement>(
-        '[data-action="toggle-map-draw"]',
-    );
-    mapDrawToggleBtn?.addEventListener("click", (e) => {
-        e.preventDefault();
-        if (state.drawState.active) {
-            stopMapDrawing();
-        } else {
-            startMapDrawing();
-        }
-    });
-
-    root.querySelector<HTMLButtonElement>('[data-action="clear-map-draw"]')
-        ?.addEventListener("click", (e) => {
+    // Route draw toggle to correct window
+    root.querySelectorAll<HTMLButtonElement>('[data-action="toggle-map-draw"]')
+        .forEach(btn => btn.addEventListener("click", (e) => {
             e.preventDefault();
-            stopMapDrawing();
-            state.mapPolygon = null;
-            state.mapInfoOpen = false;
-            closeMapRangeOverlay();
-            render();
-            renderDrawOverlayPaths();
-        });
+            if (btn.dataset.window === "2") {
+                if (state.window2.drawState.active) stopMapDrawingW2(); else startMapDrawingW2();
+            } else {
+                if (state.drawState.active) stopMapDrawing(); else startMapDrawing();
+            }
+        }));
+
+    root.querySelectorAll<HTMLButtonElement>('[data-action="clear-map-draw"]')
+        .forEach(btn => btn.addEventListener("click", (e) => {
+            e.preventDefault();
+            if (btn.dataset.window === "2") {
+                stopMapDrawingW2();
+                state.window2.mapPolygon = null;
+                state.window2.mapInfoOpen = false;
+                closeMapRangeOverlayW2();
+                render();
+            } else {
+                stopMapDrawing();
+                state.mapPolygon = null;
+                state.mapInfoOpen = false;
+                closeMapRangeOverlay();
+                render();
+                renderDrawOverlayPaths();
+            }
+        }));
 
     attachTimeSliderHandlers({
         root,
@@ -16308,20 +16426,26 @@ async function init() {
             action === "toggle-map-options-menu" ||
             action === "toggle-map-borders" ||
             action === "toggle-map-cities";
+        const actionWindow = (actionElement?.dataset.window ?? "1") as "1" | "2";
 
         if (
-            state.mapOptionsOpen &&
+            (state.mapOptionsOpen || state.window2.mapOptionsOpen) &&
             !isMapOptionsAction &&
             !target.closest('[data-role="map-options-menu"]')
         ) {
             state.mapOptionsOpen = false;
+            state.window2.mapOptionsOpen = false;
             render();
         }
 
         if (action === "toggle-map-options-menu") {
             e.preventDefault();
             e.stopPropagation();
-            state.mapOptionsOpen = !state.mapOptionsOpen;
+            if (actionWindow === "2") {
+                state.window2.mapOptionsOpen = !state.window2.mapOptionsOpen;
+            } else {
+                state.mapOptionsOpen = !state.mapOptionsOpen;
+            }
             render();
             return;
         }
@@ -16329,11 +16453,13 @@ async function init() {
         if (action === "toggle-map-borders") {
             const checkbox = actionElement as HTMLInputElement | null;
             if (!checkbox) return;
-            state.mapShowBorders = checkbox.checked;
-            setMapOverlayVisibility({
-                showBorders: state.mapShowBorders,
-                showLabels: state.mapShowCities,
-            });
+            if (actionWindow === "2") {
+                state.window2.mapShowBorders = checkbox.checked;
+                setMapOverlayVisibilityW2({ showBorders: state.window2.mapShowBorders, showLabels: state.window2.mapShowCities });
+            } else {
+                state.mapShowBorders = checkbox.checked;
+                setMapOverlayVisibility({ showBorders: state.mapShowBorders, showLabels: state.mapShowCities });
+            }
             render();
             return;
         }
@@ -16341,11 +16467,13 @@ async function init() {
         if (action === "toggle-map-cities") {
             const checkbox = actionElement as HTMLInputElement | null;
             if (!checkbox) return;
-            state.mapShowCities = checkbox.checked;
-            setMapOverlayVisibility({
-                showBorders: state.mapShowBorders,
-                showLabels: state.mapShowCities,
-            });
+            if (actionWindow === "2") {
+                state.window2.mapShowCities = checkbox.checked;
+                setMapOverlayVisibilityW2({ showBorders: state.window2.mapShowBorders, showLabels: state.window2.mapShowCities });
+            } else {
+                state.mapShowCities = checkbox.checked;
+                setMapOverlayVisibility({ showBorders: state.mapShowBorders, showLabels: state.mapShowCities });
+            }
             render();
             return;
         }

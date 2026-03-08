@@ -303,13 +303,17 @@ export function drawBaseMapOverlay(
     worldWidth: number,
     worldHeight: number,
     transform: Transform,
+    overrides?: { showBorders?: boolean; showLabels?: boolean },
 ) {
     ensureBorderDataLoaded();
     if (!borderData) return;
 
+    const doShowBorders = overrides?.showBorders ?? showBorders;
+    const doShowLabels = overrides?.showLabels ?? showLabels;
+
     const borderLines =
         transform.k < BORDER_HIGH_DETAIL_ZOOM ? borderData.low : borderData.high;
-    if (showBorders && borderLines.length) {
+    if (doShowBorders && borderLines.length) {
         ctx.save();
         ctx.strokeStyle = "rgba(255, 255, 255, 0.36)";
         ctx.lineWidth = transform.k < BORDER_HIGH_DETAIL_ZOOM ? 0.8 : 1.0;
@@ -324,7 +328,7 @@ export function drawBaseMapOverlay(
         ctx.restore();
     }
 
-    if (showLabels && transform.k >= LABEL_START_ZOOM) {
+    if (doShowLabels && transform.k >= LABEL_START_ZOOM) {
         ctx.save();
         drawLabels(
             ctx,

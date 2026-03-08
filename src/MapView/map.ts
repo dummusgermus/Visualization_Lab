@@ -288,6 +288,41 @@ function pointerToLonLat(
     return { lat: clampedLat, lon: clampedLon };
 }
 
+function pointerToLonLatW2(
+    canvas: HTMLCanvasElement,
+    clientX: number,
+    clientY: number,
+): { lat: number; lon: number } | null {
+    if (!w2CachedMapCanvas) return null;
+
+    const rect = canvas.getBoundingClientRect();
+    const mouseX = clientX - rect.left;
+    const mouseY = clientY - rect.top;
+
+    let worldX = (mouseX - w2Transform.x) / w2Transform.k;
+    const worldY = (mouseY - w2Transform.y) / w2Transform.k;
+
+    const mapWidth = w2CachedMapCanvas.width;
+    const mapHeight = w2CachedMapCanvas.height;
+
+    if (worldY < 0 || worldY > mapHeight) return null;
+
+    let normalizedX = worldX % mapWidth;
+    if (normalizedX < 0) normalizedX += mapWidth;
+    if (normalizedX < 0) normalizedX = 0;
+    if (normalizedX >= mapWidth) normalizedX = mapWidth * (1 - Number.EPSILON);
+
+    const lon = (normalizedX / mapWidth) * 360 - 180;
+    const lat = 90 - (worldY / mapHeight) * 150;
+
+    const clampedLon = Math.max(-180, Math.min(180, lon));
+    const clampedLat = Math.max(-90, Math.min(90, lat));
+
+    if (!Number.isFinite(clampedLon) || !Number.isFinite(clampedLat)) return null;
+
+    return { lat: clampedLat, lon: clampedLon };
+}
+
 function setDrawMode(enabled: boolean, callbacks?: DrawCallbacks | null) {
     drawMode = enabled;
     drawCallbacks = enabled ? (callbacks ?? null) : null;
@@ -337,6 +372,51 @@ export function projectLonLatToCanvas(
     if (
         y < -mapHeight * currentTransform.k ||
         y > rect.height + mapHeight * currentTransform.k
+    ) {
+        return null;
+    }
+
+    return { x: bestX, y };
+}
+
+export function projectLonLatToCanvasW2(
+    canvas: HTMLCanvasElement,
+    lon: number,
+    lat: number,
+): { x: number; y: number } | null {
+    if (!w2CachedMapCanvas) return null;
+    const mapWidth = w2CachedMapCanvas.width;
+    const mapHeight = w2CachedMapCanvas.height;
+
+    let normalizedLon = lon;
+    while (normalizedLon > 180) normalizedLon -= 360;
+    while (normalizedLon < -180) normalizedLon += 360;
+
+    const projectedX = ((normalizedLon + 180) / 360) * mapWidth;
+    const projectedY = ((90 - lat) / 150) * mapHeight;
+
+    const x = projectedX * w2Transform.k + w2Transform.x;
+    const y = projectedY * w2Transform.k + w2Transform.y;
+
+    const rect = canvas.getBoundingClientRect();
+    const wrapWidth = mapWidth * w2Transform.k;
+
+    const viewCenterX = rect.width / 2;
+    let bestX = x;
+    let bestDistance = Math.abs(x - viewCenterX);
+
+    for (let offset = -wrapWidth; offset <= wrapWidth; offset += wrapWidth) {
+        const candidateX = x + offset;
+        const distance = Math.abs(candidateX - viewCenterX);
+        if (distance < bestDistance) {
+            bestDistance = distance;
+            bestX = candidateX;
+        }
+    }
+
+    if (
+        y < -mapHeight * w2Transform.k ||
+        y > rect.height + mapHeight * w2Transform.k
     ) {
         return null;
     }
@@ -567,6 +647,10 @@ export function resizeWindow2Canvas(canvas: HTMLCanvasElement): void {
 export function setupWindow2Interactions(
     canvas: HTMLCanvasElement,
     unit: string,
+    options?: {
+        onMapClick?: (coords: { lat: number; lon: number }) => void;
+        onTransform?: () => void;
+    },
 ): void {
     const selection = d3.select(canvas);
 
@@ -577,6 +661,7 @@ export function setupWindow2Interactions(
         .on("zoom", (e: d3.D3ZoomEvent<HTMLCanvasElement, unknown>) => {
             w2Transform = e.transform;
             redrawW2CachedMap(canvas);
+            options?.onTransform?.();
         })
         .on("start", () => {
             canvas.style.cursor = "grabbing";
@@ -587,6 +672,11 @@ export function setupWindow2Interactions(
 
     selection.call(w2ZoomBehavior);
     selection.call(w2ZoomBehavior.transform, w2Transform);
+
+    selection.on("click.w2location", (e: MouseEvent) => {
+        const coords = pointerToLonLatW2(canvas, e.clientX, e.clientY);
+        if (coords) options?.onMapClick?.(coords);
+    });
 
     selection.on("pointermove.w2tooltip", (e: PointerEvent) => {
         if (

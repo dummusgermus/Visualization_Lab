@@ -27,6 +27,7 @@ import {
     getW2MapTransform,
     isW2CacheReady,
     projectLonLatToCanvas,
+    projectLonLatToCanvasW2,
     renderMapData,
     renderMapDataWindow2,
     resizeMapCanvas,
@@ -1460,6 +1461,27 @@ export type Window2State = {
         Array<Float32Array | Float64Array>
     >;
     legendCollapsed: boolean;
+    // Map info (barcharts) panel state – mirrors the equivalent AppState fields
+    mapInfoOpen: boolean;
+    mapInfoSamples: ChartSample[];
+    mapInfoBoxes: ChartBox[] | null;
+    mapInfoLoading: boolean;
+    mapInfoError: string | null;
+    mapInfoLoadingProgress: ChartLoadingProgress;
+    mapInfoPalette: string;
+    // Range overlay state – mirrors the equivalent AppState fields
+    mapRangeOpen: boolean;
+    mapRangeSamples: ChartSample[];
+    mapRangeSeries: ChartSeries[] | null;
+    mapRangeLoading: boolean;
+    mapRangeError: string | null;
+    mapRangeLoadingProgress: ChartLoadingProgress;
+    mapRangeStart: string;
+    mapRangeEnd: string;
+    mapRangeNumSamples: number;
+    mapRangePreset: "1month" | "1year" | "10years" | "full" | "custom";
+    mapRangeHiddenScenarios: string[];
+    mapRangePalette: string;
 };
 
 //TODO set 0 from available models to active model and so on
@@ -1666,6 +1688,25 @@ const state: AppState = {
             Array<Float32Array | Float64Array>
         >(),
         legendCollapsed: false,
+        mapInfoOpen: false,
+        mapInfoSamples: [],
+        mapInfoBoxes: null,
+        mapInfoLoading: false,
+        mapInfoError: null,
+        mapInfoLoadingProgress: { total: 0, done: 0 },
+        mapInfoPalette: paletteOptions[0].name,
+        mapRangeOpen: false,
+        mapRangeSamples: [],
+        mapRangeSeries: null,
+        mapRangeLoading: false,
+        mapRangeError: null,
+        mapRangeLoadingProgress: { total: 0, done: 0 },
+        mapRangeStart: "2015-01-01",
+        mapRangeEnd: "2015-12-31",
+        mapRangeNumSamples: 52,
+        mapRangePreset: "1year",
+        mapRangeHiddenScenarios: [],
+        mapRangePalette: paletteOptions[0].name,
     },
 };
 
@@ -1690,6 +1731,11 @@ let mapInfoRequestId = 0;
 let mapInfoDelayTimer: number | null = null;
 let mapRangeRequestId = 0;
 let mapRangeDelayTimer: number | null = null;
+// W2-specific request tracking for map info and range overlays
+let mapInfoRequestIdW2 = 0;
+let mapInfoDelayTimerW2: number | null = null;
+let mapRangeRequestIdW2 = 0;
+let mapRangeDelayTimerW2: number | null = null;
 let climateDataRequestId = 0;
 // Track which resolution was in use when ensemble stats were last computed so that
 // the fast-path cache is invalidated on resolution changes (different quality levels
@@ -1711,6 +1757,36 @@ let mapInfoDragState: {
 let mapInfoSize: { width: number; height: number } | null = null;
 let mapInfoNaturalSize: { width: number; height: number } | null = null;
 let mapInfoResizeState: {
+    active: boolean;
+    pointerId: number | null;
+    startX: number;
+    startY: number;
+    startWidth: number;
+    startHeight: number;
+} = {
+    active: false,
+    pointerId: null,
+    startX: 0,
+    startY: 0,
+    startWidth: 0,
+    startHeight: 0,
+};
+// W2-specific drag/resize state for map-info-panel-w2
+let mapInfoDragPositionW2: { left: number; top: number } | null = null;
+let mapInfoDragStateW2: {
+    active: boolean;
+    pointerId: number | null;
+    offsetX: number;
+    offsetY: number;
+} = {
+    active: false,
+    pointerId: null,
+    offsetX: 0,
+    offsetY: 0,
+};
+let mapInfoSizeW2: { width: number; height: number } | null = null;
+let mapInfoNaturalSizeW2: { width: number; height: number } | null = null;
+let mapInfoResizeStateW2: {
     active: boolean;
     pointerId: number | null;
     startX: number;
@@ -4278,6 +4354,847 @@ async function loadMapInfoData() {
         state.mapInfoLoading = false;
         state.mapInfoLoadingProgress = { total: 0, done: 0 };
         render();
+    }
+}
+
+// ─── Window-2 location / map-info / range-overlay helpers ─────────────────────
+
+function getActiveMapVariableW2(): { variable: string; unit: string } {
+    const w2 = state.window2;
+    if (w2.mode === "Ensemble") {
+        return { variable: w2.ensembleVariable, unit: w2.ensembleUnit };
+    }
+    return { variable: w2.variable, unit: w2.selectedUnit };
+}
+
+function setMapMarkerW2(lat: number, lon: number, name: string | null) {
+    const [x, y] = latLonToGridIndices(lat, lon);
+    state.window2.mapMarker = { lat, lon, name, pixel: { x, y } };
+}
+
+function renderMapMarkerOverlayW2(): string {
+    const marker = state.window2.mapMarker;
+    const title = marker?.name
+        ? escapeHtml(marker.name)
+        : marker
+          ? `Pixel ${marker.pixel.x}, ${marker.pixel.y}`
+          : "Selected location";
+    return `
+      <div
+        id="map-location-marker-w2"
+        style="${styleAttr(styles.mapMarker)}"
+        aria-hidden="true"
+        title="${title}"
+      >
+        <svg viewBox="0 0 28 36" width="28" height="36" aria-hidden="true" focusable="false">
+          <defs>
+            <linearGradient id="map-marker-gradient-w2" x1="0" x2="1">
+              <stop offset="0%" stop-color="var(--accent-blue)" />
+              <stop offset="100%" stop-color="var(--accent-purple)" />
+            </linearGradient>
+          </defs>
+          <path d="M14 2C8.48 2 4 6.48 4 12c0 7.72 8.4 19.3 9.1 20.25.5.68 1.3.68 1.8 0C15.6 31.3 24 19.72 24 12 24 6.48 19.52 2 14 2Z" fill="url(#map-marker-gradient-w2)"/>
+          <circle cx="14" cy="12" r="4.5" fill="rgba(9, 14, 28, 0.9)" />
+          <circle cx="14" cy="12" r="3" fill="white" opacity="0.9" />
+        </svg>
+      </div>
+    `;
+}
+
+function renderMapMarkerPositionW2(): void {
+    if (!appRoot) return;
+    const marker = appRoot.querySelector<HTMLDivElement>("#map-location-marker-w2");
+    const infoPanel = appRoot.querySelector<HTMLDivElement>("#map-info-panel-w2");
+    const canvas = appRoot.querySelector<HTMLCanvasElement>("#map-canvas-2");
+    if (!canvas) return;
+
+    const canvasRect = canvas.getBoundingClientRect();
+    const markerOffsetParent = marker?.offsetParent as HTMLElement | null;
+    const markerParentRect = markerOffsetParent?.getBoundingClientRect();
+    const canvasOffsetLeft = markerParentRect ? canvasRect.left - markerParentRect.left : 0;
+    const canvasOffsetTop  = markerParentRect ? canvasRect.top  - markerParentRect.top  : 0;
+
+    if (marker) {
+        if (!state.window2.mapMarker) {
+            marker.style.opacity = "0";
+            marker.style.transform = "translate(-9999px, -9999px)";
+        } else {
+            const projected = projectLonLatToCanvasW2(canvas, state.window2.mapMarker.lon, state.window2.mapMarker.lat);
+            if (!projected) {
+                marker.style.opacity = "0";
+                marker.style.transform = "translate(-9999px, -9999px)";
+            } else {
+                marker.style.opacity = "1";
+                marker.style.transform = `translate(${projected.x + canvasOffsetLeft}px, ${projected.y + canvasOffsetTop}px) translate(-50%, -100%)`;
+            }
+        }
+    }
+
+    if (infoPanel && state.window2.mapInfoOpen && state.window2.mapMarker) {
+        const padding = 12;
+        const sidebarOffset = state.window2.sidebarOpen ? SIDEBAR_WIDTH : 0;
+        const offsetParent = infoPanel.offsetParent as HTMLElement | null;
+        const parentRect = offsetParent?.getBoundingClientRect();
+        const originLeft = parentRect ? canvasRect.left - parentRect.left : 0;
+        const originTop  = parentRect ? canvasRect.top  - parentRect.top  : 0;
+
+        const panelWidth = infoPanel.offsetWidth || 360;
+        const panelHeight = infoPanel.offsetHeight || 240;
+
+        if (mapInfoDragPositionW2) {
+            infoPanel.style.left = `${mapInfoDragPositionW2.left}px`;
+            infoPanel.style.top  = `${mapInfoDragPositionW2.top}px`;
+        } else {
+            const projected = projectLonLatToCanvasW2(canvas, state.window2.mapMarker.lon, state.window2.mapMarker.lat);
+            if (projected) {
+                let left = originLeft + projected.x - panelWidth - 24;
+                if (left < padding) left = originLeft + projected.x + 24;
+                let top = originTop + projected.y - panelHeight / 2;
+                left = Math.max(padding, Math.min(left, canvasRect.width - panelWidth - sidebarOffset - padding));
+                top  = Math.max(padding, Math.min(top, canvasRect.height - panelHeight - padding));
+                infoPanel.style.left = `${left}px`;
+                infoPanel.style.top  = `${top}px`;
+            }
+        }
+        infoPanel.style.opacity   = "1";
+        infoPanel.style.transform = "translate(0, 0)";
+        infoPanel.style.visibility = "visible";
+        infoPanel.style.pointerEvents = "auto";
+    } else if (infoPanel && !state.window2.mapInfoOpen) {
+        infoPanel.style.opacity   = "0";
+        infoPanel.style.transform = "translate(-9999px, -9999px)";
+        infoPanel.style.pointerEvents = "none";
+        infoPanel.style.visibility = "hidden";
+    }
+}
+
+function renderMapInfoBodyW2(): string {
+    const w2 = state.window2;
+    if (!w2.mapMarker) {
+        return `<div style="${styleAttr(styles.chartEmpty)}">Click a location to load boxplots.</div>`;
+    }
+
+    let rangeYDomain: [number, number] | undefined;
+    if (w2.mapRangeSamples.length) {
+        const { variable: rv, unit: ru } = getActiveMapVariableW2();
+        const vals = w2.mapRangeSamples.map(s => convertValue(s.rawValue, rv, ru)).filter(isFinite);
+        if (vals.length) {
+            const rMin = Math.min(...vals);
+            const rMax = Math.max(...vals);
+            const pad = Math.max(Math.abs(rMax - rMin) * 0.12, 1e-6);
+            rangeYDomain = [rMin - pad, rMax + pad];
+        }
+    }
+
+    if (w2.mapInfoLoading) {
+        const { unit } = getActiveMapVariableW2();
+        const progressText = w2.mapInfoLoadingProgress.total > 0
+            ? `${w2.mapInfoLoadingProgress.done}/${w2.mapInfoLoadingProgress.total} datasets loaded`
+            : "Preparing datasets";
+        const preview = w2.mapInfoBoxes && w2.mapInfoBoxes.length
+            ? renderMiniChartSvg(w2.mapInfoBoxes, unit, w2.mapInfoPalette, rangeYDomain)
+            : `<div style="${styleAttr(styles.chartEmpty)}">Loading boxplots...</div>`;
+        return `
+          <div style="${styleAttr(styles.mapInfoLoadingRow)}">
+            <div style="${styleAttr(styles.mapInfoLoadingSpinner)}"></div>
+            <div>${progressText}</div>
+          </div>
+          ${preview}
+        `;
+    }
+
+    if (w2.mapInfoError) {
+        return `<div style="${styleAttr(styles.chartError)}">${escapeHtml(w2.mapInfoError)}</div>`;
+    }
+
+    if (!w2.mapInfoBoxes || !w2.mapInfoBoxes.length) {
+        return `<div style="${styleAttr(styles.chartEmpty)}">Click a location to load boxplots.</div>`;
+    }
+
+    return renderMiniChartSvg(w2.mapInfoBoxes, getActiveMapVariableW2().unit, w2.mapInfoPalette, rangeYDomain);
+}
+
+function renderMapInfoWindowW2(): string {
+    const w2 = state.window2;
+    if (!w2.mapInfoOpen) return "";
+    const marker = w2.mapMarker;
+    const locationLabel = marker?.name
+        ? marker.name
+        : marker
+          ? `Pixel ${marker.pixel.x}, ${marker.pixel.y}`
+          : "Selected location";
+    const { variable, unit } = getActiveMapVariableW2();
+    const variableLabel = getVariableLabel(variable, state.metaData);
+    const title = `${locationLabel} · ${variableLabel}`;
+    const subtitle = `${formatDisplayDate(w2.date)} · ${unit}`;
+    const panelSizeStyle = mapInfoSizeW2
+        ? `; width:${mapInfoSizeW2.width}px; max-width:none; height:${mapInfoSizeW2.height}px;`
+        : "";
+    return `
+      <div id="map-info-panel-w2" class="custom-select-info-panel map-info-panel" style="${styleAttr(styles.mapInfoPanel)}${panelSizeStyle}">
+        <div class="map-info-header-w2 map-info-header" style="${styleAttr(styles.mapInfoHeader)}">
+          <div style="${styleAttr(styles.mapInfoTitleGroup)}">
+            <div class="custom-select-info-panel-title-w2">${escapeHtml(title)}</div>
+            <div style="${styleAttr(styles.mapInfoSubtitle)}">${escapeHtml(subtitle)}</div>
+          </div>
+          <div style="${styleAttr(styles.mapInfoActions)}">
+            <button type="button" data-action="close-map-info-w2" aria-label="Close info"
+              style="${styleAttr(styles.mapInfoActionBtn)}"
+              onmouseover="this.style.color='var(--text-primary)';this.style.background='rgba(15,23,42,0.85)';"
+              onmouseout="this.style.color='var(--text-secondary)';this.style.background='transparent';">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M6 6l12 12M18 6l-12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div class="map-info-body-w2 map-info-body" style="${styleAttr(styles.mapInfoBody)}">
+          ${renderMapInfoBodyW2()}
+        </div>
+        <div class="map-info-resize-handle-w2 map-info-resize-handle" aria-hidden="true"
+          style="${styleAttr(styles.mapInfoResizeHandle)}" title="Resize">
+          <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true" style="display:block;">
+            <line x1="3" y1="10" x2="10" y2="3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            <line x1="6" y1="10" x2="10" y2="6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+        </div>
+      </div>
+    `;
+}
+
+function renderMapRangeBodyW2(containerWidth?: number): string {
+    const w2 = state.window2;
+    const { unit } = getActiveMapVariableW2(); /* note: getMapRangeVariableW2 = getActiveMapVariableW2 */
+    const paneWidth = window.innerWidth * (1 - state.splitRatio);
+    const rightOffset = w2.sidebarOpen ? SIDEBAR_WIDTH : 0;
+    const cw = containerWidth ?? (paneWidth - rightOffset);
+
+    if (w2.mapRangeLoading) {
+        const progressText = w2.mapRangeLoadingProgress.total > 0
+            ? `${w2.mapRangeLoadingProgress.done}/${w2.mapRangeLoadingProgress.total} datasets loaded`
+            : "Preparing datasets";
+        const preview = w2.mapRangeSeries && w2.mapRangeSeries.length
+            ? `<div style="${styleAttr(styles.mapRangeChartWrap)}">${renderChartRangeSvg(w2.mapRangeSeries, {
+                compact: true, unitLabel: unit, paletteName: w2.mapRangePalette,
+                lightToDarkNoDarkest: true, containerWidth: cw,
+                hiddenScenarios: w2.mapRangeHiddenScenarios,
+              })}</div>`
+            : `<div style="${styleAttr(styles.chartEmpty)}">Loading range view...</div>`;
+        return `
+          <div style="${styleAttr(styles.mapRangeLoadingRow)}">
+            <div style="${styleAttr(styles.mapRangeLoadingSpinner)}"></div>
+            <div>${progressText}</div>
+          </div>
+          ${preview}
+        `;
+    }
+
+    if (w2.mapRangeError) {
+        return `<div style="${styleAttr(styles.chartError)}">${escapeHtml(w2.mapRangeError)}</div>`;
+    }
+
+    if (!w2.mapRangeSeries || !w2.mapRangeSeries.length) {
+        return `<div style="${styleAttr(styles.chartEmpty)}">Click a location to load the range view.</div>`;
+    }
+
+    const palette = paletteOptions.find(p => p.name === w2.mapRangePalette) || paletteOptions[0];
+    const overlayColors = palette.colors.length > 2 ? palette.colors.slice(1).reverse() : [...palette.colors].reverse();
+    const seriesColors = overlayColors.length ? overlayColors : palette.colors;
+
+    const toggleButtons = w2.mapRangeSeries.map((entry, idx) => {
+        const color = seriesColors[idx % seriesColors.length];
+        const isHidden = w2.mapRangeHiddenScenarios.includes(entry.scenario);
+        const circleFill = isHidden ? "none" : color;
+        return `<button data-action="map-range-toggle-scenario-w2" data-scenario="${escapeHtml(entry.scenario)}"
+            style="display:flex;align-items:center;gap:5px;background:none;border:none;cursor:pointer;padding:2px 6px 2px 2px;color:var(--text-secondary);font-size:11px;border-radius:4px;opacity:${isHidden ? "0.45" : "1"};">
+            <svg width="10" height="10" style="flex-shrink:0;overflow:visible;">
+              <circle cx="5" cy="5" r="4" fill="${circleFill}" stroke="${color}" stroke-width="1.5"/>
+            </svg>
+            <span>${escapeHtml(entry.scenario)}</span>
+          </button>`;
+    }).join("");
+
+    return `<div style="${styleAttr(styles.mapRangeChartWrap)}">${renderChartRangeSvg(w2.mapRangeSeries, {
+        compact: true, unitLabel: unit, paletteName: w2.mapRangePalette,
+        lightToDarkNoDarkest: true, containerWidth: cw,
+        hiddenScenarios: w2.mapRangeHiddenScenarios,
+    })}</div><div style="display:flex;flex-wrap:wrap;gap:2px 6px;margin-top:4px;">${toggleButtons}</div>`;
+}
+
+function renderMapRangeOverlayW2(): string {
+    const w2 = state.window2;
+    if (w2.canvasView !== "map" || !w2.mapRangeOpen || !w2.mapMarker) return "";
+    const { variable } = getActiveMapVariableW2();
+    const variableLabel = getVariableLabel(variable, state.metaData);
+    const rightOffset = w2.sidebarOpen ? SIDEBAR_WIDTH : 0;
+    const paneWidth = window.innerWidth * (1 - state.splitRatio);
+    // position:absolute so it stays clipped inside pane-2
+    const overlayStyle = { ...styles.mapRangeOverlay, position: "absolute" as const, right: rightOffset };
+    return `
+      <div id="map-range-overlay-w2" style="${styleAttr(overlayStyle)}">
+        <div style="${styleAttr(styles.mapRangePanel)}">
+          <div style="${styleAttr(styles.mapRangeHeader)}">
+            <div style="${styleAttr(styles.mapRangeTitleGroup)}">
+              <div class="map-range-title-w2" style="${styleAttr(styles.mapRangeTitle)}">${escapeHtml(variableLabel)}</div>
+              <div style="display:flex;align-items:center;gap:5px;margin-top:5px;flex-wrap:wrap;">
+                <select data-action="map-range-preset-w2"
+                  style="background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.15);border-radius:6px;color:var(--text-primary);font-size:12px;padding:3px 6px;outline:none;cursor:pointer;">
+                  ${(["1month","1year","10years","full","custom"] as const).map(p => {
+                      const labels: Record<string,string> = {"1month":"1 Month","1year":"1 Year","10years":"10 Years","full":"Full Range","custom":"Custom"};
+                      return `<option value="${p}" ${w2.mapRangePreset===p?"selected":""}>${labels[p]}</option>`;
+                  }).join("")}
+                </select>
+                ${w2.mapRangePreset === "custom" ? `
+                <input type="date" data-action="map-range-date-start-w2" value="${w2.mapRangeStart}"
+                  min="1950-01-01" max="2099-12-31"
+                  style="color-scheme:dark;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.15);border-radius:6px;color:var(--text-primary);font-size:11.5px;padding:3px 5px;outline:none;"/>
+                <span style="color:var(--text-secondary);font-size:12px;">–</span>
+                <input type="date" data-action="map-range-date-end-w2" value="${w2.mapRangeEnd}"
+                  min="1950-01-02" max="2100-01-01"
+                  style="color-scheme:dark;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.15);border-radius:6px;color:var(--text-primary);font-size:11.5px;padding:3px 5px;outline:none;"/>
+                ` : ""}
+                <input type="number" data-action="map-range-num-samples-w2" value="${w2.mapRangeNumSamples}"
+                  min="2" max="3650" step="1" title="Number of data points"
+                  style="width:52px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.15);border-radius:6px;color:var(--text-primary);font-size:12px;padding:3px 5px;outline:none;text-align:center;"/>
+                <button type="button" data-action="map-range-apply-w2"
+                  style="padding:3px 9px;border-radius:6px;border:1px solid rgba(125,211,252,0.4);background:rgba(125,211,252,0.12);color:var(--text-primary);font-size:11.5px;font-weight:700;cursor:pointer;letter-spacing:0.2px;">Apply</button>
+              </div>
+            </div>
+            <div style="${styleAttr(styles.mapInfoActions)}">
+              <button type="button" data-action="toggle-map-info-w2"
+                aria-label="${w2.mapInfoOpen ? "Hide" : "Show"} boxplot panel" title="${w2.mapInfoOpen ? "Hide" : "Show"} boxplot panel"
+                style="${styleAttr({...styles.mapInfoActionBtn, color: w2.mapInfoOpen ? "var(--text-primary)" : "var(--text-secondary)", background: w2.mapInfoOpen ? "rgba(255,255,255,0.08)" : "transparent"})}"
+                onmouseover="this.style.color='var(--text-primary)';this.style.background='rgba(15,23,42,0.85)';"
+                onmouseout="this.style.color='${w2.mapInfoOpen ? "var(--text-primary)" : "var(--text-secondary)"}';">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="2" y="3" width="5" height="18" rx="1"/><rect x="9.5" y="8" width="5" height="13" rx="1"/><rect x="17" y="12" width="5" height="9" rx="1"/>
+                </svg>
+              </button>
+              <button type="button" data-action="close-map-range-w2" aria-label="Close range view"
+                style="${styleAttr(styles.mapInfoActionBtn)}"
+                onmouseover="this.style.color='var(--text-primary)';this.style.background='rgba(15,23,42,0.85)';"
+                onmouseout="this.style.color='var(--text-secondary)';this.style.background='transparent';">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M6 6l12 12M18 6l-12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+          <div class="map-range-body-w2" style="${styleAttr(styles.mapRangeBody)}">
+            ${renderMapRangeBodyW2(paneWidth - rightOffset)}
+          </div>
+        </div>
+      </div>
+    `;
+}
+
+function updateMapInfoPreviewW2(samples: ChartSample[]) {
+    const w2 = state.window2;
+    w2.mapInfoSamples = samples;
+    try {
+        const { variable, unit } = getActiveMapVariableW2();
+        w2.mapInfoBoxes = buildChartBoxes(samples, variable, unit);
+    } catch {
+        return;
+    }
+    if (!appRoot) { render(); return; }
+    const infoPanel = appRoot.querySelector<HTMLDivElement>("#map-info-panel-w2");
+    if (infoPanel) {
+        const bodyEl = infoPanel.querySelector<HTMLDivElement>(".map-info-body-w2");
+        if (bodyEl) { bodyEl.innerHTML = renderMapInfoBodyW2(); return; }
+    }
+    if (!w2.mapInfoOpen) return;
+    render();
+}
+
+function updateMapRangePreviewW2(samples: ChartSample[]) {
+    const w2 = state.window2;
+    const { variable, unit } = getActiveMapVariableW2();
+    w2.mapRangeSamples = samples;
+    try {
+        w2.mapRangeSeries = buildChartRangeSeries(samples, variable, unit);
+    } catch {
+        return;
+    }
+    if (!appRoot) { render(); return; }
+    const rangePanel = appRoot.querySelector<HTMLDivElement>("#map-range-overlay-w2");
+    if (rangePanel) {
+        const bodyEl = rangePanel.querySelector<HTMLDivElement>(".map-range-body-w2");
+        if (bodyEl) { bodyEl.innerHTML = renderMapRangeBodyW2(); return; }
+    }
+    if (!w2.mapRangeOpen) return;
+    render();
+}
+
+function applyRangeSamplesAsMapInfoW2(targetDate: string): boolean {
+    const w2 = state.window2;
+    if (!w2.mapRangeSamples.length) return false;
+    const targetMs = parseDate(targetDate).getTime();
+    const uniqueDates = Array.from(new Set(w2.mapRangeSamples.map(s => s.dateUsed)));
+    if (!uniqueDates.length) return false;
+    let closestDate = uniqueDates[0];
+    let closestDiff = Math.abs(parseDate(uniqueDates[0]).getTime() - targetMs);
+    for (const d of uniqueDates) {
+        const diff = Math.abs(parseDate(d).getTime() - targetMs);
+        if (diff < closestDiff) { closestDiff = diff; closestDate = d; }
+    }
+    const nearest = w2.mapRangeSamples.filter(s => s.dateUsed === closestDate);
+    if (!nearest.length) return false;
+    const stamped: ChartSample[] = nearest.map(s => ({ ...s, dateUsed: targetDate }));
+    updateMapInfoPreviewW2(stamped);
+    return true;
+}
+
+async function loadMapInfoDataW2() {
+    const w2 = state.window2;
+    if (!w2.mapMarker) {
+        w2.mapInfoLoading = false;
+        w2.mapInfoOpen = false;
+        render();
+        return;
+    }
+    const requestId = ++mapInfoRequestIdW2;
+    const { variable: mapVariable } = getActiveMapVariableW2();
+    w2.mapInfoLoading = true;
+    w2.mapInfoError = null;
+    w2.mapInfoSamples = [];
+    w2.mapInfoBoxes = null;
+    w2.mapInfoLoadingProgress = { total: 0, done: 0 };
+    render();
+
+    try {
+        const metaData = state.metaData ?? (await fetchMetadata());
+        if (!state.metaData) state.metaData = metaData;
+
+        const scenarioOptions = metaData?.scenarios?.length
+            ? Array.from(new Set(metaData.scenarios.map(normalizeScenarioLabel)))
+            : scenarios;
+        const matchingScenarios = scenarioOptions.filter(scenario =>
+            isDateWithinRange(w2.date, getTimeRangeForScenario(scenario)));
+        const activeScenarios = matchingScenarios.length
+            ? matchingScenarios.includes("Historical") ? ["Historical"] : matchingScenarios
+            : scenarioOptions;
+        const modelOptions = metaData?.models?.length ? metaData.models : models;
+
+        const totalRequests = activeScenarios.length * modelOptions.length;
+        w2.mapInfoLoadingProgress = { total: totalRequests, done: 0 };
+        render();
+
+        const samples: ChartSample[] = [];
+        const _marker = w2.mapMarker!;
+
+        for (const scenario of activeScenarios) {
+            if (requestId !== mapInfoRequestIdW2) return;
+            const dateForScenario = clipDateToRange(w2.date, getTimeRangeForScenario(scenario));
+            await Promise.allSettled(
+                modelOptions.map(async (model) => {
+                    if (requestId !== mapInfoRequestIdW2) return;
+                    try {
+                        const request = createDataRequest({ variable: mapVariable, date: dateForScenario, model, scenario, resolution: 1 });
+                        const data = await fetchClimateData(request);
+                        const arr = dataToArray(data);
+                        if (arr) {
+                            const avg = valueAtPoint(arr, mapVariable, data.shape, { lat: _marker.lat, lon: _marker.lon });
+                            samples.push({ scenario, model, rawValue: avg, dateUsed: dateForScenario });
+                        }
+                    } catch (error) {
+                        console.warn(`W2 map info request failed for model ${model}:`, error);
+                    }
+                    w2.mapInfoLoadingProgress = { total: totalRequests, done: w2.mapInfoLoadingProgress.done + 1 };
+                    updateMapInfoPreviewW2(samples);
+                }),
+            );
+        }
+
+        if (requestId !== mapInfoRequestIdW2) return;
+        w2.mapInfoLoading = false;
+        render();
+    } catch (error) {
+        if (requestId !== mapInfoRequestIdW2) return;
+        w2.mapInfoError = error instanceof Error ? error.message : "Failed to load map chart data.";
+        w2.mapInfoLoading = false;
+        w2.mapInfoLoadingProgress = { total: 0, done: 0 };
+        render();
+    }
+}
+
+async function loadMapRangeDataW2() {
+    const w2 = state.window2;
+    if (!w2.mapMarker) {
+        w2.mapRangeLoading = false;
+        w2.mapRangeOpen = false;
+        render();
+        return;
+    }
+
+    const requestId = ++mapRangeRequestIdW2;
+    const { variable: rangeVariable, unit: rangeUnit } = getActiveMapVariableW2();
+    const range = { start: w2.mapRangeStart, end: w2.mapRangeEnd };
+    w2.mapRangeLoading = true;
+    w2.mapRangeError = null;
+    w2.mapRangeSamples = [];
+    w2.mapRangeSeries = null;
+    w2.mapRangeLoadingProgress = { total: 0, done: 0 };
+    w2.mapRangeOpen = true;
+    render();
+
+    try {
+        const metaData = state.metaData ?? (await fetchMetadata());
+        if (!state.metaData) state.metaData = metaData;
+
+        const scenarioOptions = metaData?.scenarios?.length
+            ? Array.from(new Set(metaData.scenarios.map(normalizeScenarioLabel)))
+            : scenarios;
+        const modelOptions = metaData?.models?.length ? metaData.models : models;
+
+        const activeScenarios = (state.chartScenarios.length ? state.chartScenarios : scenarioOptions)
+            .filter(s => scenarioOptions.includes(s));
+        const activeModels = (state.chartModels.length ? state.chartModels : modelOptions)
+            .filter(m => modelOptions.includes(m));
+
+        if (!activeScenarios.length || !activeModels.length) {
+            w2.mapRangeError = "Select at least one scenario and one model.";
+            w2.mapRangeLoading = false;
+            w2.mapRangeLoadingProgress = { total: 0, done: 0 };
+            render();
+            return;
+        }
+
+        const useFixedAnnualSamples = shouldUseFixedAnnualSamples(range.start, range.end);
+        const fixedReferenceDate = range.start;
+        const spanDays = Math.max(1, Math.round(
+            (parseDate(range.end).getTime() - parseDate(range.start).getTime()) / (24 * 60 * 60 * 1000)
+        ));
+        const computedStepDays = Math.max(1, Math.round(spanDays / w2.mapRangeNumSamples));
+
+        const totalRequests = activeScenarios.length * activeModels.length;
+        w2.mapRangeLoadingProgress = { total: totalRequests, done: 0 };
+        render();
+
+        const samples: ChartSample[] = [];
+        let _done = 0;
+        const _marker = w2.mapMarker!;
+
+        await pLimit(
+            activeModels.flatMap(model =>
+                activeScenarios.map(scenario => async () => {
+                    if (requestId !== mapRangeRequestIdW2) return;
+                    try {
+                        const pointSamples = await loadRangePointSamples({
+                            variable: rangeVariable, model, scenario, point: _marker,
+                            rangeStart: range.start, rangeEnd: range.end,
+                            useFixedAnnualSamples, fixedReferenceDate, stepDays: computedStepDays,
+                        });
+                        samples.push(...pointSamples);
+                    } catch (err) {
+                        console.warn(`W2 map range failed for ${model}/${scenario}:`, err);
+                    } finally {
+                        _done++;
+                        w2.mapRangeLoadingProgress = { total: totalRequests, done: _done };
+                        updateMapRangePreviewW2(samples);
+                    }
+                })
+            ),
+            PARALLEL_REQUEST_LIMIT,
+        );
+
+        if (requestId !== mapRangeRequestIdW2) return;
+        w2.mapRangeSamples = samples;
+        w2.mapRangeSeries = buildChartRangeSeries(samples, rangeVariable, rangeUnit);
+        w2.mapRangeLoadingProgress = { total: totalRequests, done: totalRequests };
+    } catch (error) {
+        if (requestId !== mapRangeRequestIdW2) return;
+        w2.mapRangeError = error instanceof Error ? error.message : "Failed to load range data.";
+        w2.mapRangeSamples = [];
+        w2.mapRangeSeries = null;
+        w2.mapRangeLoadingProgress = { total: 0, done: 0 };
+    } finally {
+        if (requestId !== mapRangeRequestIdW2) return;
+        w2.mapRangeLoading = false;
+        render();
+    }
+}
+
+function scheduleMapInfoOpenW2(delayMs = 700) {
+    const w2 = state.window2;
+    if (mapInfoDelayTimerW2 !== null) {
+        window.clearTimeout(mapInfoDelayTimerW2);
+        mapInfoDelayTimerW2 = null;
+    }
+    const wasOpen = w2.mapInfoOpen;
+    w2.mapInfoOpen = false;
+    if (wasOpen && appRoot) {
+        const infoPanel = appRoot.querySelector<HTMLDivElement>("#map-info-panel-w2");
+        if (infoPanel) {
+            infoPanel.style.opacity = "0";
+            infoPanel.style.transform = "translate(-9999px, -9999px)";
+            infoPanel.style.pointerEvents = "none";
+            infoPanel.style.visibility = "hidden";
+        }
+    }
+    mapInfoDelayTimerW2 = window.setTimeout(() => {
+        mapInfoDelayTimerW2 = null;
+        if (!w2.mapMarker) return;
+        w2.mapInfoOpen = true;
+        render();
+        void loadMapInfoDataW2();
+    }, delayMs);
+}
+
+function closeMapInfoWindowW2() {
+    if (mapInfoDelayTimerW2 !== null) {
+        window.clearTimeout(mapInfoDelayTimerW2);
+        mapInfoDelayTimerW2 = null;
+    }
+    mapInfoRequestIdW2 += 1;
+    state.window2.mapInfoOpen = false;
+    state.window2.mapInfoLoading = false;
+    mapInfoSizeW2 = null;
+    mapInfoNaturalSizeW2 = null;
+    render();
+}
+
+function openMapRangeOverlayW2(delayMs = 560) {
+    const w2 = state.window2;
+    if (!w2.mapMarker) return;
+    if (mapRangeDelayTimerW2 !== null) {
+        window.clearTimeout(mapRangeDelayTimerW2);
+        mapRangeDelayTimerW2 = null;
+    }
+    mapRangeDelayTimerW2 = window.setTimeout(() => {
+        mapRangeDelayTimerW2 = null;
+        if (!w2.mapMarker) return;
+        const range = buildMapRangeForPreset(w2.mapRangePreset, w2.date) ?? buildMapRangeWindow(w2.date);
+        w2.mapRangeStart = range.start;
+        w2.mapRangeEnd = range.end;
+        w2.mapRangeOpen = true;
+        render();
+        void loadMapRangeDataW2();
+    }, delayMs);
+}
+
+function closeMapRangeOverlayW2() {
+    if (mapRangeDelayTimerW2 !== null) {
+        window.clearTimeout(mapRangeDelayTimerW2);
+        mapRangeDelayTimerW2 = null;
+    }
+    mapRangeRequestIdW2 += 1;
+    const w2 = state.window2;
+    w2.mapRangeOpen = false;
+    w2.mapRangeLoading = false;
+    w2.mapRangeError = null;
+    w2.mapRangeSamples = [];
+    w2.mapRangeSeries = null;
+    w2.mapRangeLoadingProgress = { total: 0, done: 0 };
+    render();
+}
+
+function updateMapMarkerNameOnlyW2(placeName: string) {
+    const w2 = state.window2;
+    if (w2.mapMarker) w2.mapMarker.name = placeName;
+    if (!appRoot) return;
+    const marker = appRoot.querySelector<HTMLDivElement>("#map-location-marker-w2");
+    if (marker && w2.mapMarker) marker.title = placeName;
+    if (w2.mapInfoOpen && w2.mapMarker) {
+        const titleEl = appRoot.querySelector<HTMLDivElement>(".custom-select-info-panel-title-w2");
+        if (titleEl) {
+            const { variable } = getActiveMapVariableW2();
+            const variableLabel = getVariableLabel(variable, state.metaData);
+            titleEl.textContent = `${placeName} · ${variableLabel}`;
+        }
+    }
+    if (w2.mapRangeOpen && w2.mapMarker) {
+        const titleEl = appRoot.querySelector<HTMLDivElement>(".map-range-title-w2");
+        if (titleEl) {
+            const { variable } = getActiveMapVariableW2();
+            const variableLabel = getVariableLabel(variable, state.metaData);
+            titleEl.textContent = `${placeName} · ${variableLabel}`;
+        }
+    }
+}
+
+async function handleMapClickW2(coords: LatLon) {
+    const w2 = state.window2;
+    if (w2.canvasView !== "map") return;
+    if (w2.drawState.active) return;
+
+    w2.mapPolygon = null;
+    setMapMarkerW2(coords.lat, coords.lon, null);
+
+    const canvas2 = appRoot?.querySelector<HTMLCanvasElement>("#map-canvas-2");
+    if (canvas2) {
+        renderMapMarkerPositionW2();
+    }
+    scheduleMapInfoOpenW2();
+    openMapRangeOverlayW2();
+
+    try {
+        const placeName = await fetchReverseGeocode(coords.lat, coords.lon);
+        if (placeName) updateMapMarkerNameOnlyW2(placeName);
+    } catch (error) {
+        console.error("W2: Failed to fetch reverse geocode:", error);
+    }
+}
+
+function attachW2MapInfoAndRangeHandlers(root: HTMLElement) {
+    // Close map info
+    root.querySelector<HTMLButtonElement>('[data-action="close-map-info-w2"]')
+        ?.addEventListener("click", (e) => { e.preventDefault(); closeMapInfoWindowW2(); });
+
+    // Toggle map info (barchart panel) from within range overlay
+    root.querySelector<HTMLButtonElement>('[data-action="toggle-map-info-w2"]')
+        ?.addEventListener("click", (e) => {
+            e.preventDefault();
+            const w2 = state.window2;
+            if (w2.mapInfoOpen) {
+                closeMapInfoWindowW2();
+            } else {
+                w2.mapInfoOpen = true;
+                if (!applyRangeSamplesAsMapInfoW2(w2.date)) void loadMapInfoDataW2();
+                render();
+            }
+        });
+
+    // Close range overlay
+    root.querySelector<HTMLButtonElement>('[data-action="close-map-range-w2"]')
+        ?.addEventListener("click", (e) => { e.preventDefault(); closeMapRangeOverlayW2(); });
+
+    // Range preset select
+    const rangePresetSelect = root.querySelector<HTMLSelectElement>('[data-action="map-range-preset-w2"]');
+    rangePresetSelect?.addEventListener("change", () => {
+        const w2 = state.window2;
+        const preset = rangePresetSelect.value as Window2State["mapRangePreset"];
+        w2.mapRangePreset = preset;
+        if (preset !== "custom") {
+            const range = buildMapRangeForPreset(preset, w2.date);
+            if (range) { w2.mapRangeStart = range.start; w2.mapRangeEnd = range.end; void loadMapRangeDataW2(); }
+        } else {
+            render();
+        }
+    });
+
+    // Apply button
+    root.querySelector<HTMLButtonElement>('[data-action="map-range-apply-w2"]')
+        ?.addEventListener("click", () => {
+            const w2 = state.window2;
+            const samplesInput = root.querySelector<HTMLInputElement>('[data-action="map-range-num-samples-w2"]');
+            if (samplesInput) {
+                const n = parseInt(samplesInput.value, 10);
+                if (!isNaN(n) && n >= 2) w2.mapRangeNumSamples = n;
+            }
+            if (w2.mapRangePreset === "custom") {
+                const startInput = root.querySelector<HTMLInputElement>('[data-action="map-range-date-start-w2"]');
+                const endInput   = root.querySelector<HTMLInputElement>('[data-action="map-range-date-end-w2"]');
+                if (startInput?.value) w2.mapRangeStart = startInput.value;
+                if (endInput?.value)   w2.mapRangeEnd   = endInput.value;
+            }
+            void loadMapRangeDataW2();
+        });
+
+    // Toggle individual scenario visibility — use event delegation so it survives body re-renders
+    const rangeOverlayW2El = root.querySelector<HTMLElement>("#map-range-overlay-w2");
+    rangeOverlayW2El?.addEventListener("click", (e) => {
+        const btn = (e.target as Element).closest<HTMLButtonElement>('[data-action="map-range-toggle-scenario-w2"]');
+        if (!btn) return;
+        const scenario = btn.dataset.scenario;
+        if (!scenario) return;
+        const w2 = state.window2;
+        const idx = w2.mapRangeHiddenScenarios.indexOf(scenario);
+        if (idx >= 0) {
+            w2.mapRangeHiddenScenarios = w2.mapRangeHiddenScenarios.filter(s => s !== scenario);
+        } else {
+            w2.mapRangeHiddenScenarios = [...w2.mapRangeHiddenScenarios, scenario];
+        }
+        const bodyEl = rangeOverlayW2El.querySelector<HTMLElement>(".map-range-body-w2");
+        if (bodyEl) bodyEl.innerHTML = renderMapRangeBodyW2();
+    });
+
+    // Drag-to-move info panel
+    const mapInfoPanel = root.querySelector<HTMLElement>("#map-info-panel-w2");
+    const mapInfoHeader = root.querySelector<HTMLElement>(".map-info-header-w2");
+    if (mapInfoPanel && mapInfoHeader) {
+        mapInfoHeader.style.cursor = "grab";
+        const onDragMove = (e: PointerEvent) => {
+            if (!mapInfoDragStateW2.active) return;
+            if (mapInfoDragStateW2.pointerId !== null && e.pointerId !== mapInfoDragStateW2.pointerId) return;
+            e.preventDefault();
+            const left = e.clientX - (mapInfoPanel.offsetParent as HTMLElement | null ?? document.body).getBoundingClientRect().left - mapInfoDragStateW2.offsetX;
+            const top  = e.clientY - (mapInfoPanel.offsetParent as HTMLElement | null ?? document.body).getBoundingClientRect().top  - mapInfoDragStateW2.offsetY;
+            mapInfoPanel.style.left = `${left}px`;
+            mapInfoPanel.style.top  = `${top}px`;
+            mapInfoDragPositionW2 = { left, top };
+        };
+        const onDragEnd = (e: PointerEvent) => {
+            if (!mapInfoDragStateW2.active) return;
+            if (mapInfoDragStateW2.pointerId !== null && e.pointerId !== mapInfoDragStateW2.pointerId) return;
+            mapInfoDragStateW2.active = false;
+            mapInfoDragStateW2.pointerId = null;
+            mapInfoHeader.style.cursor = "grab";
+            mapInfoPanel.releasePointerCapture?.(e.pointerId);
+            document.body.style.userSelect = "";
+            window.removeEventListener("pointermove", onDragMove);
+            window.removeEventListener("pointerup", onDragEnd);
+        };
+        mapInfoHeader.addEventListener("pointerdown", (e) => {
+            if (e.button !== 0) return;
+            const target = e.target as HTMLElement | null;
+            if (target?.closest("button, .custom-select-wrapper")) return;
+            e.preventDefault(); e.stopPropagation();
+            const panelRect = mapInfoPanel.getBoundingClientRect();
+            mapInfoDragStateW2.active   = true;
+            mapInfoDragStateW2.pointerId = e.pointerId;
+            mapInfoDragStateW2.offsetX  = e.clientX - panelRect.left;
+            mapInfoDragStateW2.offsetY  = e.clientY - panelRect.top;
+            mapInfoHeader.style.cursor  = "grabbing";
+            mapInfoPanel.setPointerCapture?.(e.pointerId);
+            document.body.style.userSelect = "none";
+            window.addEventListener("pointermove", onDragMove);
+            window.addEventListener("pointerup", onDragEnd);
+        });
+    }
+
+    // Resize handle
+    const resizeHandle = root.querySelector<HTMLElement>("#map-info-panel-w2 .map-info-resize-handle-w2");
+    if (mapInfoPanel && resizeHandle) {
+        const onResizeMove = (e: PointerEvent) => {
+            if (!mapInfoResizeStateW2.active) return;
+            if (mapInfoResizeStateW2.pointerId !== null && e.pointerId !== mapInfoResizeStateW2.pointerId) return;
+            e.preventDefault();
+            const dx = e.clientX - mapInfoResizeStateW2.startX;
+            const dy = e.clientY - mapInfoResizeStateW2.startY;
+            const minW = mapInfoNaturalSizeW2?.width ?? mapInfoResizeStateW2.startWidth;
+            const minH = mapInfoNaturalSizeW2?.height ?? mapInfoResizeStateW2.startHeight;
+            const newW = Math.max(minW, Math.min(Math.round(window.innerWidth * 0.85), mapInfoResizeStateW2.startWidth + dx));
+            const newH = Math.max(minH, Math.min(Math.round(window.innerHeight * 0.85), mapInfoResizeStateW2.startHeight + dy));
+            mapInfoSizeW2 = { width: newW, height: newH };
+            mapInfoPanel.style.width = `${newW}px`; mapInfoPanel.style.maxWidth = "none"; mapInfoPanel.style.height = `${newH}px`;
+        };
+        const onResizeEnd = (e: PointerEvent) => {
+            if (!mapInfoResizeStateW2.active) return;
+            if (mapInfoResizeStateW2.pointerId !== null && e.pointerId !== mapInfoResizeStateW2.pointerId) return;
+            mapInfoResizeStateW2.active = false; mapInfoResizeStateW2.pointerId = null;
+            resizeHandle.style.opacity = "0.4"; mapInfoPanel.releasePointerCapture?.(e.pointerId);
+            document.body.style.userSelect = "";
+            window.removeEventListener("pointermove", onResizeMove);
+            window.removeEventListener("pointerup", onResizeEnd);
+        };
+        resizeHandle.addEventListener("pointerdown", (e) => {
+            if (e.button !== 0) return;
+            e.preventDefault(); e.stopPropagation();
+            const panelRect = mapInfoPanel.getBoundingClientRect();
+            const sw = panelRect.width  || mapInfoSizeW2?.width  || 360;
+            const sh = panelRect.height || mapInfoSizeW2?.height || 300;
+            if (!mapInfoNaturalSizeW2 && !mapInfoSizeW2) mapInfoNaturalSizeW2 = { width: sw, height: sh };
+            mapInfoResizeStateW2.active = true; mapInfoResizeStateW2.pointerId = e.pointerId;
+            mapInfoResizeStateW2.startX = e.clientX; mapInfoResizeStateW2.startY = e.clientY;
+            mapInfoResizeStateW2.startWidth = sw; mapInfoResizeStateW2.startHeight = sh;
+            resizeHandle.style.opacity = "0.9"; mapInfoPanel.setPointerCapture?.(e.pointerId);
+            document.body.style.userSelect = "none";
+            window.addEventListener("pointermove", onResizeMove);
+            window.addEventListener("pointerup", onResizeEnd);
+        });
+        resizeHandle.addEventListener("mouseover", () => { if (!mapInfoResizeStateW2.active) resizeHandle.style.opacity = "0.8"; });
+        resizeHandle.addEventListener("mouseout",  () => { if (!mapInfoResizeStateW2.active) resizeHandle.style.opacity = "0.4"; });
     }
 }
 
@@ -7682,7 +8599,10 @@ async function loadClimateDataWindow2() {
                 isEnsemble ? w2.ensembleStatisticsByVariable : undefined,
                 isEnsemble ? w2.ensembleRawSamplesByVariable : undefined,
             );
-            setupWindow2Interactions(persistentCanvas2, displayUnit ?? "");
+            setupWindow2Interactions(persistentCanvas2, displayUnit ?? "", {
+                onMapClick: (coords) => void handleMapClickW2(coords),
+                onTransform: renderMapMarkerPositionW2,
+            });
         }
     } catch (err) {
         if (requestId !== window2DataRequestId) return;
@@ -7744,6 +8664,9 @@ function renderWindow2Pane(vpW: number, vpH: number): string {
                 <canvas id="map-canvas-2" style="${canvasStyle}"></canvas>
                 ${renderMapSearchBar(2)}
                 ${loadingHtml}${errorHtml}${noDataHtml}
+                ${renderMapMarkerOverlayW2()}
+                ${renderMapInfoWindowW2()}
+                ${renderMapRangeOverlayW2()}
                 <div style="position:absolute;top:12px;right:12px;z-index:15;pointer-events:auto;">
                     <button type="button" data-action="close-split-view" aria-label="Close second window" title="Close second window"
                         style="display:flex;align-items:center;justify-content:center;width:28px;height:28px;padding:0;border:1px solid rgba(148,163,184,0.3);border-radius:6px;background:rgba(239,68,68,0.12);color:#f87171;cursor:pointer;">
@@ -7816,6 +8739,16 @@ function setupSplitDivider() {
                 const body = rangeOverlay.querySelector<HTMLElement>('.map-range-body');
                 if (body) body.innerHTML = renderMapRangeBody(window.innerWidth * ratio - rightOffset);
             }
+            // Live-resize range overlay body to match pane-2 width
+            const rangeOverlayW2 = pane2.querySelector<HTMLElement>('#map-range-overlay-w2');
+            if (rangeOverlayW2) {
+                const w2RightOffset = state.window2.sidebarOpen ? SIDEBAR_WIDTH : 0;
+                const bodyW2 = rangeOverlayW2.querySelector<HTMLElement>('.map-range-body-w2');
+                if (bodyW2) bodyW2.innerHTML = renderMapRangeBodyW2(window.innerWidth * (1 - ratio) - w2RightOffset);
+            }
+            // Reposition markers as pane bounds change
+            renderMapMarkerPosition();
+            renderMapMarkerPositionW2();
         };
 
         const onUp = (ev: MouseEvent) => {
@@ -8395,7 +9328,10 @@ function render() {
         }
         // Wire D3 zoom only once (keeps same listener across re-renders).
         if (isNew) {
-            setupWindow2Interactions(persistentCanvas2, state.window2.selectedUnit ?? "");
+            setupWindow2Interactions(persistentCanvas2, state.window2.selectedUnit ?? "", {
+                onMapClick: (coords) => void handleMapClickW2(coords),
+                onTransform: renderMapMarkerPositionW2,
+            });
         }
         // Redraw from cache if data is already loaded (e.g. sidebar toggle).
         if (isW2CacheReady()) {
@@ -12307,7 +13243,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             const scale = state.sidebarOpen ? 1 : 0.9;
             applyChartLayoutOffset(right + 8, scale);
             updateMapSearchPosition();
-            // Shift the range overlay to fill or vacate sidebar space
+            // Shift the W1 range overlay to fill or vacate sidebar space
             const rangeOverlay = appRoot?.querySelector<HTMLElement>('#map-range-overlay');
             if (rangeOverlay) {
                 const newRight = state.sidebarOpen ? SIDEBAR_WIDTH : 0;
@@ -12323,6 +13259,22 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                     const pw = state.splitView ? window.innerWidth * state.splitRatio : window.innerWidth;
                     if (b) b.innerHTML = renderMapRangeBody(pw - (state.sidebarOpen ? SIDEBAR_WIDTH : 0));
                 }, 240);
+            }
+            // Shift the W2 range overlay when W2 sidebar changes
+            if (state.splitView) {
+                const rangeOverlayW2 = appRoot?.querySelector<HTMLElement>('#map-range-overlay-w2');
+                if (rangeOverlayW2) {
+                    const w2NewRight = state.window2.sidebarOpen ? SIDEBAR_WIDTH : 0;
+                    rangeOverlayW2.style.right = `${w2NewRight}px`;
+                    const pane2Width = window.innerWidth * (1 - state.splitRatio);
+                    const w2ContainerWidth = pane2Width - w2NewRight;
+                    const bodyW2 = rangeOverlayW2.querySelector<HTMLElement>('.map-range-body-w2');
+                    if (bodyW2) bodyW2.innerHTML = renderMapRangeBodyW2(w2ContainerWidth);
+                    setTimeout(() => {
+                        const b2 = rangeOverlayW2.querySelector<HTMLElement>('.map-range-body-w2');
+                        if (b2) b2.innerHTML = renderMapRangeBodyW2(window.innerWidth * (1 - state.splitRatio) - (state.window2.sidebarOpen ? SIDEBAR_WIDTH : 0));
+                    }, 240);
+                }
             }
         },
     });
@@ -13432,7 +14384,10 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                         w2IsEnsemble ? state.window2.ensembleStatisticsByVariable : undefined,
                         w2IsEnsemble ? state.window2.ensembleRawSamplesByVariable : undefined,
                     );
-                    setupWindow2Interactions(persistentCanvas2, w2DisplayUnit ?? "");
+                    setupWindow2Interactions(persistentCanvas2, w2DisplayUnit ?? "", {
+                        onMapClick: (coords) => void handleMapClickW2(coords),
+                        onTransform: renderMapMarkerPositionW2,
+                    });
                 }
                 return;
             case "compareMode":
@@ -15121,6 +16076,13 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         });
     }
 
+    // ── Window-2 map info / range overlay event handlers ──────────────────────
+    if (state.splitView) {
+        attachW2MapInfoAndRangeHandlers(root);
+        // Position the w2 marker after DOM is ready
+        setTimeout(() => renderMapMarkerPositionW2(), 0);
+    }
+
     const mapDrawToggleBtn = root.querySelector<HTMLButtonElement>(
         '[data-action="toggle-map-draw"]',
     );
@@ -15575,7 +16537,11 @@ async function init() {
         const now = Date.now();
         if (now - rangeHoverThrottle > 16) {
             rangeHoverThrottle = now;
-            applyRangeSamplesAsMapInfo(dateStr);
+            if (svgEl.closest('#map-range-overlay-w2')) {
+                applyRangeSamplesAsMapInfoW2(dateStr);
+            } else {
+                applyRangeSamplesAsMapInfo(dateStr);
+            }
         }
     });
 
@@ -15584,7 +16550,11 @@ async function init() {
         if (target?.id === 'map-range-svg') {
             (target as SVGSVGElement).querySelector<SVGGElement>('.mrh')?.setAttribute('opacity', '0');
             // Restore info panel to the actual selected date
-            applyRangeSamplesAsMapInfo(state.date);
+            if (target.closest('#map-range-overlay-w2')) {
+                applyRangeSamplesAsMapInfoW2(state.window2.date);
+            } else {
+                applyRangeSamplesAsMapInfo(state.date);
+            }
         }
     }, true);
 

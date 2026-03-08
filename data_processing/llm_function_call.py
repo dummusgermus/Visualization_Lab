@@ -19,6 +19,7 @@ FUNCTION_REGISTRY: Dict[str, callable] = {
     "switch_to_chart_view": ui_state_updater.switch_to_chart_view,
     "switch_to_ensemble_mode": ui_state_updater.switch_to_ensemble_mode,
     "toggle_split_view": ui_state_updater.toggle_split_view,
+    "set_map_location": ui_state_updater.set_map_location,
 }
 
 
@@ -126,8 +127,13 @@ def execute_function_calls(tool_calls: list, current_state: dict) -> tuple[dict,
             # Call the function from ui_state_updater
             result = func(**arguments)
             print(f"Result from {func_name}: {result}")
-            # Merge the result into updated state
-            updated_state.update(result)
+            # Deep-merge 'window2' so multiple function calls don't overwrite each other's W2 fields
+            if "window2" in result and isinstance(result.get("window2"), dict) and isinstance(updated_state.get("window2"), dict):
+                merged_w2 = {**updated_state["window2"], **result["window2"]}
+                updated_state.update({k: v for k, v in result.items() if k != "window2"})
+                updated_state["window2"] = merged_w2
+            else:
+                updated_state.update(result)
             
         except (ValueError, utils.ParameterValidationError) as e:
             error_msg = str(e)
@@ -181,6 +187,7 @@ def _build_system_prompt(context: Optional[dict] = None) -> str:
         "- color_palette (viridis/thermal/magma/cividis)",
         "- applying or changing value masks",
         "- probability/likelihood/uncertainty queries",
+        "- opening a range/time-series panel for a location ON THE MAP (set_map_location)",
         "If the request can be answered without changing any of those, explain using the context only.",
         "If you're explaining, pay attention to the variable, model, scenario, date, location and values such as min/max/average shown.",
         "If the 'canvasView' is 'chart', pay attention to the chart mode (single/range) and if a state variable has 'chart' as prefix, ignore similar ones without the prefix. IGNORE 'mode'.",
@@ -188,8 +195,10 @@ def _build_system_prompt(context: Optional[dict] = None) -> str:
         "",
         "== VIEW SELECTION RULES (when tools ARE needed) ==",
         "Use exactly ONE view switch tool per request:",
-        "- If a specific LOCATION is mentioned -> switch_to_chart_view",
-        "- If a TIME RANGE is requested (from X to Y) and no map is needed -> switch_to_chart_view(chart_mode='range')",
+        "- If the user wants a FULL CHART VIEW for a location (canvasView switches to 'Chart') -> switch_to_chart_view. Use when: 'show chart', 'chart view', 'plot for <city>', 'timeseries for <city>'. This CHANGES the entire canvas to chart mode.",
+        "- If a TIME RANGE is requested (from X to Y) and chart/plot view is needed (not just a map overlay) -> switch_to_chart_view(chart_mode='range').",
+        "- If the user is in MAP VIEW and mentions a city/location they want to SELECT on the map (to see its info panel or range overlay WITHOUT leaving map view) -> set_map_location. Use when: 'show me Aachen', 'select Berlin', 'show the range/variation at Aachen', 'show data for Paris on the map'. If split view is active and the location should be set in both windows, use windows=[1,2].",
+        "- If the user wants a TIME RANGE panel for a location on the MAP -> set_map_location(show_range_view=True, range_start=..., range_end=...). This keeps the map view and adds a range chart overlay.",
         "- If the user asks about PROBABILITY, LIKELIHOOD, CHANCE, or HOW LIKELY a certain value is (e.g., 'where is there a 30% chance of temperatures above 30°C?') -> call switch_to_ensemble_mode and pass the masks DIRECTLY via the 'masks' parameter of that same call. Do NOT call update_masks separately for probability queries.",
         "- If multiple models or scenarios should be shown TOGETHER on the MAP (e.g., 'all models', 'all scenarios', 'average of models', 'model agreement') -> switch_to_ensemble_mode",
         "  * Use the 'statistic' parameter: 'mean' (default/average), 'std' (uncertainty/spread), 'median', 'iqr', 'percentile', 'extremes'.",
@@ -235,6 +244,10 @@ def _build_system_prompt(context: Optional[dict] = None) -> str:
         "User: 'What am I looking at?' -> explain only (no tools).",
         "User: 'Switch to tasmax' -> tool call update_variable(variable='tasmax') (+ view switch only if needed).",
         "User: 'Show 2050' -> tool call switch_to_explore_mode(date='2050-01-01', scenario='ssp245').",
+        "User: 'Show me Aachen / select Aachen' (in map view) -> set_map_location(location_name='Aachen', windows=[1]).",
+        "User: 'Show the yearly variation of temp/precip in Aachen (side by side)' -> toggle_split_view(enable=True, variable='pr') + update_variable(variable='tas') + set_map_location(location_name='Aachen', windows=[1,2], show_range_view=True).",
+        "User: 'Show a range view for Paris on the map' -> set_map_location(location_name='Paris', windows=[1], show_range_view=True).",
+        "User: 'In Berlin, show temperature from 2020 to 2050' (chart) -> switch_to_chart_view(location='Berlin', chart_mode='range', start_date='2020-01-01', end_date='2050-01-01', ...).",
         "User: 'Compare ssp245 vs ssp585 for 2050' -> tool call switch_to_compare_mode(compare_mode='Scenarios', scenario_a='ssp245', scenario_b='ssp585', date='2050-01-01').",
         "User: 'Show the difference between ssp245 and ssp585' -> switch_to_compare_mode (single difference map).",
         "User: 'Show ssp245 and ssp585 side by side' -> toggle_split_view(enable=True, scenario='ssp585') (two independent maps, NOT compare mode).",
@@ -662,7 +675,11 @@ def _get_state_control_functions(context: Optional[dict] = None) -> List[dict]:
             "type": "function",
             "function": {
                 "name": "update_color_palette",
-                "description": "Update the color palette used for visualization.",
+                "description": (
+                    "Update the color palette used for visualization. "
+                    "Use window=1 (default) for the main/Window 1 map, window=2 for Window 2 in split view. "
+                    "Call twice with different window values to set different palettes in each window."
+                ),
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -670,6 +687,11 @@ def _get_state_control_functions(context: Optional[dict] = None) -> List[dict]:
                             "type": "string",
                             "enum": ["viridis", "thermal", "magma", "cividis"],
                             "description": "The color palette to use",
+                        },
+                        "window": {
+                            "type": "integer",
+                            "enum": [1, 2],
+                            "description": "Which window to apply the palette to. 1 = main view (default), 2 = second window in split view."
                         }
                     },
                     "required": ["color_palette"]
@@ -958,6 +980,49 @@ def _get_state_control_functions(context: Optional[dict] = None) -> List[dict]:
                         }
                     },
                     "required": ["enable"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "set_map_location",
+                "description": (
+                    "Geocode a place name and set it as the selected location on the map, "
+                    "optionally opening the range view (time series chart) for that location. "
+                    "Use this when the user mentions a city, region, or place name and wants to "
+                    "see data at that location, e.g. 'show me Aachen', 'select Berlin', "
+                    "'show the range view for Paris', 'show yearly variation in Tokyo'. "
+                    "Can target Window 1, Window 2, or both. "
+                    "To show a range/time-series chart: set show_range_view=true and supply "
+                    "range_start/range_end dates."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "location_name": {
+                            "type": "string",
+                            "description": "The name of the city, region, or place to geocode and select."
+                        },
+                        "windows": {
+                            "type": "array",
+                            "items": {"type": "integer", "enum": [1, 2]},
+                            "description": "Which map windows to set the location in. Use [1] for Window 1 only, [2] for Window 2 only, [1,2] for both. Defaults to [1]."
+                        },
+                        "show_range_view": {
+                            "type": "boolean",
+                            "description": "Whether to open the time-series range chart overlay for the location. Defaults to true."
+                        },
+                        "range_start": {
+                            "type": "string",
+                            "description": "Start date for the range view in YYYY-MM-DD format. Omit unless the user explicitly requests a specific date range — the frontend will automatically use a sensible window around the current date."
+                        },
+                        "range_end": {
+                            "type": "string",
+                            "description": "End date for the range view in YYYY-MM-DD format. Omit unless the user explicitly requests a specific date range."
+                        }
+                    },
+                    "required": ["location_name"]
                 }
             }
         },

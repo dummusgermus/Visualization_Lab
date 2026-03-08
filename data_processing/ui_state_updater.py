@@ -1,5 +1,6 @@
 
 import ast
+import requests
 from enum import Enum
 
 import config
@@ -63,7 +64,14 @@ def update_color_palette(**kwargs) -> dict:
     color_palette = kwargs.get('color_palette')
     if not color_palette or color_palette in ('None', 'null', None):
         raise ValueError("Color palette is required")
-    
+
+    window = kwargs.get('window', 1)
+    if isinstance(window, str):
+        window = int(window) if window.isdigit() else 1
+
+    if window == 2:
+        return {"window2": {"colorPalette": color_palette}}
+
     return {
         "colorPalette": color_palette
     }
@@ -421,6 +429,13 @@ def toggle_split_view(**kwargs) -> dict:
         window2["model"] = model
     if variable is not None:
         window2["variable"] = variable
+        # Always reset the unit to the default for the new variable so the
+        # frontend doesn't show a unit that belongs to a different variable.
+        default_unit = config.VARIABLE_UNIT_MAP.get(variable)
+        if isinstance(default_unit, list) and default_unit:
+            window2["selectedUnit"] = default_unit[0]
+        elif isinstance(default_unit, str) and default_unit:
+            window2["selectedUnit"] = default_unit
     if date is not None:
         window2["date"] = date
 
@@ -438,3 +453,83 @@ def parseDateToYear(date_str: str) -> int:
         return year
     except Exception as e:
         raise ValueError(f"Invalid date format: {date_str}") from e
+
+
+def set_map_location(**kwargs) -> dict:
+    """
+    Geocode a place name and set it as the selected map location for Window 1 and/or Window 2.
+    Optionally opens the range view and sets custom date bounds.
+    """
+    location_name = kwargs.get("location_name")
+    windows = kwargs.get("windows", [1])  # list of window numbers: [1], [2], or [1, 2]
+    show_range_view = kwargs.get("show_range_view", True)
+    range_start = kwargs.get("range_start")
+    range_end = kwargs.get("range_end")
+
+    location_name = None if location_name in ("None", "null", None) else location_name
+    if not location_name:
+        raise ValueError("location_name is required")
+
+    # Normalise windows argument
+    if isinstance(windows, int):
+        windows = [windows]
+    if not windows:
+        windows = [1]
+
+    # Call Nominatim directly (same as the /geocode/search proxy endpoint)
+    try:
+        resp = requests.get(
+            "https://nominatim.openstreetmap.org/search",
+            params={"format": "json", "q": location_name, "limit": 1, "addressdetails": 1},
+            headers={"User-Agent": "VisualizationLab/1.0"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        results = resp.json()
+    except Exception as exc:
+        raise ValueError(f"Geocoding failed for '{location_name}': {exc}") from exc
+
+    if not results:
+        raise ValueError(f"Location not found: '{location_name}'")
+
+    first = results[0]
+    lat = float(first["lat"])
+    lon = float(first["lon"])
+    name = first.get("display_name", location_name)
+
+    # Compact display name: use city/town/village + country
+    addr = first.get("address", {})
+    city = (
+        addr.get("city")
+        or addr.get("town")
+        or addr.get("village")
+        or addr.get("municipality")
+        or addr.get("county")
+    )
+    country = addr.get("country")
+    if city and country:
+        name = f"{city}, {country}"
+    elif city:
+        name = city
+
+    marker = {"lat": lat, "lon": lon, "name": name, "pixel": {"x": 0, "y": 0}}
+
+    result: dict = {}
+
+    def _location_fields(include_range: bool) -> dict:
+        fields: dict = {"mapMarker": marker, "mapInfoOpen": True}
+        if include_range:
+            fields["mapRangeOpen"] = True
+            if range_start:
+                fields["mapRangeStart"] = range_start
+            if range_end:
+                fields["mapRangeEnd"] = range_end
+        return fields
+
+    if 1 in windows:
+        result.update(_location_fields(show_range_view))
+
+    if 2 in windows:
+        result["window2"] = _location_fields(show_range_view)
+
+    return result

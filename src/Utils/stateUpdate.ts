@@ -162,6 +162,23 @@ export function updateState(
         updates.splitView = newState.splitView;
     }
 
+    // Map location / range view (set by agent via set_map_location)
+    if (newState.mapMarker && typeof newState.mapMarker === "object") {
+        updates.mapMarker = newState.mapMarker;  // { lat, lon, name, pixel }
+    }
+    if (typeof newState.mapInfoOpen === "boolean") {
+        updates.mapInfoOpen = newState.mapInfoOpen;
+    }
+    if (typeof newState.mapRangeOpen === "boolean") {
+        updates.mapRangeOpen = newState.mapRangeOpen;
+    }
+    if (typeof newState.mapRangeStart === "string") {
+        updates.mapRangeStart = newState.mapRangeStart;
+    }
+    if (typeof newState.mapRangeEnd === "string") {
+        updates.mapRangeEnd = newState.mapRangeEnd;
+    }
+
     // Window 2 configuration (partial update – only override fields that were explicitly provided)
     if (newState.window2 && typeof newState.window2 === "object") {
         const w2 = newState.window2 as Record<string, unknown>;
@@ -175,11 +192,33 @@ export function updateState(
         if (typeof w2.variable === "string") {
             window2Updates.variable = w2.variable;
         }
+        if (typeof w2.selectedUnit === "string") {
+            window2Updates.selectedUnit = w2.selectedUnit;
+        }
         if (typeof w2.date === "string") {
             window2Updates.date = w2.date;
         }
         if (typeof w2.mode === "string") {
             window2Updates.mode = w2.mode;
+        }
+        if (typeof w2.colorPalette === "string") {
+            window2Updates.mapPalette = normalizeColorPalette(w2.colorPalette);
+        }
+        // Map location / range view for Window 2
+        if (w2.mapMarker && typeof w2.mapMarker === "object") {
+            window2Updates.mapMarker = w2.mapMarker;
+        }
+        if (typeof w2.mapInfoOpen === "boolean") {
+            window2Updates.mapInfoOpen = w2.mapInfoOpen;
+        }
+        if (typeof w2.mapRangeOpen === "boolean") {
+            window2Updates.mapRangeOpen = w2.mapRangeOpen;
+        }
+        if (typeof w2.mapRangeStart === "string") {
+            window2Updates.mapRangeStart = w2.mapRangeStart;
+        }
+        if (typeof w2.mapRangeEnd === "string") {
+            window2Updates.mapRangeEnd = w2.mapRangeEnd;
         }
         if (Object.keys(window2Updates).length > 0) {
             updates.window2 = window2Updates;

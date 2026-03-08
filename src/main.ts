@@ -3301,6 +3301,7 @@ function renderMapRangeBody(containerWidth?: number): string {
                           lightToDarkNoDarkest: true,
                           containerWidth: cw,
                           hiddenScenarios: state.mapRangeHiddenScenarios,
+                          currentDate: state.date,
                       },
                   )}</div>`
                 : `<div style="${styleAttr(
@@ -3357,6 +3358,7 @@ function renderMapRangeBody(containerWidth?: number): string {
             lightToDarkNoDarkest: true,
             containerWidth: cw,
             hiddenScenarios: state.mapRangeHiddenScenarios,
+            currentDate: state.date,
         },
     )}</div>
     <div style="display:flex;flex-wrap:wrap;gap:2px 4px;padding:4px 6px 2px 6px;">${toggleButtons}</div>`;
@@ -4658,6 +4660,7 @@ function renderMapRangeBodyW2(containerWidth?: number): string {
                 compact: true, unitLabel: unit, paletteName: w2.mapRangePalette,
                 lightToDarkNoDarkest: true, containerWidth: cw,
                 hiddenScenarios: w2.mapRangeHiddenScenarios,
+                currentDate: w2.date,
               })}</div>`
             : `<div style="${styleAttr(styles.chartEmpty)}">Loading range view...</div>`;
         return `
@@ -4698,6 +4701,7 @@ function renderMapRangeBodyW2(containerWidth?: number): string {
         compact: true, unitLabel: unit, paletteName: w2.mapRangePalette,
         lightToDarkNoDarkest: true, containerWidth: cw,
         hiddenScenarios: w2.mapRangeHiddenScenarios,
+        currentDate: w2.date,
     })}</div><div style="display:flex;flex-wrap:wrap;gap:2px 6px;margin-top:4px;">${toggleButtons}</div>`;
 }
 
@@ -9879,6 +9883,7 @@ function renderChartRangeSvg(
         lightToDarkNoDarkest?: boolean;
         containerWidth?: number;
         hiddenScenarios?: string[];
+        currentDate?: string;
     },
 ): string {
     if (!series.length) {
@@ -10108,18 +10113,19 @@ function renderChartRangeSvg(
             ${seriesMarkup}
             ${yLabel}
             ${compact ? (() => {
-                const selDate = parseDate(state.date);
+                const selDate = parseDate(options?.currentDate ?? state.date);
                 const selTs = selDate.getTime();
                 const inDomain = selTs >= domainStart.getTime() && selTs <= domainEnd.getTime();
                 const sx = inDomain ? Math.round(xScale(selDate) + margin.left) : -999;
                 const bgW = 74;
                 const bgX = Math.max(margin.left, Math.min(sx - bgW / 2, margin.left + plotWidth - bgW));
+                const displayDate = options?.currentDate ?? state.date;
                 return `
             ${inDomain ? `
             <g class="mrd" pointer-events="none">
               <line x1="${sx}" x2="${sx}" y1="${margin.top}" y2="${height - margin.bottom}" stroke="rgba(255,255,255,0.9)" stroke-width="1.5"/>
               <rect x="${bgX}" y="${margin.top - 20}" width="${bgW}" height="16" rx="3" fill="rgba(0,0,0,0.72)"/>
-              <text fill="rgba(255,255,255,0.9)" font-size="10" text-anchor="middle" x="${bgX + bgW / 2}" y="${margin.top - 7}">${state.date}</text>
+              <text fill="rgba(255,255,255,0.9)" font-size="10" text-anchor="middle" x="${bgX + bgW / 2}" y="${margin.top - 7}">${displayDate}</text>
             </g>
             ` : ""}
             <g class="mrh" opacity="0" pointer-events="none">
@@ -16311,6 +16317,11 @@ async function init() {
 
     // Register callback for state updates from chat/backend
     registerStateUpdateCallback((updates: Record<string, any>) => {
+        // Capture the raw window2 delta before merge (to detect which fields the agent actually set)
+        const w2Delta = updates.window2 && typeof updates.window2 === "object"
+            ? (updates.window2 as Record<string, any>)
+            : null;
+
         // Deep-merge window2 to avoid replacing existing fields (e.g. dataMin/dataMax) with undefined
         if (updates.window2 && typeof updates.window2 === "object") {
             updates = { ...updates, window2: { ...state.window2, ...updates.window2 } };
@@ -16369,6 +16380,41 @@ async function init() {
                 updates.chartRangeEnd)
         ) {
             loadChartData();
+        }
+
+        // When the agent sets a map location (via set_map_location tool), zoom and load data
+        if (updates.mapMarker && state.mapMarker) {
+            const canvas = mapCanvas || appRoot?.querySelector<HTMLCanvasElement>("#map-canvas");
+            if (canvas) {
+                const targetZoom = Math.max(getCurrentZoomLevel(), 3.2);
+                zoomToLocation(canvas, state.mapMarker.lon, state.mapMarker.lat, targetZoom);
+                renderMapMarkerPosition();
+            }
+            // If no explicit range dates were supplied, derive them from the current date + preset
+            if (state.mapRangeOpen && !updates.mapRangeStart) {
+                const range = buildMapRangeForPreset(state.mapRangePreset, state.date) ?? buildMapRangeWindow(state.date);
+                state.mapRangeStart = range.start;
+                state.mapRangeEnd = range.end;
+            }
+            if (state.mapInfoOpen) void loadMapInfoData();
+            if (state.mapRangeOpen) void loadMapRangeData();
+        }
+
+        // Agent set location for Window 2 (w2Delta tracks what the agent actually provided)
+        if (w2Delta?.mapMarker && state.window2.mapMarker) {
+            if (persistentCanvas2) {
+                zoomToLocationW2(persistentCanvas2, state.window2.mapMarker.lon, state.window2.mapMarker.lat, 3.2);
+                renderMapMarkerPositionW2();
+            }
+            // If no explicit range dates were supplied for W2, derive them from W2's current date
+            if (state.window2.mapRangeOpen && !w2Delta.mapRangeStart) {
+                const w2date = state.window2.date ?? state.date;
+                const range = buildMapRangeForPreset(state.window2.mapRangePreset ?? state.mapRangePreset, w2date) ?? buildMapRangeWindow(w2date);
+                state.window2.mapRangeStart = range.start;
+                state.window2.mapRangeEnd = range.end;
+            }
+            if (state.window2.mapInfoOpen) void loadMapInfoDataW2();
+            if (state.window2.mapRangeOpen) void loadMapRangeDataW2();
         }
     });
 

@@ -3278,7 +3278,7 @@ function renderMapRangeBody(containerWidth?: number): string {
     <div style="display:flex;flex-wrap:wrap;gap:2px 4px;padding:4px 6px 2px 6px;">${toggleButtons}</div>`;
 }
 
-function renderMapRangeOverlay() {
+function renderMapRangeOverlay(inPane = false) {
     if (
         state.canvasView !== "map" ||
         !state.mapRangeOpen ||
@@ -3291,11 +3291,14 @@ function renderMapRangeOverlay() {
     const variableLabel = getVariableLabel(variable, state.metaData);
     const title = `${variableLabel}`;
     const rightOffset = state.sidebarOpen ? SIDEBAR_WIDTH : 0;
+    // In split-view the overlay lives inside pane-1 (position:relative/overflow:hidden),
+    // so we use position:absolute to clip it to that pane and derive width from the pane.
+    const paneWidth = inPane ? window.innerWidth * state.splitRatio : window.innerWidth;
+    const overlayStyle = inPane
+        ? { ...styles.mapRangeOverlay, position: "absolute" as const, right: rightOffset }
+        : { ...styles.mapRangeOverlay, right: rightOffset };
     return `
-      <div id="map-range-overlay" style="${styleAttr({
-          ...styles.mapRangeOverlay,
-          right: rightOffset,
-      })}">
+      <div id="map-range-overlay" style="${styleAttr(overlayStyle)}">
         <div style="${styleAttr(styles.mapRangePanel)}">
           <div style="${styleAttr(styles.mapRangeHeader)}">
             <div style="${styleAttr(styles.mapRangeTitleGroup)}">
@@ -3379,7 +3382,7 @@ function renderMapRangeOverlay() {
             </div>
           </div>
           <div class="map-range-body" style="${styleAttr(styles.mapRangeBody)}">
-            ${renderMapRangeBody(window.innerWidth - rightOffset)}
+            ${renderMapRangeBody(paneWidth - rightOffset)}
           </div>
         </div>
       </div>
@@ -7806,6 +7809,13 @@ function setupSplitDivider() {
             if (w2Wrapper) {
                 w2Wrapper.style.left = `calc(${(ratio * 100).toFixed(2)}vw + 1rem)`;
             }
+            // Live-resize range overlay body to match pane-1 width
+            const rangeOverlay = pane1.querySelector<HTMLElement>('#map-range-overlay');
+            if (rangeOverlay) {
+                const rightOffset = state.sidebarOpen ? SIDEBAR_WIDTH : 0;
+                const body = rangeOverlay.querySelector<HTMLElement>('.map-range-body');
+                if (body) body.innerHTML = renderMapRangeBody(window.innerWidth * ratio - rightOffset);
+            }
         };
 
         const onUp = (ev: MouseEvent) => {
@@ -8052,6 +8062,7 @@ function render() {
                       </div>`
                         : ""
                 }
+                ${renderMapRangeOverlay(true)}
               </div>
               <aside data-role="sidebar" data-window="1" class="sidebar sidebar-in-pane" style="position:absolute;right:0;top:0;bottom:0;width:${SIDEBAR_WIDTH}px;transform:${state.sidebarOpen ? "translateX(0)" : `translateX(${SIDEBAR_WIDTH + 24}px)`};pointer-events:${state.sidebarOpen ? "auto" : "none"};" aria-hidden="${!state.sidebarOpen}">
                 <div class="sidebar-top">
@@ -8140,7 +8151,7 @@ function render() {
         }
       </div>
 
-      ${renderMapRangeOverlay()}
+      ${!state.splitView ? renderMapRangeOverlay() : ""}
 
       ${!state.splitView ? `
       <aside data-role="sidebar" class="sidebar" style="width: ${SIDEBAR_WIDTH}px; transform: ${
@@ -12303,12 +12314,14 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                 rangeOverlay.style.right = `${newRight}px`;
                 // Re-render chart body with updated container width,
                 // and once more after the CSS transition finishes (220ms)
-                const newContainerWidth = window.innerWidth - newRight;
+                const paneWidth = state.splitView ? window.innerWidth * state.splitRatio : window.innerWidth;
+                const newContainerWidth = paneWidth - newRight;
                 const body = rangeOverlay.querySelector<HTMLElement>('.map-range-body');
                 if (body) body.innerHTML = renderMapRangeBody(newContainerWidth);
                 setTimeout(() => {
                     const b = rangeOverlay.querySelector<HTMLElement>('.map-range-body');
-                    if (b) b.innerHTML = renderMapRangeBody(window.innerWidth - newRight);
+                    const pw = state.splitView ? window.innerWidth * state.splitRatio : window.innerWidth;
+                    if (b) b.innerHTML = renderMapRangeBody(pw - (state.sidebarOpen ? SIDEBAR_WIDTH : 0));
                 }, 240);
             }
         },

@@ -1747,6 +1747,14 @@ let climateDataRequestId = 0;
 // return different grid shapes from OpenVisus).
 let _ensembleStatsCachedResolution: number | null = null;
 let _w2EnsembleStatsCachedResolution: number | null = null;
+type EnsembleStatsCacheKey = {
+    date: string;
+    scenariosKey: string;
+    modelsKey: string;
+    resolution: number;
+};
+let _ensembleStatsCachedKey: EnsembleStatsCacheKey | null = null;
+let _w2EnsembleStatsCachedKey: EnsembleStatsCacheKey | null = null;
 let mapInfoDragPosition: { left: number; top: number } | null = null;
 let mapInfoDragState: {
     active: boolean;
@@ -6000,6 +6008,15 @@ async function loadEnsembleData(
         state.ensembleDate = ensembleDate;
     }
 
+    const scenariosKey = activeScenarios.slice().sort().join("|");
+    const modelsKey = activeModels.slice().sort().join("|");
+    const currentCacheKey: EnsembleStatsCacheKey = {
+        date: ensembleDate,
+        scenariosKey,
+        modelsKey,
+        resolution: state.resolution,
+    };
+
     // Determine which variable/statistic combinations are needed:
     // - always the currently displayed variable/statistic
     // - plus all mask variable/statistic pairs (for per-mask filtering)
@@ -6045,8 +6062,17 @@ async function loadEnsembleData(
         // ------------------------------------------------------------------
         const cachedRaw = state.ensembleRawSamplesByVariable.get(targetVariable);
         const cachedStats = state.ensembleStatisticsByVariable.get(targetVariable);
-        if (cachedRaw && cachedStats && [...neededStats].every((s) => cachedStats.has(s))
-            && _ensembleStatsCachedResolution === state.resolution) {
+        if (
+            cachedRaw &&
+            cachedStats &&
+            [...neededStats].every((s) => cachedStats.has(s)) &&
+            _ensembleStatsCachedResolution === state.resolution &&
+            _ensembleStatsCachedKey &&
+            _ensembleStatsCachedKey.date === currentCacheKey.date &&
+            _ensembleStatsCachedKey.scenariosKey === currentCacheKey.scenariosKey &&
+            _ensembleStatsCachedKey.modelsKey === currentCacheKey.modelsKey &&
+            _ensembleStatsCachedKey.resolution === currentCacheKey.resolution
+        ) {
             rawSamplesByVariable.set(targetVariable, cachedRaw);
             statsByVariable.set(targetVariable, cachedStats);
             rangesByVariable.set(
@@ -6245,6 +6271,7 @@ async function loadEnsembleData(
     state.ensembleStatisticRangesByVariable = rangesByVariable;
     state.ensembleRawSamplesByVariable = rawSamplesByVariable;
     _ensembleStatsCachedResolution = state.resolution;
+    _ensembleStatsCachedKey = currentCacheKey;
 
     // Sync unedited ensemble mask bounds to newly computed ranges
     if (state.masks.length > 0) {
@@ -6463,6 +6490,15 @@ async function loadEnsembleDataForWindow2(
         w2.ensembleDate = ensembleDate;
     }
 
+    const scenariosKey = activeScenarios.slice().sort().join("|");
+    const modelsKey = activeModels.slice().sort().join("|");
+    const currentCacheKey: EnsembleStatsCacheKey = {
+        date: ensembleDate,
+        scenariosKey,
+        modelsKey,
+        resolution: w2.resolution,
+    };
+
     const statsByVariable = new Map<string, Map<EnsembleStatistic, Float32Array>>();
     const rangesByVariable = new Map<
         string,
@@ -6501,8 +6537,17 @@ async function loadEnsembleDataForWindow2(
         // Fast path: reuse already-computed raw samples and statistics.
         const w2CachedRaw = w2.ensembleRawSamplesByVariable?.get(targetVariable);
         const w2CachedStats = w2.ensembleStatisticsByVariable?.get(targetVariable);
-        if (w2CachedRaw && w2CachedStats && [...neededStats].every((s) => w2CachedStats.has(s))
-            && _w2EnsembleStatsCachedResolution === w2.resolution) {
+        if (
+            w2CachedRaw &&
+            w2CachedStats &&
+            [...neededStats].every((s) => w2CachedStats.has(s)) &&
+            _w2EnsembleStatsCachedResolution === w2.resolution &&
+            _w2EnsembleStatsCachedKey &&
+            _w2EnsembleStatsCachedKey.date === currentCacheKey.date &&
+            _w2EnsembleStatsCachedKey.scenariosKey === currentCacheKey.scenariosKey &&
+            _w2EnsembleStatsCachedKey.modelsKey === currentCacheKey.modelsKey &&
+            _w2EnsembleStatsCachedKey.resolution === currentCacheKey.resolution
+        ) {
             rawSamplesByVariable.set(targetVariable, w2CachedRaw);
             statsByVariable.set(targetVariable, w2CachedStats);
             rangesByVariable.set(
@@ -6693,6 +6738,7 @@ async function loadEnsembleDataForWindow2(
     w2.ensembleStatisticRangesByVariable = rangesByVariable;
     w2.ensembleRawSamplesByVariable = rawSamplesByVariable;
     _w2EnsembleStatsCachedResolution = w2.resolution;
+    _w2EnsembleStatsCachedKey = currentCacheKey;
 
     if (w2.masks.length > 0) {
         for (const mask of w2.masks) {

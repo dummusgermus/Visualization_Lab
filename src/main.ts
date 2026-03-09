@@ -1,4 +1,4 @@
-import * as d3 from "d3";
+﻿import * as d3 from "d3";
 import {
     attachChatHandlers,
     type ChatMessage,
@@ -1235,6 +1235,19 @@ const styles: Record<string, Style> = {
     },
 };
 
+export type MaskArray = Array<{
+    id: number | null;
+    lowerBound: number | null;
+    upperBound: number | null;
+    lowerEdited: boolean;
+    upperEdited: boolean;
+    kind?: "binary" | "probability";
+    probabilityThreshold?: number; // Minimum probability (0-1) to show pixel — only for probability masks
+    statistic?: EnsembleStatistic; // Used in ensemble mode
+    variable?: string; // Variable for this mask (explore + ensemble)
+    unit?: string; // Unit for this mask (explore + ensemble)
+}>;
+
 export type AppState = {
     mode: Mode;
     panelTab: PanelTab;
@@ -1377,18 +1390,9 @@ export type AppState = {
     loadDialogOpenForWindow: "1" | "2" | null;
     loadTargetWindow: "1" | "2";
     saveConfigNameDraft: string;
-    masks: Array<{
-        id: number | null;
-        lowerBound: number | null;
-        upperBound: number | null;
-        lowerEdited: boolean;
-        upperEdited: boolean;
-        kind?: "binary" | "probability";
-        probabilityThreshold?: number; // Minimum probability (0-1) to show pixel — only for probability masks
-        statistic?: EnsembleStatistic; // Used in ensemble mode
-        variable?: string; // Variable for this mask (explore + ensemble)
-        unit?: string; // Unit for this mask (explore + ensemble)
-    }>;
+    exploreMasks: MaskArray;
+    compareMasks: MaskArray;
+    ensembleMasks: MaskArray;
     chartRequestId: number;
     splitView: boolean;
     splitRatio: number;
@@ -1444,7 +1448,9 @@ export type Window2State = {
     ensembleDate: string;
     ensembleVariable: string;
     ensembleUnit: string;
-    masks: AppState["masks"];
+    exploreMasks: MaskArray;
+    compareMasks: MaskArray;
+    ensembleMasks: MaskArray;
     maskVariableData: Map<string, ClimateData>;
     maskVariableRanges: Map<string, { min: number; max: number }>;
     ensembleStatistics: Map<EnsembleStatistic, Float32Array> | null;
@@ -1570,7 +1576,9 @@ const state: AppState = {
         addYearsToDate(getDateForScenario("SSP245"), 30),
         "SSP245",
     ),
-    masks: [],
+    exploreMasks: [],
+    compareMasks: [],
+    ensembleMasks: [],
     ensembleScenarios: ["SSP245", "SSP370", "SSP585"],
     ensembleModels: [...models],
     ensembleDropdown: { scenariosOpen: false, modelsOpen: false },
@@ -1673,7 +1681,9 @@ const state: AppState = {
         ensembleDate: getDateForScenario("SSP245"),
         ensembleVariable: variables[0],
         ensembleUnit: getDefaultUnitOption(variables[0]).label,
-        masks: [],
+        exploreMasks: [],
+        compareMasks: [],
+        ensembleMasks: [],
         maskVariableData: new Map<string, ClimateData>(),
         maskVariableRanges: new Map<string, { min: number; max: number }>(),
         ensembleStatistics: null,
@@ -2140,7 +2150,7 @@ function buildDescriptionSnapshotFromState(state: AppState): Record<string, any>
         date: state.date,
         selectedUnit: state.selectedUnit,
         mode: state.mode,
-        masks: state.masks,
+        masks: getModeMasks(state),
         mapShowBorders: state.mapShowBorders,
         mapShowCities: state.mapShowCities,
         mapPolygon: state.mapPolygon,
@@ -6037,8 +6047,8 @@ async function loadEnsembleData(
         requestedStatsByVariable.get(variable)!.add(stat);
     };
     addRequestedStat(state.ensembleVariable, state.ensembleStatistic);
-    if (state.masks && state.masks.length > 0) {
-        for (const mask of state.masks) {
+    if (getModeMasks(state) && getModeMasks(state).length > 0) {
+        for (const mask of getModeMasks(state)) {
             addRequestedStat(
                 mask.variable || state.ensembleVariable,
                 mask.statistic || "mean",
@@ -6274,8 +6284,8 @@ async function loadEnsembleData(
     _ensembleStatsCachedKey = currentCacheKey;
 
     // Sync unedited ensemble mask bounds to newly computed ranges
-    if (state.masks.length > 0) {
-        for (const mask of state.masks) {
+    if (getModeMasks(state).length > 0) {
+        for (const mask of getModeMasks(state)) {
             const maskStatistic = mask.statistic || "mean";
             const maskVariable = mask.variable || state.ensembleVariable;
             const maskUnit = mask.unit || state.ensembleUnit;
@@ -6516,8 +6526,8 @@ async function loadEnsembleDataForWindow2(
         requestedStatsByVariable.get(variable)!.add(stat);
     };
     addRequestedStat(w2.ensembleVariable, w2.ensembleStatistic);
-    if (w2.masks && w2.masks.length > 0) {
-        for (const mask of w2.masks) {
+    if (getModeMasks(w2) && getModeMasks(w2).length > 0) {
+        for (const mask of getModeMasks(w2)) {
             addRequestedStat(
                 mask.variable || w2.ensembleVariable,
                 mask.statistic || "mean",
@@ -6740,8 +6750,8 @@ async function loadEnsembleDataForWindow2(
     _w2EnsembleStatsCachedResolution = w2.resolution;
     _w2EnsembleStatsCachedKey = currentCacheKey;
 
-    if (w2.masks.length > 0) {
-        for (const mask of w2.masks) {
+    if (getModeMasks(w2).length > 0) {
+        for (const mask of getModeMasks(w2)) {
             const maskStatistic = mask.statistic || "mean";
             const maskVariable = mask.variable || w2.ensembleVariable;
             const maskUnit = mask.unit || w2.ensembleUnit;
@@ -8421,7 +8431,7 @@ async function loadClimateData() {
         state.dataMean = result.mean;
 
         // In Explore mode, load and cache data for all variables used in masks
-        if (state.mode === "Explore" && state.masks && state.masks.length > 0) {
+        if (state.mode === "Explore" && getModeMasks(state) && getModeMasks(state).length > 0) {
             const clippedDate = clipDateToScenarioRange(
                 state.date,
                 activeScenarioForRange,
@@ -8429,7 +8439,7 @@ async function loadClimateData() {
 
             // Collect unique variables from masks (excluding the current variable)
             const maskVariables = new Set<string>();
-            for (const mask of state.masks) {
+            for (const mask of getModeMasks(state)) {
                 if (mask.variable && mask.variable !== state.variable) {
                     maskVariables.add(mask.variable);
                 }
@@ -8635,12 +8645,12 @@ async function loadClimateDataWindow2() {
         // In Explore mode, load and cache data for all variables used in masks
         if (
             w2.mode === "Explore" &&
-            w2.masks &&
-            w2.masks.length > 0
+            getModeMasks(w2) &&
+            getModeMasks(w2).length > 0
         ) {
             const clippedDate = clipDateToScenarioRange(w2.date, activeScenarioForRange);
             const maskVariables = new Set<string>();
-            for (const mask of w2.masks) {
+            for (const mask of getModeMasks(w2)) {
                 if (mask.variable && mask.variable !== w2.variable) {
                     maskVariables.add(mask.variable);
                 }
@@ -8715,8 +8725,8 @@ async function loadClimateDataWindow2() {
                 state.window2.dataMax,
                 displayVariable,
                 displayUnit,
-                state.window2.masks && state.window2.masks.length > 0
-                    ? state.window2.masks
+                getModeMasks(state.window2) && getModeMasks(state.window2).length > 0
+                    ? getModeMasks(state.window2)
                     : undefined,
                 isEnsemble ? w2.ensembleStatistics ?? undefined : undefined,
                 isEnsemble,
@@ -8979,7 +8989,7 @@ function render() {
         state.panelTab === "Manual" ? "translateX(0%)" : "translateX(-50%)";
     const hasProbabilityMasks =
         state.mode === "Ensemble" &&
-        state.masks.some((mask) => mask.kind === "probability");
+        getModeMasks(state).some((mask) => mask.kind === "probability");
 
     root.innerHTML = `
     <div style="${styleAttr(styles.page)}">
@@ -9043,7 +9053,7 @@ function render() {
                       const w2 = state.window2;
                       const w2HasProbabilityMasks =
                           w2.mode === "Ensemble" &&
-                          w2.masks.some((mask) => mask.kind === "probability");
+                          getModeMasks(w2).some((mask) => mask.kind === "probability");
                       const w2Variable = w2HasProbabilityMasks
                           ? "probability"
                           : w2.mode === "Ensemble"
@@ -9407,7 +9417,7 @@ function render() {
                     state.mode === "Ensemble"
                         ? state.ensembleUnit
                         : state.selectedUnit,
-                    state.masks,
+                    getModeMasks(state),
                     state.mode === "Ensemble" ? state.ensembleStatistics : null,
                     state.mode === "Ensemble",
                     state.mode === "Explore"
@@ -10602,7 +10612,7 @@ function renderManualSection(params: {
     const dataWindowOpt = window === 2 ? ("2" as const) : undefined;
     const hasProbabilityMasks =
         s.mode === "Ensemble" &&
-        s.masks.some((mask) => mask.kind === "probability");
+        getModeMasks(s).some((mask) => mask.kind === "probability");
 
     const renderCollapsible = (
         label: string,
@@ -10822,31 +10832,31 @@ function renderManualSection(params: {
             })}">
               <div style="${styleAttr(styles.sectionTitle)}">Mask</div>
               ${
-                  state.masks.length > 0
+                  getModeMasks(s).length > 0
                       ? `
                       <div style="${styleAttr({
                           display: "flex",
                           flexDirection: "column",
                           gap: 8,
                       })}">
-                        ${state.masks
+                        ${getModeMasks(s)
                             .map((mask, index) => {
                                 const maskVar =
                                     mask.variable ||
-                                    (state.mode === "Ensemble"
-                                        ? state.ensembleVariable
-                                        : state.variable);
+                                    (s.mode === "Ensemble"
+                                        ? s.ensembleVariable
+                                        : s.variable);
                                 const maskUnit =
                                     mask.unit ||
-                                    (state.mode === "Ensemble"
-                                        ? state.ensembleUnit
+                                    (s.mode === "Ensemble"
+                                        ? s.ensembleUnit
                                         : getDefaultUnitOption(maskVar).label);
                                 const maskRange =
-                                    state.mode === "Explore"
+                                    s.mode === "Explore"
                                         ? getMaskRangeFor(maskVar, maskUnit)
                                         : null;
                                 const ensembleRange =
-                                    state.mode === "Ensemble"
+                                    s.mode === "Ensemble"
                                         ? mask.kind === "probability"
                                             ? getEnsembleProbabilityMaskRange(
                                                   maskVar,
@@ -10859,22 +10869,22 @@ function renderManualSection(params: {
                                               )
                                         : null;
                                 const lowerPlaceholder =
-                                    state.mode === "Ensemble"
+                                    s.mode === "Ensemble"
                                         ? (ensembleRange?.min ?? null)
                                         : (maskRange?.min ??
-                                          (maskVar === state.variable
-                                              ? state.dataMin
+                                          (maskVar === s.variable
+                                              ? s.dataMin
                                               : null));
                                 const upperPlaceholder =
-                                    state.mode === "Ensemble"
+                                    s.mode === "Ensemble"
                                         ? (ensembleRange?.max ?? null)
                                         : (maskRange?.max ??
-                                          (maskVar === state.variable
-                                              ? state.dataMax
+                                          (maskVar === s.variable
+                                              ? s.dataMax
                                               : null));
                                 return `
                           ${
-                              state.mode === "Ensemble"
+                              s.mode === "Ensemble"
                                   ? `
                                   <div style="${styleAttr({
                                       display: "flex",
@@ -10951,7 +10961,7 @@ function renderManualSection(params: {
                                     )}
                                   </div>
                                   `
-                                  : state.mode === "Explore"
+                                  : s.mode === "Explore"
                                     ? `
                                   <div style="${styleAttr({
                                       display: "flex",
@@ -10962,7 +10972,7 @@ function renderManualSection(params: {
                                     ${renderSelect(
                                         "maskVariable",
                                         variables,
-                                        mask.variable || state.variable,
+                                        mask.variable || s.variable,
                                         {
                                             dataKey: "maskVariable",
                                             infoType: "variable",
@@ -10974,11 +10984,11 @@ function renderManualSection(params: {
                                     ${renderSelect(
                                         "maskUnit",
                                         getUnitOptions(
-                                            mask.variable || state.variable,
+                                            mask.variable || s.variable,
                                         ).map((opt) => opt.label),
                                         mask.unit ||
                                             getDefaultUnitOption(
-                                                mask.variable || state.variable,
+                                                mask.variable || s.variable,
                                             ).label,
                                         {
                                             dataKey: "maskUnit",
@@ -11166,7 +11176,7 @@ function renderManualSection(params: {
                           + Add Mask
                         </button>
                         ${
-                            state.mode === "Ensemble"
+                            s.mode === "Ensemble"
                                 ? `
                         <button
                           type="button"
@@ -11218,7 +11228,7 @@ function renderManualSection(params: {
                         + Add Mask
                       </button>
                       ${
-                          state.mode === "Ensemble"
+                          s.mode === "Ensemble"
                               ? `
                       <button
                         type="button"
@@ -11394,7 +11404,7 @@ function renderManualSection(params: {
                 ${compareParameters.join("")}
                 ${renderField(
                     "Variable",
-                    renderSelect("variable", variables, state.variable, {
+                    renderSelect("variable", variables, s.variable, {
                         infoType: "variable",
                     }),
                 )}
@@ -11445,31 +11455,31 @@ function renderManualSection(params: {
                 })}">
                   <div style="${styleAttr(styles.sectionTitle)}">Mask</div>
                   ${
-                      state.masks.length > 0
+                      getModeMasks(s).length > 0
                           ? `
                           <div style="${styleAttr({
                               display: "flex",
                               flexDirection: "column",
                               gap: 8,
                           })}">
-                            ${state.masks
+                            ${getModeMasks(s)
                                 .map((mask, index) => {
                                     const maskVar =
                                         mask.variable ||
-                                        (state.mode === "Ensemble"
-                                            ? state.ensembleVariable
-                                            : state.variable);
+                                        (s.mode === "Ensemble"
+                                            ? s.ensembleVariable
+                                            : s.variable);
                                     const maskUnit =
                                         mask.unit ||
-                                        (state.mode === "Ensemble"
-                                            ? state.ensembleUnit
+                                        (s.mode === "Ensemble"
+                                            ? s.ensembleUnit
                                             : getDefaultUnitOption(maskVar).label);
                                     const maskRange =
-                                        state.mode === "Explore"
+                                        s.mode === "Explore"
                                             ? getMaskRangeFor(maskVar, maskUnit)
                                             : null;
                                     const ensembleRange =
-                                        state.mode === "Ensemble"
+                                        s.mode === "Ensemble"
                                             ? mask.kind === "probability"
                                                 ? getEnsembleProbabilityMaskRange(
                                                       maskVar,
@@ -11482,18 +11492,18 @@ function renderManualSection(params: {
                                                   )
                                             : null;
                                     const lowerPlaceholder =
-                                        state.mode === "Ensemble"
+                                        s.mode === "Ensemble"
                                             ? (ensembleRange?.min ?? null)
                                             : (maskRange?.min ??
-                                              (maskVar === state.variable
-                                                  ? state.dataMin
+                                              (maskVar === s.variable
+                                                  ? s.dataMin
                                                   : null));
                                     const upperPlaceholder =
-                                        state.mode === "Ensemble"
+                                        s.mode === "Ensemble"
                                             ? (ensembleRange?.max ?? null)
                                             : (maskRange?.max ??
-                                              (maskVar === state.variable
-                                                  ? state.dataMax
+                                              (maskVar === s.variable
+                                                  ? s.dataMax
                                                   : null));
                                     return `
                               <div style="${styleAttr({
@@ -11502,7 +11512,7 @@ function renderManualSection(params: {
                                   gap: 8,
                               })}">
                                 ${
-                                    state.mode === "Ensemble"
+                                    s.mode === "Ensemble"
                                         ? (mask.kind === "probability"
                                               ? ""
                                               : renderSelect(
@@ -11573,12 +11583,12 @@ function renderManualSection(params: {
                                               'class="custom-select-wrapper"',
                                               `class="custom-select-wrapper" data-mask-index="${index}" style="width: 120px;"`,
                                           )
-                                        : state.mode === "Explore"
+                                        : s.mode === "Explore"
                                           ? `
                                             ${renderSelect(
                                                 "maskVariable",
                                                 variables,
-                                                mask.variable || state.variable,
+                                                mask.variable || s.variable,
                                                 {
                                                     dataKey: "maskVariable",
                                                     infoType: "variable",
@@ -11591,12 +11601,12 @@ function renderManualSection(params: {
                                                 "maskUnit",
                                                 getUnitOptions(
                                                     mask.variable ||
-                                                        state.variable,
+                                                        s.variable,
                                                 ).map((opt) => opt.label),
                                                 mask.unit ||
                                                     getDefaultUnitOption(
                                                         mask.variable ||
-                                                            state.variable,
+                                                            s.variable,
                                                     ).label,
                                                 {
                                                     dataKey: "maskUnit",
@@ -11736,6 +11746,29 @@ function renderManualSection(params: {
                                 .join("")}
                             <button
                               type="button"
+                              data-action="apply-masks"
+                              style="${styleAttr({
+                                  padding: "10px 16px",
+                                  borderRadius: 10,
+                                  border: "1px solid var(--border-strong)",
+                                  background: "var(--gradient-primary)",
+                                  color: "white",
+                                  fontSize: 12.5,
+                                  fontWeight: 700,
+                                  cursor: "pointer",
+                                  transition: "all 0.15s ease",
+                                  textAlign: "center",
+                                  width: "100%",
+                                  marginTop: 8,
+                                  boxShadow: "var(--shadow-combined)",
+                              })}"
+                              onmouseover="this.style.borderColor='var(--accent-border-bright)'; this.style.boxShadow='var(--shadow-elevated)'"
+                              onmouseout="this.style.borderColor='var(--border-strong)'; this.style.boxShadow='var(--shadow-combined)'"
+                            >
+                              Apply Masks
+                            </button>
+                            <button
+                              type="button"
                               data-action="add-mask"
                               style="${styleAttr({
                                   padding: "8px 14px",
@@ -11757,7 +11790,7 @@ function renderManualSection(params: {
                               + Add Mask
                             </button>
                             ${
-                                state.mode === "Ensemble"
+                                s.mode === "Ensemble"
                                     ? `
                             <button
                               type="button"
@@ -11809,7 +11842,7 @@ function renderManualSection(params: {
                             + Add Mask
                           </button>
                           ${
-                              state.mode === "Ensemble"
+                              s.mode === "Ensemble"
                                   ? `
                           <button
                             type="button"
@@ -11872,7 +11905,7 @@ function renderManualSection(params: {
                   renderSelect(
                       "ensembleVariable",
                       variables,
-                      state.ensembleVariable,
+                      s.ensembleVariable,
                       {
                           dataKey: "ensembleVariable",
                           infoType: "variable",
@@ -12009,31 +12042,31 @@ function renderManualSection(params: {
             })}">
               <div style="${styleAttr(styles.sectionTitle)}">Mask</div>
               ${
-                  state.masks.length > 0
+                  getModeMasks(s).length > 0
                       ? `
                       <div style="${styleAttr({
                           display: "flex",
                           flexDirection: "column",
                           gap: 8,
                       })}">
-                        ${state.masks
+                        ${getModeMasks(s)
                             .map((mask, index) => {
                                 const maskVar =
                                     mask.variable ||
-                                    (state.mode === "Ensemble"
-                                        ? state.ensembleVariable
-                                        : state.variable);
+                                    (s.mode === "Ensemble"
+                                        ? s.ensembleVariable
+                                        : s.variable);
                                 const maskUnit =
                                     mask.unit ||
-                                    (state.mode === "Ensemble"
-                                        ? state.ensembleUnit
+                                    (s.mode === "Ensemble"
+                                        ? s.ensembleUnit
                                         : getDefaultUnitOption(maskVar).label);
                                 const maskRange =
-                                    state.mode === "Explore"
+                                    s.mode === "Explore"
                                         ? getMaskRangeFor(maskVar, maskUnit)
                                         : null;
                                 const ensembleRange =
-                                    state.mode === "Ensemble"
+                                    s.mode === "Ensemble"
                                         ? mask.kind === "probability"
                                             ? getEnsembleProbabilityMaskRange(
                                                   maskVar,
@@ -12046,22 +12079,22 @@ function renderManualSection(params: {
                                               )
                                         : null;
                                 const lowerPlaceholder =
-                                    state.mode === "Ensemble"
+                                    s.mode === "Ensemble"
                                         ? (ensembleRange?.min ?? null)
                                         : (maskRange?.min ??
-                                          (maskVar === state.variable
-                                              ? state.dataMin
+                                          (maskVar === s.variable
+                                              ? s.dataMin
                                               : null));
                                 const upperPlaceholder =
-                                    state.mode === "Ensemble"
+                                    s.mode === "Ensemble"
                                         ? (ensembleRange?.max ?? null)
                                         : (maskRange?.max ??
-                                          (maskVar === state.variable
-                                              ? state.dataMax
+                                          (maskVar === s.variable
+                                              ? s.dataMax
                                               : null));
                                 return `
                           ${
-                              state.mode === "Ensemble"
+                              s.mode === "Ensemble"
                                   ? `
                                   <div style="${styleAttr({
                                       display: "flex",
@@ -12138,7 +12171,7 @@ function renderManualSection(params: {
                                     )}
                                   </div>
                                   `
-                                  : state.mode === "Explore"
+                                  : s.mode === "Explore"
                                     ? `
                                   <div style="${styleAttr({
                                       display: "flex",
@@ -12149,7 +12182,7 @@ function renderManualSection(params: {
                                     ${renderSelect(
                                         "maskVariable",
                                         variables,
-                                        mask.variable || state.variable,
+                                        mask.variable || s.variable,
                                         {
                                             dataKey: "maskVariable",
                                             infoType: "variable",
@@ -12161,11 +12194,11 @@ function renderManualSection(params: {
                                     ${renderSelect(
                                         "maskUnit",
                                         getUnitOptions(
-                                            mask.variable || state.variable,
+                                            mask.variable || s.variable,
                                         ).map((opt) => opt.label),
                                         mask.unit ||
                                             getDefaultUnitOption(
-                                                mask.variable || state.variable,
+                                                mask.variable || s.variable,
                                             ).label,
                                         {
                                             dataKey: "maskUnit",
@@ -12353,7 +12386,7 @@ function renderManualSection(params: {
                           + Add Mask
                         </button>
                         ${
-                            state.mode === "Ensemble"
+                            s.mode === "Ensemble"
                                 ? `
                         <button
                           type="button"
@@ -12405,7 +12438,7 @@ function renderManualSection(params: {
                         + Add Mask
                       </button>
                       ${
-                          state.mode === "Ensemble"
+                          s.mode === "Ensemble"
                               ? `
                       <button
                         type="button"
@@ -12534,6 +12567,10 @@ function renderChartLocationExtras() {
 /** Get the effective state for a window (1 = main, 2 = split pane 2). */
 function getWindowState(window: 1 | 2) {
     return window === 2 ? state.window2 : state;
+}
+
+function getModeMasks(ms: AppState | Window2State): MaskArray {
+    return ms.mode === "Explore" ? ms.exploreMasks : ms.mode === "Compare" ? ms.compareMasks : ms.ensembleMasks;
 }
 
 function renderMapSearchBar(window: 1 | 2 = 1) {
@@ -13210,10 +13247,13 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             const indexStr = input.dataset.maskIndex;
             if (!bound || indexStr === undefined) return;
             const index = Number.parseInt(indexStr, 10);
+            // Route to the correct window's masks based on which sidebar contains this input
+            const isW2 = input.closest('[data-window="2"]') !== null;
+            const targetMasks = isW2 ? getModeMasks(state.window2) : getModeMasks(state);
             if (
                 Number.isNaN(index) ||
                 index < 0 ||
-                index >= state.masks.length
+                index >= targetMasks.length
             ) {
                 return;
             }
@@ -13221,7 +13261,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             const value = input.value.trim();
             const numValue = value === "" ? null : Number.parseFloat(value);
             if (value === "" || !Number.isNaN(numValue!)) {
-                const mask = state.masks[index];
+                const mask = targetMasks[index];
                 let changed = false;
                 if (bound === "lower") {
                     if (mask.lowerBound !== numValue) {
@@ -13288,11 +13328,13 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             const indexStr = (input as HTMLElement).dataset.maskIndex;
             if (indexStr === undefined) return;
             const index = Number.parseInt(indexStr, 10);
-            if (Number.isNaN(index) || index < 0 || index >= state.masks.length) return;
+            const isW2 = input.closest('[data-window="2"]') !== null;
+            const targetMasks = isW2 ? getModeMasks(state.window2) : getModeMasks(state);
+            if (Number.isNaN(index) || index < 0 || index >= targetMasks.length) return;
             const value = input.value.trim();
             const pct = value === "" ? 50 : Number.parseFloat(value);
             if (!Number.isNaN(pct)) {
-                const mask = state.masks[index];
+                const mask = targetMasks[index];
                 const newThreshold = Math.max(0, Math.min(100, pct)) / 100;
                 if (mask.probabilityThreshold !== newThreshold) {
                     mask.probabilityThreshold = newThreshold;
@@ -13377,7 +13419,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         "chartMode", "chartDate", "chartRangeStart", "chartRangeEnd",
         "chartVariable", "chartUnit", "chartScenarios", "chartModels",
         "chartLocation", "chartLocationName", "chartPoint",
-        "masks",
+        "exploreMasks", "compareMasks", "ensembleMasks",
         "mapShowBorders", "mapShowCities",
         "mapPolygon", "chartPolygon", "mapMarker",
         "mapRangeStart", "mapRangeEnd", "mapRangeNumSamples", "mapRangePreset",
@@ -13387,7 +13429,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
     const W2_APPLICABLE_KEYS: (keyof Window2State)[] = [
         "mode", "canvasView", "panelTab", "scenario", "model", "variable", "date",
         "selectedUnit", "mapPalette", "resolution", "mapShowBorders", "mapShowCities",
-        "mapPolygon", "mapMarker", "masks",
+        "mapPolygon", "mapMarker", "exploreMasks", "compareMasks", "ensembleMasks",
         "compareMode", "compareScenarioA", "compareScenarioB",
         "compareModelA", "compareModelB", "compareDateStart", "compareDateEnd",
         "ensembleScenarios", "ensembleModels", "ensembleStatistic",
@@ -14291,10 +14333,10 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                                 state.dataMax,
                                 state.variable,
                                 state.selectedUnit,
-                                state.masks,
+                                getModeMasks(state),
                                 null,
                                 false,
-                                state.mode === "Explore"
+                                (state.mode === "Explore" || state.mode === "Compare")
                                     ? state.maskVariableData
                                     : undefined,
                             );
@@ -14364,14 +14406,16 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                             state.mapPalette,
                             state.dataMin,
                             state.dataMax,
-                            state.variable,
-                            state.selectedUnit,
-                            state.masks,
-                            null,
-                            false,
-                            state.mode === "Explore"
+                            state.mode === "Ensemble" ? state.ensembleVariable : state.variable,
+                            state.mode === "Ensemble" ? state.ensembleUnit : state.selectedUnit,
+                            getModeMasks(state),
+                            state.mode === "Ensemble" ? state.ensembleStatistics : null,
+                            state.mode === "Ensemble",
+                            (state.mode === "Explore" || state.mode === "Compare")
                                 ? state.maskVariableData
                                 : undefined,
+                            state.mode === "Ensemble" ? state.ensembleStatisticsByVariable : null,
+                            state.mode === "Ensemble" ? state.ensembleRawSamplesByVariable : null,
                         );
 
                         // Redraw gradient with new palette
@@ -14420,8 +14464,8 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                         state.window2.dataMax,
                         w2DisplayVar,
                         w2DisplayUnit,
-                        state.window2.masks && state.window2.masks.length > 0
-                            ? state.window2.masks
+                        getModeMasks(state.window2) && getModeMasks(state.window2).length > 0
+                            ? getModeMasks(state.window2)
                             : undefined,
                         w2IsEnsemble ? state.window2.ensembleStatistics ?? undefined : undefined,
                         w2IsEnsemble,
@@ -14459,8 +14503,8 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                         state.window2.dataMax,
                         w2DisplayVar,
                         w2DisplayUnit,
-                        state.window2.masks && state.window2.masks.length > 0
-                            ? state.window2.masks
+                        getModeMasks(state.window2) && getModeMasks(state.window2).length > 0
+                            ? getModeMasks(state.window2)
                             : undefined,
                         w2IsEnsemble ? state.window2.ensembleStatistics ?? undefined : undefined,
                         w2IsEnsemble,
@@ -14536,7 +14580,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             case "ensembleVariable":
                 if (
                     target.mode === "Ensemble" &&
-                    target.masks.some((mask) => mask.kind === "probability")
+                    getModeMasks(target).some((mask) => mask.kind === "probability")
                 ) {
                     return;
                 }
@@ -14565,7 +14609,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                             state.window2.dataMax,
                             state.window2.ensembleVariable,
                             state.window2.ensembleUnit,
-                            state.window2.masks,
+                            getModeMasks(state.window2),
                             state.window2.ensembleStatistics ?? undefined,
                             true,
                             state.window2.maskVariableData.size > 0
@@ -14606,7 +14650,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                             state.dataMax,
                             state.ensembleVariable,
                             state.ensembleUnit,
-                            state.masks,
+                            getModeMasks(state),
                             state.ensembleStatistics,
                             true,
                             undefined,
@@ -14658,7 +14702,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             case "maskStatistic": {
                 if (maskIndex !== undefined) {
                     const index = Number.parseInt(maskIndex, 10);
-                    const masks = target.masks;
+                    const masks = getModeMasks(target);
                     if (
                         !Number.isNaN(index) &&
                         index >= 0 &&
@@ -14725,7 +14769,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             case "maskVariable": {
                 if (maskIndex !== undefined) {
                     const index = Number.parseInt(maskIndex, 10);
-                    const masks = target.masks;
+                    const masks = getModeMasks(target);
                     if (
                         !Number.isNaN(index) &&
                         index >= 0 &&
@@ -14792,7 +14836,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             case "maskUnit": {
                 if (maskIndex !== undefined) {
                     const index = Number.parseInt(maskIndex, 10);
-                    const masks = target.masks;
+                    const masks = getModeMasks(target);
                     if (
                         !Number.isNaN(index) &&
                         index >= 0 &&
@@ -14855,7 +14899,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                                         state.window2.dataMax,
                                         w2DisplayVar,
                                         w2DisplayUnit,
-                                        state.window2.masks,
+                                        getModeMasks(state.window2),
                                         state.window2.ensembleStatistics ?? undefined,
                                         w2IsEnsemble,
                                         state.window2.maskVariableData.size > 0
@@ -14895,7 +14939,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                                         state.dataMax,
                                         state.ensembleVariable,
                                         state.ensembleUnit,
-                                        state.masks,
+                                        getModeMasks(state),
                                         state.ensembleStatistics,
                                         true,
                                         undefined,
@@ -15722,33 +15766,34 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
     );
 
     // Mask handlers
-    const createMask = (kind: "binary" | "probability") => {
-        if (kind === "probability" && state.mode !== "Ensemble") {
+    const createMask = (kind: "binary" | "probability", isW2: boolean = false) => {
+        const ms = isW2 ? state.window2 : state;
+        if (kind === "probability" && ms.mode !== "Ensemble") {
             return;
         }
         // Initialize new mask with mode-appropriate defaults
-        let lowerBound = state.dataMin;
-        let upperBound = state.dataMax;
-        if (state.mode === "Explore") {
+        let lowerBound = ms.dataMin;
+        let upperBound = ms.dataMax;
+        if (ms.mode === "Explore") {
             const range = getMaskRangeFor(
-                state.variable,
-                state.selectedUnit,
+                ms.variable,
+                ms.selectedUnit,
             );
             if (range) {
                 lowerBound = range.min;
                 upperBound = range.max;
             }
-        } else if (state.mode === "Ensemble") {
+        } else if (ms.mode === "Ensemble") {
             const range =
                 kind === "probability"
                     ? getEnsembleProbabilityMaskRange(
-                          state.ensembleVariable,
-                          state.ensembleUnit,
+                          ms.ensembleVariable,
+                          ms.ensembleUnit,
                       )
                     : getEnsembleMaskRange(
                           "mean",
-                          state.ensembleVariable,
-                          state.ensembleUnit,
+                          ms.ensembleVariable,
+                          ms.ensembleUnit,
                       );
             lowerBound = range.min;
             upperBound = range.max;
@@ -15774,17 +15819,22 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             ...(kind === "probability" ? { probabilityThreshold: 0.5 } : {}),
         };
         // In ensemble mode, default to "mean" statistic and current variable/unit
-        if (state.mode === "Ensemble") {
+        if (ms.mode === "Ensemble") {
             newMask.statistic = "mean";
-            newMask.variable = state.ensembleVariable;
-            newMask.unit = state.ensembleUnit;
+            newMask.variable = ms.ensembleVariable;
+            newMask.unit = ms.ensembleUnit;
         }
         // In explore mode, default to current variable and unit
-        if (state.mode === "Explore") {
-            newMask.variable = state.variable;
-            newMask.unit = state.selectedUnit;
+        if (ms.mode === "Explore") {
+            newMask.variable = ms.variable;
+            newMask.unit = ms.selectedUnit;
         }
-        state.masks.push(newMask);
+        // In compare mode, set variable but NOT unit — data is raw differences,
+        // so no unit offset (e.g. −273.15 for °C) should be applied during comparison.
+        if (ms.mode === "Compare") {
+            newMask.variable = ms.variable;
+        }
+        getModeMasks(ms).push(newMask);
         render();
     };
 
@@ -15793,7 +15843,8 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
     );
     addMaskBtns.forEach((btn) => {
         btn.addEventListener("click", () => {
-            createMask("binary");
+            const isW2 = btn.closest('[data-window="2"]') !== null;
+            createMask("binary", isW2);
         });
     });
 
@@ -15802,7 +15853,8 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
     );
     addProbabilityMaskBtns.forEach((btn) => {
         btn.addEventListener("click", () => {
-            createMask("probability");
+            const isW2 = btn.closest('[data-window="2"]') !== null;
+            createMask("probability", isW2);
         });
     });
 
@@ -15814,25 +15866,32 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             const indexStr = btn.dataset.maskIndex;
             if (indexStr === undefined) return;
             const index = Number.parseInt(indexStr, 10);
+            const isW2 = btn.closest('[data-window="2"]') !== null;
+            const targetMasks = isW2 ? getModeMasks(state.window2) : getModeMasks(state);
             if (
                 !Number.isNaN(index) &&
                 index >= 0 &&
-                index < state.masks.length
+                index < targetMasks.length
             ) {
-                state.masks.splice(index, 1);
+                targetMasks.splice(index, 1);
                 render();
                 // Don't reload map automatically - user will click Apply button if needed
             }
         });
     });
 
-    const applyMaskBtn = root.querySelector<HTMLButtonElement>(
+    const applyMaskBtns = root.querySelectorAll<HTMLButtonElement>(
         '[data-action="apply-masks"]',
     );
-    applyMaskBtn?.addEventListener("click", () => {
-        if (state.canvasView === "map") {
-            loadClimateData();
-        }
+    applyMaskBtns.forEach((btn) => {
+        btn.addEventListener("click", () => {
+            const isW2 = btn.closest('[data-window="2"]') !== null;
+            if (isW2) {
+                if (state.window2.canvasView === "map") void loadClimateDataWindow2();
+            } else {
+                if (state.canvasView === "map") loadClimateData();
+            }
+        });
     });
 
     const infoOpenBtn = root.querySelector<HTMLButtonElement>(

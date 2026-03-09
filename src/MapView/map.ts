@@ -1169,7 +1169,7 @@ function runRenderMapData(
                             const maskUnit = mask.unit;
                             let varDisplayValue = varRawValue;
                             if (maskUnit) {
-                                varDisplayValue = convertValue(varRawValue, maskVar, maskUnit);
+                                varDisplayValue = convertValue(varRawValue, maskVar, maskUnit, { isDifference });
                             }
                             
                             let passesThisMask = true;
@@ -1264,11 +1264,19 @@ function runRenderMapData(
             let r: number, g: number, b: number;
             
             if ((!passesMask && binaryMasks.length > 0) || probabilityMaskFails) {
-                // Render masked pixels in dark gray (slightly lighter than background)
-                // Background is #070b13 (rgb(7, 11, 19)), use a slightly lighter gray
-                r = 20;
-                g = 24;
-                b = 32;
+                // Render masked pixels slightly offset from the background color
+                const isLightMode = document.documentElement.dataset.theme === 'light';
+                if (isLightMode) {
+                    // Light mode background is ~#dfe1e5; use a slightly darker grey
+                    r = 195;
+                    g = 197;
+                    b = 203;
+                } else {
+                    // Dark mode background is #070b13 (rgb(7, 11, 19)); use a slightly lighter gray
+                    r = 20;
+                    g = 24;
+                    b = 32;
+                }
             } else {
                 // Guard against zero/NaN range and non-finite displayValue to avoid crash when switching variables
                 const range = effectiveColorMax - effectiveColorMin;

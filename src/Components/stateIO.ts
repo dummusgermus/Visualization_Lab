@@ -1,4 +1,4 @@
-import type { AppState, EnsembleStatistic, ChartLocation, Window2State } from "../main";
+import type { AppState, EnsembleStatistic, ChartLocation, Window2State, MaskArray } from "../main";
 
 export type SavedWindow2State = Pick<
     Window2State,
@@ -50,7 +50,9 @@ export type SavedState = {
     ensembleVariable: AppState["ensembleVariable"];
     ensembleUnit: AppState["ensembleUnit"];
     // Masks
-    masks: AppState["masks"];
+    exploreMasks: MaskArray;
+    compareMasks: MaskArray;
+    ensembleMasks: MaskArray;
     // Chat model
     selectedChatModel: AppState["selectedChatModel"];
     // Split view
@@ -99,7 +101,9 @@ export function exportState(state: AppState): SavedState {
         ensembleDate: state.ensembleDate,
         ensembleVariable: state.ensembleVariable,
         ensembleUnit: state.ensembleUnit,
-        masks: state.masks.map((m) => ({ ...m })),
+        exploreMasks: state.exploreMasks.map((m) => ({ ...m })),
+        compareMasks: state.compareMasks.map((m) => ({ ...m })),
+        ensembleMasks: state.ensembleMasks.map((m) => ({ ...m })),
         selectedChatModel: state.selectedChatModel,
         splitView: state.splitView,
         splitRatio: state.splitRatio,
@@ -160,7 +164,10 @@ export function applyImportedState(
     target.ensembleDate = saved.ensembleDate;
     target.ensembleVariable = saved.ensembleVariable;
     target.ensembleUnit = saved.ensembleUnit;
-    target.masks = (saved.masks ?? []).map((m) => ({ ...m }));
+    // Backward compat: old saves had a single `masks` field; restore those into explore mode
+    target.exploreMasks = (saved.exploreMasks ?? (saved as any).masks ?? []).map((m: any) => ({ ...m }));
+    target.compareMasks = (saved.compareMasks ?? []).map((m: any) => ({ ...m }));
+    target.ensembleMasks = (saved.ensembleMasks ?? []).map((m: any) => ({ ...m }));
     if (saved.selectedChatModel) {
         target.selectedChatModel = saved.selectedChatModel;
     }

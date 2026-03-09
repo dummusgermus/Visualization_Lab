@@ -228,22 +228,28 @@ def load_time_series(
         return []
     dates = _evenly_subsample_dates(dates, config.MAX_TIME_SERIES_POINTS)
 
+    # Hoist constant computations outside the per-timestep worker
+    quality = utils.resolution_to_quality(resolution)
+
     def _load(date_obj):
-        payload = load_data(
-            variable=variable,
-            time=date_obj,
-            model=model,
-            scenario=scenario,
-            resolution=resolution,
-        )
+        local_scenario = utils.infer_scenario_from_date(date_obj, scenario)
+        field = utils.generate_field_name(variable, model, local_scenario)
+        timestep_idx = utils.date_to_timestep_index(date_obj)
+        data = _read_dataset(field, timestep_idx, quality)
+        payload = {
+            'data': data,
+            'time': date_obj.strftime('%Y-%m-%d'),
+            'field': field,
+            'scenario': local_scenario,
+        }
         if include_nan_stats:
-            data = payload['data']
-            has_finite = np.isfinite(data).any()
+            finite_mask = np.isfinite(data)
+            valid_count = int(finite_mask.sum())
             payload['nan_statistics'] = {
-                'valid_count': int(np.isfinite(data).sum()),
-                'nan_count': int(np.isnan(data).sum()),
-                'mean': float(np.nanmean(data)) if has_finite else float('nan'),
-                'std': float(np.nanstd(data)) if has_finite else float('nan'),
+                'valid_count': valid_count,
+                'nan_count': data.size - valid_count,
+                'mean': float(np.mean(data[finite_mask])) if valid_count else float('nan'),
+                'std': float(np.std(data[finite_mask])) if valid_count else float('nan'),
             }
         return payload
 

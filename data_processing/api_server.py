@@ -840,8 +840,7 @@ def aggregate_on_demand(request: OnDemandAggregateRequest):
                     detail=f"Mask shape {mask_arr.shape} must match window {(win_h, win_w)}",
                 )
 
-        results = {}
-        for model in request.models:
+        def _load_model(model: str) -> tuple:
             series = data_loader.load_pixel_time_series(
                 variable=request.variable,
                 model=model,
@@ -856,8 +855,8 @@ def aggregate_on_demand(request: OnDemandAggregateRequest):
             if not series:
                 raise DataLoadingError(f"No data returned for model {model}")
 
-            timestamps = []
-            values = []
+            timestamps: list = []
+            values: list = []
 
             for entry in series:
                 ts = entry.get("time") or entry.get("timestamp")
@@ -883,12 +882,20 @@ def aggregate_on_demand(request: OnDemandAggregateRequest):
                     values.append(float(np.mean(window[valid])))
 
             finite_values = [v for v in values if np.isfinite(v)]
-            results[model] = {
+            return model, {
                 "timestamps": timestamps,
                 "values": values,
                 "valid_count": len(finite_values),
                 "nan_count": len(values) - len(finite_values),
             }
+
+        n_workers = min(config.BATCH_WORKERS, len(request.models))
+        results = {}
+        with ThreadPoolExecutor(max_workers=n_workers) as executor:
+            futures = {executor.submit(_load_model, m): m for m in request.models}
+            for future in as_completed(futures):
+                model, model_result = future.result()
+                results[model] = model_result
 
         return {
             "window": [x0, x1, y0, y1],

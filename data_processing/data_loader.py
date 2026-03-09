@@ -25,19 +25,50 @@ class DataLoadingError(Exception):
 # Global database connection
 _db = None
 
+_FALLBACK_URL = (
+    "https://us-east-1.gw.future-tech-holdings.com/nasa-t0/"
+    "nex-gddp-cmip6/nex-gddp-cmip6.idx"
+)
+
 # Cache initialization guard
 utils.ensure_cache_environment()
 
 
 def get_database_connection():
     global _db
-    
+
     if _db is None:
-        try:
-            _db = ov.LoadDataset(config.DATASET_URL)
-        except Exception as e:
-            raise DataLoadingError(f"Failed to connect to dataset: {e}")
-    
+        urls = [config.DATASET_URL, _FALLBACK_URL]
+        last_exc: BaseException | None = None
+        for url in urls:
+            db = None
+            try:
+                db = ov.LoadDataset(url)
+            except BaseException as e:  # catches SWIG C++ exceptions too
+                last_exc = e
+                continue
+            # LoadDataset may return None/falsy on failure without raising
+            if not db:
+                last_exc = RuntimeError(
+                    f"LoadDataset returned empty/invalid dataset for: {url}"
+                )
+                continue
+            # Success
+            _db = db
+            if url != config.DATASET_URL:
+                import warnings
+                warnings.warn(
+                    f"[data_loader] Primary URL unavailable; using fallback: {url}",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+            break
+
+        if _db is None:
+            raise DataLoadingError(
+                f"Failed to connect to dataset: {last_exc}"
+            )
+
     return _db
 
 

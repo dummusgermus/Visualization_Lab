@@ -3,6 +3,12 @@
 :root {
     --background: #070b13;
     --foreground: #e5e7eb;
+
+    /* Map background layers */
+    --map-bg-1: linear-gradient(135deg, #05070f, #0b1326);
+    --map-bg-2: radial-gradient(circle at 20% 20%, rgba(56,189,248,0.12), transparent 32%), radial-gradient(circle at 80% 10%, rgba(139,92,246,0.15), transparent 30%), radial-gradient(circle at 50% 70%, rgba(34,197,94,0.08), transparent 28%);
+    --map-bg-overlay: rgba(5, 5, 5, 0.35);
+    --map-range-panel-bg: linear-gradient(180deg, rgba(6,10,18,0) 0%, rgba(6,10,18,0.55) 45%, rgba(6,10,18,0.94) 100%);
     --font-geist-sans: "Geist", system-ui, -apple-system, sans-serif;
     --font-geist-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo,
         monospace;
@@ -132,6 +138,149 @@
 
     --border-base: 1px solid rgba(255, 255, 255, 0.12);
     --border-active: 1px solid rgba(125, 211, 252, 0.6);
+}
+
+[data-theme="light"] {
+    --background: #f1f2f4;
+    --foreground: #1a1d23;
+
+    --text-primary: rgba(17, 24, 39, 0.9);
+    --text-secondary: rgba(17, 24, 39, 0.58);
+    --text-icon: rgba(17, 24, 39, 0.82);
+
+    --bg-transparent: transparent;
+    --bg-subtle: rgba(0, 0, 0, 0.03);
+    --bg-medium: rgba(0, 0, 0, 0.05);
+    --bg-strong: rgba(0, 0, 0, 0.07);
+
+    --dark-bg: rgba(238, 239, 242, 0.97);
+    --dark-bg-alt: rgba(232, 234, 237, 0.98);
+    --dark-bg-strong: rgba(225, 227, 231, 0.99);
+    --dark-bg-select: #e5e6ea;
+    --dark-bg-sidebar: rgba(220, 222, 227, 0.98);
+
+    --border-subtle: rgba(0, 0, 0, 0.06);
+    --border-medium: rgba(0, 0, 0, 0.09);
+    --border-default: rgba(0, 0, 0, 0.13);
+    --border-strong: rgba(0, 0, 0, 0.17);
+    --border-emphasis: rgba(0, 0, 0, 0.22);
+    --border-bright: rgba(0, 0, 0, 0.30);
+
+    --accent-blue: #0284c7;
+    --accent-purple: #7c3aed;
+    --accent-green: #16a34a;
+
+    --accent-border: rgba(2, 132, 199, 0.45);
+    --accent-border-strong: rgba(2, 132, 199, 0.55);
+    --accent-border-bright: rgba(2, 132, 199, 0.75);
+    --accent-bg: rgba(2, 132, 199, 0.08);
+    --accent-bg-alt: rgba(2, 132, 199, 0.12);
+    --accent-bg-emphasis: rgba(2, 132, 199, 0.18);
+    --accent-bg-strong: rgba(2, 132, 199, 0.3);
+
+    --purple-bg: rgba(124, 58, 237, 0.06);
+    --purple-bg-emphasis: rgba(124, 58, 237, 0.14);
+    --purple-bg-strong: rgba(124, 58, 237, 0.28);
+
+    --shadow-default: rgba(0, 0, 0, 0.08);
+    --shadow-strong: rgba(0, 0, 0, 0.10);
+    --shadow-emphasis: rgba(0, 0, 0, 0.12);
+    --shadow-heavy: rgba(0, 0, 0, 0.14);
+    --shadow-dark: rgba(0, 0, 0, 0.16);
+    --shadow-darker: rgba(0, 0, 0, 0.18);
+    --shadow-darkest: rgba(0, 0, 0, 0.20);
+
+    --inset-light: rgba(255, 255, 255, 0.6);
+    --inset-default: rgba(255, 255, 255, 0.72);
+
+    --gradient-bg: linear-gradient(
+        145deg,
+        rgba(0, 0, 0, 0.03),
+        rgba(0, 0, 0, 0.012)
+    );
+    --gradient-bg-focus: linear-gradient(
+        145deg,
+        rgba(0, 0, 0, 0.06),
+        rgba(0, 0, 0, 0.03)
+    );
+    --gradient-accent: linear-gradient(
+        135deg,
+        var(--accent-blue),
+        var(--accent-purple)
+    );
+    --gradient-accent-triple: linear-gradient(
+        135deg,
+        var(--accent-blue),
+        var(--accent-purple),
+        var(--accent-green)
+    );
+    --gradient-accent-bg: linear-gradient(
+        135deg,
+        var(--accent-bg),
+        var(--purple-bg)
+    );
+    --gradient-slider: linear-gradient(
+        90deg,
+        var(--accent-bg-strong) 0%,
+        var(--purple-bg-strong) var(--slider-fill),
+        var(--border-default) var(--slider-fill),
+        var(--border-default) 100%
+    );
+    --gradient-primary: linear-gradient(
+        135deg,
+        rgba(2, 132, 199, 0.15),
+        rgba(124, 58, 237, 0.13)
+    );
+    --gradient-indicator: linear-gradient(
+        135deg,
+        rgba(2, 132, 199, 0.13),
+        rgba(124, 58, 237, 0.13)
+    );
+    --gradient-tab-active: linear-gradient(
+        135deg,
+        rgba(2, 132, 199, 0.20),
+        rgba(124, 58, 237, 0.17)
+    );
+    --gradient-mode-indicator: linear-gradient(
+        135deg,
+        rgba(2, 132, 199, 0.12),
+        rgba(124, 58, 237, 0.10)
+    );
+    --gradient-chat-user: linear-gradient(
+        135deg,
+        rgba(2, 132, 199, 0.17),
+        rgba(124, 58, 237, 0.17)
+    );
+    --gradient-palette-active: linear-gradient(
+        145deg,
+        rgba(2, 132, 199, 0.10),
+        rgba(0, 0, 0, 0.02)
+    );
+
+    --shadow-elevated: 0 10px 26px rgba(0, 0, 0, 0.12);
+    --shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+    --shadow-combined: 0 6px 16px rgba(0, 0, 0, 0.08),
+        inset 0 1px 0 rgba(255, 255, 255, 0.8);
+    --shadow-canvas: 0 8px 20px rgba(0, 0, 0, 0.08);
+
+    --border-base: 1px solid rgba(0, 0, 0, 0.13);
+    --border-active: 1px solid rgba(2, 132, 199, 0.6);
+
+    /* Map background layers - neutral grey */
+    --map-bg-1: linear-gradient(135deg, #dfe1e5, #d2d4da);
+    --map-bg-2: radial-gradient(circle at 20% 20%, rgba(100,116,139,0.06), transparent 32%), radial-gradient(circle at 80% 10%, rgba(100,116,139,0.05), transparent 30%), radial-gradient(circle at 50% 70%, rgba(100,116,139,0.04), transparent 28%);
+    --map-bg-overlay: rgba(215, 217, 222, 0.4);
+    --map-range-panel-bg: linear-gradient(180deg, rgba(215,217,222,0) 0%, rgba(207,209,215,0.75) 45%, rgba(198,201,207,0.97) 100%);
+}
+
+/* Fix select arrow and date picker for light mode */
+[data-theme="light"] select {
+    background-image: url("data:image/svg+xml,%3Csvg width='12' height='12' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M6 9l6 6 6-6' stroke='%230f172a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"),
+        var(--gradient-bg);
+}
+[data-theme="light"] input[type="date"]::-webkit-calendar-picker-indicator {
+    filter: none;
+    opacity: 0.6;
 }
 
 * {
@@ -380,7 +529,7 @@ input[type="date"]:hover::-webkit-calendar-picker-indicator {
 
 .location-search-input {
     width: 100%;
-    background: rgba(8, 14, 26, 0.78);
+    background: var(--dark-bg);
     border: 1px solid var(--border-medium);
     border-radius: 10px;
     color: var(--text-primary);
@@ -393,7 +542,7 @@ input[type="date"]:hover::-webkit-calendar-picker-indicator {
 .location-search-input:focus {
     outline: none;
     border-color: var(--border-bright);
-    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.14),
+    box-shadow: 0 0 0 1px var(--inset-default),
         0 8px 18px var(--shadow-strong);
 }
 
@@ -415,7 +564,7 @@ input[type="date"]:hover::-webkit-calendar-picker-indicator {
     flex-direction: column;
     gap: 6px;
     margin-top: 10px;
-    background: rgba(8, 14, 26, 0.78);
+    background: var(--dark-bg);
     border: 1px solid var(--border-medium);
     border-radius: 12px;
     padding: 6px;
@@ -424,7 +573,7 @@ input[type="date"]:hover::-webkit-calendar-picker-indicator {
 .location-search-result {
     width: 100%;
     text-align: left;
-    background: rgba(12, 18, 32, 0.85);
+    background: var(--dark-bg-alt);
     border: 1px solid var(--border-subtle);
     color: var(--text-primary);
     border-radius: 10px;
@@ -450,6 +599,63 @@ input[type="date"]:hover::-webkit-calendar-picker-indicator {
 }
 
 /* Custom scrollbar for dropdown */
+/* Map toolbar icon buttons */
+.map-icon-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border: 1px solid var(--border-default);
+    border-radius: 6px;
+    background: var(--dark-bg);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+    flex-shrink: 0;
+}
+.map-icon-btn:hover {
+    background: var(--bg-medium);
+    color: var(--text-primary);
+    border-color: var(--border-emphasis);
+}
+.map-icon-btn--active-green {
+    background: rgba(52, 211, 153, 0.12);
+    color: #34d399;
+    border-color: rgba(52, 211, 153, 0.35);
+}
+.map-icon-btn--active-green:hover {
+    background: rgba(52, 211, 153, 0.22);
+    color: #34d399;
+    border-color: rgba(52, 211, 153, 0.5);
+}
+.map-icon-btn--active-blue {
+    background: rgba(56, 189, 248, 0.12);
+    color: var(--accent-blue);
+    border-color: var(--accent-border);
+}
+.map-icon-btn--active-blue:hover {
+    background: rgba(56, 189, 248, 0.2);
+    color: var(--accent-blue);
+    border-color: var(--accent-border-strong);
+}
+
+/* Map options dropdown */
+.map-options-menu {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 8px);
+    min-width: 190px;
+    padding: 10px;
+    border-radius: 10px;
+    border: 1px solid var(--border-medium);
+    background: var(--dark-bg-strong);
+    box-shadow: var(--shadow-elevated);
+    z-index: 22;
+    backdrop-filter: blur(10px);
+}
+
 .custom-select-dropdown::-webkit-scrollbar {
     width: 6px;
 }

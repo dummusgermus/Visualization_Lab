@@ -218,7 +218,7 @@
     padding: 8px 10px;
     border-radius: 10px;
     border: 1px solid var(--border-subtle);
-    background: rgba(255, 255, 255, 0.04);
+    background: var(--bg-subtle);
     color: var(--text-secondary);
     font-size: 12px;
     font-weight: 700;
@@ -228,7 +228,7 @@
 }
 
 .sidebar-footer-btn:hover {
-    background: rgba(255, 255, 255, 0.09);
+    background: var(--bg-medium);
     border-color: var(--border-medium);
     color: var(--text-primary);
 }

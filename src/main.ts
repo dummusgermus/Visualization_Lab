@@ -407,19 +407,17 @@ const styles: Record<string, Style> = {
     bgLayer1: {
         position: "absolute",
         inset: 0,
-        background: "linear-gradient(135deg, #05070f, #0b1326)",
+        background: "var(--map-bg-1)",
     },
     bgLayer2: {
         position: "absolute",
         inset: 0,
-        background:
-            "radial-gradient(circle at 20% 20%, rgba(56,189,248,0.12), transparent 32%), radial-gradient(circle at 80% 10%, rgba(139,92,246,0.15), transparent 30%), radial-gradient(circle at 50% 70%, rgba(34,197,94,0.08), transparent 28%)",
+        background: "var(--map-bg-2)",
     },
     bgOverlay: {
         position: "absolute",
         inset: 0,
-        background: "#050505",
-        opacity: 0.35,
+        background: "var(--map-bg-overlay)",
     },
     branding: {
         position: "fixed",
@@ -677,8 +675,7 @@ const styles: Record<string, Style> = {
         flexDirection: "column",
         gap: 10,
         pointerEvents: "auto",
-        background:
-            "linear-gradient(180deg, rgba(6, 10, 18, 0) 0%, rgba(6, 10, 18, 0.55) 45%, rgba(6, 10, 18, 0.94) 100%)",
+        background: "var(--map-range-panel-bg)",
         backdropFilter: "blur(8px)",
     },
     mapRangeHeader: {
@@ -3394,7 +3391,7 @@ function renderMapRangeOverlay(inPane = false) {
               <div style="display:flex;align-items:center;gap:5px;margin-top:5px;flex-wrap:wrap;">
                 <select
                   data-action="map-range-preset"
-                  style="background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.15);border-radius:6px;color:var(--text-primary);font-size:12px;padding:3px 6px;outline:none;cursor:pointer;"
+                  style="background:var(--dark-bg);border:1px solid var(--border-default);border-radius:6px;color:var(--text-primary);font-size:12px;padding:3px 6px;outline:none;cursor:pointer;"
                 >
                   ${(["1month","1year","10years","full","custom"] as const).map(p => {
                       const labels: Record<string,string> = {"1month":"1 Month","1year":"1 Year","10years":"10 Years","full":"Full Range","custom":"Custom"};
@@ -3407,7 +3404,7 @@ function renderMapRangeOverlay(inPane = false) {
                   data-action="map-range-date-start"
                   value="${state.mapRangeStart}"
                   min="1950-01-01" max="2099-12-31"
-                  style="color-scheme:dark;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.15);border-radius:6px;color:var(--text-primary);font-size:11.5px;padding:3px 5px;outline:none;"
+                  style="background:var(--dark-bg);border:1px solid var(--border-default);border-radius:6px;color:var(--text-primary);font-size:11.5px;padding:3px 5px;outline:none;"
                 />
                 <span style="color:var(--text-secondary);font-size:12px;">–</span>
                 <input
@@ -3415,7 +3412,7 @@ function renderMapRangeOverlay(inPane = false) {
                   data-action="map-range-date-end"
                   value="${state.mapRangeEnd}"
                   min="1950-01-02" max="2100-01-01"
-                  style="color-scheme:dark;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.15);border-radius:6px;color:var(--text-primary);font-size:11.5px;padding:3px 5px;outline:none;"
+                  style="background:var(--dark-bg);border:1px solid var(--border-default);border-radius:6px;color:var(--text-primary);font-size:11.5px;padding:3px 5px;outline:none;"
                 />
                 ` : ""}
                 <input
@@ -3424,7 +3421,7 @@ function renderMapRangeOverlay(inPane = false) {
                   value="${state.mapRangeNumSamples}"
                   min="2" max="3650" step="1"
                   title="Number of data points"
-                  style="width:52px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.15);border-radius:6px;color:var(--text-primary);font-size:12px;padding:3px 5px;outline:none;text-align:center;"
+                  style="width:52px;background:var(--dark-bg);border:1px solid var(--border-default);border-radius:6px;color:var(--text-primary);font-size:12px;padding:3px 5px;outline:none;text-align:center;"
                 />
                 <button
                   type="button"
@@ -4722,7 +4719,7 @@ function renderMapRangeOverlayW2(): string {
               <div class="map-range-title-w2" style="${styleAttr(styles.mapRangeTitle)}">${escapeHtml(variableLabel)}</div>
               <div style="display:flex;align-items:center;gap:5px;margin-top:5px;flex-wrap:wrap;">
                 <select data-action="map-range-preset-w2"
-                  style="background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.15);border-radius:6px;color:var(--text-primary);font-size:12px;padding:3px 6px;outline:none;cursor:pointer;">
+                  style="background:var(--dark-bg);border:1px solid var(--border-default);border-radius:6px;color:var(--text-primary);font-size:12px;padding:3px 6px;outline:none;cursor:pointer;">
                   ${(["1month","1year","10years","full","custom"] as const).map(p => {
                       const labels: Record<string,string> = {"1month":"1 Month","1year":"1 Year","10years":"10 Years","full":"Full Range","custom":"Custom"};
                       return `<option value="${p}" ${w2.mapRangePreset===p?"selected":""}>${labels[p]}</option>`;
@@ -4731,15 +4728,15 @@ function renderMapRangeOverlayW2(): string {
                 ${w2.mapRangePreset === "custom" ? `
                 <input type="date" data-action="map-range-date-start-w2" value="${w2.mapRangeStart}"
                   min="1950-01-01" max="2099-12-31"
-                  style="color-scheme:dark;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.15);border-radius:6px;color:var(--text-primary);font-size:11.5px;padding:3px 5px;outline:none;"/>
+                  style="background:var(--dark-bg);border:1px solid var(--border-default);border-radius:6px;color:var(--text-primary);font-size:11.5px;padding:3px 5px;outline:none;"/>
                 <span style="color:var(--text-secondary);font-size:12px;">–</span>
                 <input type="date" data-action="map-range-date-end-w2" value="${w2.mapRangeEnd}"
                   min="1950-01-02" max="2100-01-01"
-                  style="color-scheme:dark;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.15);border-radius:6px;color:var(--text-primary);font-size:11.5px;padding:3px 5px;outline:none;"/>
+                  style="background:var(--dark-bg);border:1px solid var(--border-default);border-radius:6px;color:var(--text-primary);font-size:11.5px;padding:3px 5px;outline:none;"/>
                 ` : ""}
                 <input type="number" data-action="map-range-num-samples-w2" value="${w2.mapRangeNumSamples}"
                   min="2" max="3650" step="1" title="Number of data points"
-                  style="width:52px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.15);border-radius:6px;color:var(--text-primary);font-size:12px;padding:3px 5px;outline:none;text-align:center;"/>
+                  style="width:52px;background:var(--dark-bg);border:1px solid var(--border-default);border-radius:6px;color:var(--text-primary);font-size:12px;padding:3px 5px;outline:none;text-align:center;"/>
                 <button type="button" data-action="map-range-apply-w2"
                   style="padding:3px 9px;border-radius:6px;border:1px solid rgba(125,211,252,0.4);background:rgba(125,211,252,0.12);color:var(--text-primary);font-size:11.5px;font-weight:700;cursor:pointer;letter-spacing:0.2px;">Apply</button>
               </div>
@@ -8851,6 +8848,11 @@ function setupSplitDivider() {
 }
 
 function renderBranding() {
+    const isLight = document.documentElement.dataset.theme === 'light';
+    const themeBtnTitle = isLight ? 'Switch to dark mode' : 'Switch to light mode';
+    const themeIcon = isLight
+        ? '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>'
+        : '<circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>';
     return `
       <div style="${styleAttr(styles.branding)}">
         <div data-role="brand-eye" style="${styleAttr(styles.brandIcon)}">
@@ -8890,6 +8892,17 @@ function renderBranding() {
           </svg>
         </div>
         <span style="${styleAttr(styles.brandName)}">Polyoracle</span>
+        <button
+          type="button"
+          data-action="toggle-theme"
+          title="${themeBtnTitle}"
+          aria-label="${themeBtnTitle}"
+          style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;padding:0;border:1px solid var(--border-subtle);border-radius:50%;background:transparent;color:var(--text-secondary);cursor:pointer;opacity:0.55;transition:opacity 0.2s ease,border-color 0.2s ease;"
+          onmouseover="this.style.opacity='0.9';this.style.borderColor='var(--border-default)';"
+          onmouseout="this.style.opacity='0.55';this.style.borderColor='var(--border-subtle)';"
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${themeIcon}</svg>
+        </button>
       </div>
     `;
 }
@@ -9536,7 +9549,7 @@ function renderChartSvg(
         <g>
           <line x1="${margin.left}" x2="${
               width - margin.right
-          }" y1="${y}" y2="${y}" stroke="rgba(255,255,255,0.08)" />
+          }" y1="${y}" y2="${y}" stroke="var(--border-medium)" />
           <text x="${margin.left - 10}" y="${
               y + 4
           }" fill="var(--text-secondary)" font-size="11" text-anchor="end">
@@ -9566,7 +9579,7 @@ function renderChartSvg(
           <line x1="${x}" x2="${x}" y1="${whiskerTop}" y2="${whiskerBottom}" stroke="${color}" stroke-width="2" stroke-linecap="round" />
           <rect x="${
               x - 24
-          }" y="${boxTop}" width="48" height="${rectHeight}" fill="rgba(255,255,255,0.06)" stroke="${color}" stroke-width="2" rx="6" />
+          }" y="${boxTop}" width="48" height="${rectHeight}" fill="var(--border-subtle)" stroke="${color}" stroke-width="2" rx="6" />
           <line x1="${x - 24}" x2="${x + 24}" y1="${
               yScale(median) + margin.top
           }" y2="${
@@ -9642,8 +9655,8 @@ function renderChartSvg(
                     const labelY = indicator.adjustedY || indicator.y;
                     return `
                     <g class="model-indicator" data-boxplot-idx="${idx}">
-                      <line x1="${lineStartX}" x2="${lineEndX}" y1="${indicator.y}" y2="${indicator.y}" stroke="white" stroke-width="1" stroke-linecap="round" />
-                      <text x="${labelStartX}" y="${labelY + 4}" fill="white" font-size="10" font-weight="300" opacity="0.95">${indicator.model}</text>
+                      <line x1="${lineStartX}" x2="${lineEndX}" y1="${indicator.y}" y2="${indicator.y}" stroke="var(--text-primary)" stroke-width="1" stroke-linecap="round" />
+                      <text x="${labelStartX}" y="${labelY + 4}" fill="var(--text-primary)" font-size="10" font-weight="300" opacity="0.95">${indicator.model}</text>
                     </g>
                   `;
                 })
@@ -9659,7 +9672,7 @@ function renderChartSvg(
         x2="${margin.left}"
         y1="${margin.top}"
         y2="${height - margin.bottom}"
-        stroke="rgba(255,255,255,0.65)"
+        stroke="var(--text-secondary)"
         stroke-width="1.2"
       />
     `;
@@ -9747,7 +9760,7 @@ function renderMiniChartSvg(
         <g>
           <line x1="${margin.left}" x2="${
               width - margin.right
-          }" y1="${y}" y2="${y}" stroke="rgba(255,255,255,0.06)" />
+          }" y1="${y}" y2="${y}" stroke="var(--border-subtle)" />
           <text x="${margin.left - 8}" y="${
               y + 3
           }" fill="var(--text-secondary)" font-size="9" text-anchor="end">
@@ -9777,7 +9790,7 @@ function renderMiniChartSvg(
           }" stroke="${color}" stroke-width="1.6" stroke-linecap="round" />
           <rect x="${
               x - 16
-          }" y="${boxTop}" width="32" height="${rectHeight}" fill="rgba(255,255,255,0.06)" stroke="${color}" stroke-width="1.6" rx="5" />
+          }" y="${boxTop}" width="32" height="${rectHeight}" fill="var(--border-subtle)" stroke="${color}" stroke-width="1.6" rx="5" />
           <line x1="${x - 16}" x2="${x + 16}" y1="${
               yScale(median) + margin.top
           }" y2="${
@@ -9831,8 +9844,8 @@ function renderMiniChartSvg(
 
             return adjusted.map((ind) => `
                 <g class="model-indicator" data-boxplot-idx="${idx}">
-                  <line x1="${lineStartX}" x2="${lineEndX}" y1="${ind.y}" y2="${ind.y}" stroke="rgba(255,255,255,0.7)" stroke-width="1" stroke-linecap="round" />
-                  <text x="${labelStartX}" y="${ind.adjustedY + 4}" fill="rgba(255,255,255,0.9)" font-size="9" font-weight="300">${escapeHtml(ind.model)}</text>
+                  <line x1="${lineStartX}" x2="${lineEndX}" y1="${ind.y}" y2="${ind.y}" stroke="var(--text-secondary)" stroke-width="1" stroke-linecap="round" />
+                  <text x="${labelStartX}" y="${ind.adjustedY + 4}" fill="var(--text-primary)" font-size="9" font-weight="300">${escapeHtml(ind.model)}</text>
                 </g>
             `).join("");
         })
@@ -9844,7 +9857,7 @@ function renderMiniChartSvg(
         x2="${margin.left}"
         y1="${margin.top}"
         y2="${height - margin.bottom}"
-        stroke="rgba(255,255,255,0.55)"
+        stroke="var(--text-secondary)"
         stroke-width="1"
       />
     `;
@@ -9957,7 +9970,7 @@ function renderChartRangeSvg(
         <g>
           <line x1="${margin.left}" x2="${
               width - margin.right
-          }" y1="${y}" y2="${y}" stroke="rgba(255,255,255,0.08)" />
+          }" y1="${y}" y2="${y}" stroke="var(--border-medium)" />
           <text x="${margin.left - 10}" y="${
               y + 4
           }" fill="var(--text-secondary)" font-size="${tickFont}" text-anchor="end">
@@ -9975,7 +9988,7 @@ function renderChartRangeSvg(
         <g>
           <line x1="${x}" x2="${x}" y1="${margin.top}" y2="${
               height - margin.bottom
-          }" stroke="rgba(255,255,255,0.06)" />
+          }" stroke="var(--border-subtle)" />
           <text x="${x}" y="${height - margin.bottom + 26}" fill="var(--text-secondary)" font-size="${tickFont}" text-anchor="middle">
             ${formatTick(tick)}
           </text>
@@ -10106,7 +10119,7 @@ function renderChartRangeSvg(
             <path
               d="M ${margin.left} ${margin.top} L ${margin.left} ${height - margin.bottom} L ${width - margin.right} ${height - margin.bottom}"
               fill="none"
-              stroke="rgba(255,255,255,0.6)"
+              stroke="var(--text-secondary)"
               stroke-width="1.2"
               stroke-linecap="round"
             />
@@ -10123,15 +10136,15 @@ function renderChartRangeSvg(
                 return `
             ${inDomain ? `
             <g class="mrd" pointer-events="none">
-              <line x1="${sx}" x2="${sx}" y1="${margin.top}" y2="${height - margin.bottom}" stroke="rgba(255,255,255,0.9)" stroke-width="1.5"/>
-              <rect x="${bgX}" y="${margin.top - 20}" width="${bgW}" height="16" rx="3" fill="rgba(0,0,0,0.72)"/>
-              <text fill="rgba(255,255,255,0.9)" font-size="10" text-anchor="middle" x="${bgX + bgW / 2}" y="${margin.top - 7}">${displayDate}</text>
+              <line x1="${sx}" x2="${sx}" y1="${margin.top}" y2="${height - margin.bottom}" stroke="var(--text-primary)" stroke-width="1.5"/>
+              <rect x="${bgX}" y="${margin.top - 20}" width="${bgW}" height="16" rx="3" fill="var(--dark-bg-strong)"/>
+              <text fill="var(--text-primary)" font-size="10" text-anchor="middle" x="${bgX + bgW / 2}" y="${margin.top - 7}">${displayDate}</text>
             </g>
             ` : ""}
             <g class="mrh" opacity="0" pointer-events="none">
-              <line class="mrh-line" x1="0" x2="0" y1="${margin.top}" y2="${height - margin.bottom}" stroke="rgba(255,255,255,0.75)" stroke-width="1.2" stroke-dasharray="5 3"/>
-              <rect class="mrh-bg" x="0" y="${margin.top - 20}" width="74" height="16" rx="3" fill="rgba(0,0,0,0.72)"/>
-              <text class="mrh-text" fill="rgba(255,255,255,0.9)" font-size="10" text-anchor="middle" x="0" y="${margin.top - 7}"></text>
+              <line class="mrh-line" x1="0" x2="0" y1="${margin.top}" y2="${height - margin.bottom}" stroke="var(--text-secondary)" stroke-width="1.2" stroke-dasharray="5 3"/>
+              <rect class="mrh-bg" x="0" y="${margin.top - 20}" width="74" height="16" rx="3" fill="var(--dark-bg-strong)"/>
+              <text class="mrh-text" fill="var(--text-primary)" font-size="10" text-anchor="middle" x="0" y="${margin.top - 7}"></text>
             </g>
             `;
             })() : ""}
@@ -12547,22 +12560,7 @@ function renderMapSearchBar(window: 1 | 2 = 1) {
             data-action="toggle-map-draw"
             data-window="${window}"
             aria-label="${s.drawState.active ? "Stop drawing" : "Start drawing"}"
-            style="
-              display: flex;
-              align-items: center;
-              justify-content: center;
-              width: 36px;
-              height: 36px;
-              padding: 0;
-              border: 1px solid rgba(148, 163, 184, 0.3);
-              border-radius: 6px;
-              background: ${s.drawState.active ? "rgba(52, 211, 153, 0.1)" : "rgba(15, 23, 42, 0.85)"};
-              color: ${s.drawState.active ? "#34d399" : "var(--text-secondary)"};
-              cursor: pointer;
-              transition: all 0.2s ease;
-            "
-            onmouseover="this.style.background='rgba(52, 211, 153, 0.2)';this.style.color='#34d399';"
-            onmouseout="this.style.background='${s.drawState.active ? "rgba(52, 211, 153, 0.1)" : "rgba(15, 23, 42, 0.85)"}';this.style.color='${s.drawState.active ? "#34d399" : "var(--text-secondary)"}';"
+            class="map-icon-btn${s.drawState.active ? ' map-icon-btn--active-green' : ''}"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
@@ -12576,20 +12574,8 @@ function renderMapSearchBar(window: 1 | 2 = 1) {
             data-window="${window}"
             aria-label="Clear drawn selection"
             title="Clear drawn selection"
-            style="
-              display: flex;
-              align-items: center;
-              justify-content: center;
-              width: 36px;
-              height: 36px;
-              padding: 0;
-              border: 1px solid rgba(148, 163, 184, 0.3);
-              border-radius: 6px;
-              background: rgba(239,68,68,0.10);
-              color: #f87171;
-              cursor: pointer;
-              transition: all 0.2s ease;
-            "
+            class="map-icon-btn map-icon-btn--active-green"
+            style="color:#f87171;background:rgba(239,68,68,0.10);border-color:rgba(239,68,68,0.3);"
             onmouseover="this.style.background='rgba(239,68,68,0.22)';"
             onmouseout="this.style.background='rgba(239,68,68,0.10)';"
           >
@@ -12603,22 +12589,7 @@ function renderMapSearchBar(window: 1 | 2 = 1) {
             data-window="${window}"
             aria-label="Map options"
             aria-expanded="${s.mapOptionsOpen ? "true" : "false"}"
-            style="
-              display: flex;
-              align-items: center;
-              justify-content: center;
-              width: 36px;
-              height: 36px;
-              padding: 0;
-              border: 1px solid rgba(148, 163, 184, 0.3);
-              border-radius: 6px;
-              background: ${s.mapOptionsOpen ? "rgba(56, 189, 248, 0.14)" : "rgba(15, 23, 42, 0.85)"};
-              color: ${s.mapOptionsOpen ? "#7dd3fc" : "var(--text-secondary)"};
-              cursor: pointer;
-              transition: all 0.2s ease;
-            "
-            onmouseover="this.style.background='rgba(56, 189, 248, 0.18)';this.style.color='#7dd3fc';"
-            onmouseout="this.style.background='${s.mapOptionsOpen ? "rgba(56, 189, 248, 0.14)" : "rgba(15, 23, 42, 0.85)"}';this.style.color='${s.mapOptionsOpen ? "#7dd3fc" : "var(--text-secondary)"}';"
+            class="map-icon-btn${s.mapOptionsOpen ? ' map-icon-btn--active-blue' : ''}"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M3 6h18"></path>
@@ -12635,19 +12606,7 @@ function renderMapSearchBar(window: 1 | 2 = 1) {
                   ? `
           <div
             data-role="map-options-menu"
-            style="
-              position: absolute;
-              right: 0;
-              top: calc(100% + 8px);
-              min-width: 190px;
-              padding: 10px;
-              border-radius: 10px;
-              border: 1px solid var(--border-medium);
-              background: rgba(12, 18, 32, 0.96);
-              box-shadow: var(--shadow-elevated);
-              z-index: 22;
-              backdrop-filter: blur(10px);
-            "
+            class="map-options-menu"
           >
             <div style="font-size: 11px; letter-spacing: 0.45px; text-transform: uppercase; color: var(--text-secondary); margin-bottom: 8px;">
               Map options
@@ -12669,23 +12628,7 @@ function renderMapSearchBar(window: 1 | 2 = 1) {
             data-action="toggle-split-view"
             aria-label="Add second view"
             title="Add second view"
-            style="
-              display: flex;
-              align-items: center;
-              justify-content: center;
-              width: 36px;
-              height: 36px;
-              padding: 0;
-              border: 1px solid rgba(148, 163, 184, 0.3);
-              border-radius: 6px;
-              background: rgba(15, 23, 42, 0.85);
-              color: var(--text-secondary);
-              cursor: pointer;
-              transition: all 0.2s ease;
-              flex-shrink: 0;
-            "
-            onmouseover="this.style.background='rgba(52,211,153,0.15)';this.style.color='#34d399';this.style.borderColor='rgba(52,211,153,0.4)';"
-            onmouseout="this.style.background='rgba(15,23,42,0.85)';this.style.color='var(--text-secondary)';this.style.borderColor='rgba(148,163,184,0.3)';"
+            class="map-icon-btn"
           >
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <rect x="3" y="3" width="18" height="18" rx="2"/>
@@ -13187,6 +13130,17 @@ function setupBrandEyeTracking(root: HTMLElement) {
 function attachEventHandlers(_params: { resolutionFill: number }) {
     if (!appRoot) return;
     const root = appRoot;
+
+    // Theme toggle
+    const themeBtn = root.querySelector<HTMLButtonElement>('[data-action="toggle-theme"]');
+    if (themeBtn) {
+        themeBtn.addEventListener('click', () => {
+            const isLight = document.documentElement.dataset.theme === 'light';
+            document.documentElement.dataset.theme = isLight ? '' : 'light';
+            localStorage.setItem('theme', isLight ? 'dark' : 'light');
+            render();
+        });
+    }
 
     setupBrandEyeTracking(root);
 
@@ -16313,6 +16267,12 @@ async function init() {
     appRoot = document.querySelector<HTMLDivElement>("#app");
     if (!appRoot) {
         throw new Error("Root element #app not found");
+    }
+
+    // Restore saved theme preference
+    const savedTheme = localStorage.getItem('theme');
+    if (savedTheme === 'light') {
+        document.documentElement.dataset.theme = 'light';
     }
 
     // Register callback for state updates from chat/backend

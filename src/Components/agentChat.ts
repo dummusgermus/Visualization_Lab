@@ -44,13 +44,13 @@ export function formatChatMessage(text: string): string {
     // Convert code blocks first (before other markdown)
     formatted = formatted.replace(
         /```(.+?)```/gs,
-        '<code style="background: rgba(255,255,255,0.1); padding: 2px 6px; border-radius: 4px; font-family: monospace; display: inline-block; margin: 4px 0; line-height: 1.4;">$1</code>',
+        '<code style="background: var(--bg-strong); padding: 2px 6px; border-radius: 4px; font-family: monospace; display: inline-block; margin: 4px 0; line-height: 1.4;">$1</code>',
     );
 
     // Inline code
     formatted = formatted.replace(
         /`(.+?)`/g,
-        '<code style="background: rgba(255,255,255,0.1); padding: 2px 4px; border-radius: 3px; font-family: monospace; font-size: 0.9em; vertical-align: middle; line-height: 1.4;">$1</code>',
+        '<code style="background: var(--bg-strong); padding: 2px 4px; border-radius: 3px; font-family: monospace; font-size: 0.9em; vertical-align: middle; line-height: 1.4;">$1</code>',
     );
 
     // Bold: **text** or __text__

@@ -864,24 +864,24 @@ def aggregate_on_demand(request: OnDemandAggregateRequest):
                     timestamps.append(ts)
                 arr = entry.get("data")
                 if arr is None:
-                    values.append(float("nan"))
+                    values.append(None)
                     continue
 
                 window = np.asarray(arr)
                 if mask_arr is not None:
                     valid_mask = np.isfinite(mask_arr) & np.isfinite(window)
                     if not valid_mask.any():
-                        values.append(float("nan"))
+                        values.append(None)
                         continue
                     values.append(float(np.mean(window[valid_mask])))
                 else:
                     valid = np.isfinite(window)
                     if not valid.any():
-                        values.append(float("nan"))
+                        values.append(None)
                         continue
                     values.append(float(np.mean(window[valid])))
 
-            finite_values = [v for v in values if np.isfinite(v)]
+            finite_values = [v for v in values if v is not None]
             return model, {
                 "timestamps": timestamps,
                 "values": values,
@@ -904,7 +904,7 @@ def aggregate_on_demand(request: OnDemandAggregateRequest):
             "resolution": request.resolution,
             "step_days": request.step_days,
             "mask_applied": request.mask is not None,
-            "models": results,
+            "results": results,
             "status": "ok",
         }
 

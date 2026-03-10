@@ -70,7 +70,7 @@ import {
     generateToyRangeSeries,
 } from "./Utils/mockChartData";
 import { registerStateUpdateCallback } from "./Utils/stateUpdate";
-import { generateReport } from "./Utils/reportGenerator";
+import { openExportDialog } from "./Components/exportDialog";
 import { captureThumbnailDataUrl } from "./Utils/screenshot";
 import {
     convertMinMax,
@@ -8835,7 +8835,7 @@ function renderWindow2Pane(vpW: number, vpH: number): string {
                 <div class="sidebar-footer">
                   <div class="sidebar-footer-item"><button type="button" class="sidebar-footer-btn" data-action="open-save-state" data-window="2" title="Save"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Save</button>${renderConfigDropup(state, "save", "2")}</div>
                   <div class="sidebar-footer-item"><button type="button" class="sidebar-footer-btn" data-action="open-load-state" data-window="2" title="Load"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Load</button>${renderConfigDropup(state, "load", "2")}</div>
-                  <button type="button" class="sidebar-footer-btn" data-action="generate-report" title="Report"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>Report</button>
+                  <button type="button" class="sidebar-footer-btn" data-action="open-export" title="Export"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Export</button>
                 </div>
               </aside>
               ${renderSidebarToggle(w2.sidebarOpen, "2")}
@@ -9242,7 +9242,7 @@ function render() {
                 <div class="sidebar-footer">
                   <div class="sidebar-footer-item"><button type="button" class="sidebar-footer-btn" data-action="open-save-state" data-window="1" title="Save"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Save</button>${renderConfigDropup(state, "save", "1")}</div>
                   <div class="sidebar-footer-item"><button type="button" class="sidebar-footer-btn" data-action="open-load-state" data-window="1" title="Load"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Load</button>${renderConfigDropup(state, "load", "1")}</div>
-                  <button type="button" class="sidebar-footer-btn" data-action="generate-report" title="Report"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>Report</button>
+                  <button type="button" class="sidebar-footer-btn" data-action="open-export" title="Export"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Export</button>
                 </div>
               </aside>
               ${renderSidebarToggle(state.sidebarOpen, "1")}
@@ -9373,15 +9373,13 @@ function render() {
             </button>
             ${renderConfigDropup(state, "load", "1")}
           </div>
-          <button type="button" class="sidebar-footer-btn" data-action="generate-report" title="Generate a PDF report of the current view and settings">
+          <button type="button" class="sidebar-footer-btn" data-action="open-export" title="Export — Screenshot, Animation, Report, Data">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-              <polyline points="14 2 14 8 20 8"/>
-              <line x1="16" y1="13" x2="8" y2="13"/>
-              <line x1="16" y1="17" x2="8" y2="17"/>
-              <polyline points="10 9 9 9 8 9"/>
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/>
+              <line x1="12" y1="15" x2="12" y2="3"/>
             </svg>
-            Report
+            Export
           </button>
         </div>
       </aside>
@@ -13869,26 +13867,18 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         }),
     );
 
-    const reportBtns = root.querySelectorAll<HTMLButtonElement>(
-        '[data-action="generate-report"]',
+    const openExportBtns = root.querySelectorAll<HTMLButtonElement>(
+        '[data-action="open-export"]',
     );
-    reportBtns.forEach((btn) =>
+    openExportBtns.forEach((btn) =>
         btn.addEventListener("click", () => {
-            btn.disabled = true;
-            btn.textContent = "Generating…";
-            generateReport(state).finally(() => {
-                reportBtns.forEach((b) => {
-                    b.disabled = false;
-                    b.innerHTML = `
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                  <polyline points="14 2 14 8 20 8"/>
-                  <line x1="16" y1="13" x2="8" y2="13"/>
-                  <line x1="16" y1="17" x2="8" y2="17"/>
-                  <polyline points="10 9 9 9 8 9"/>
-                </svg>
-                Report`;
-                });
+            openExportDialog(state, {
+                setAnimationDate: (date: string) => {
+                    state.date = date;
+                    render();
+                },
+                loadData: () => loadClimateData(),
+                getState: () => state,
             });
         }),
     );

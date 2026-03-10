@@ -272,6 +272,7 @@ def load_time_series(
             'time': date_obj.strftime('%Y-%m-%d'),
             'field': field,
             'scenario': local_scenario,
+            'shape': tuple(data.shape),
         }
         if include_nan_stats:
             finite_mask = np.isfinite(data)

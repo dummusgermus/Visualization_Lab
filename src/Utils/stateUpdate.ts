@@ -117,7 +117,7 @@ export function updateState(
         updates.selectedUnit = newState.selectedUnit;
     }
     if (newState.masks) {
-        updates.masks = newState.masks.map((mask: any) => ({
+        const processedMasks = newState.masks.map((mask: any) => ({
             id: mask.id,
             variable: mask.variable,
             unit: mask.unit,
@@ -129,6 +129,15 @@ export function updateState(
             kind: mask.kind ?? "binary",
             probabilityThreshold: mask.probabilityThreshold,
         }));
+        
+        // Map masks to mode-specific array based on target mode
+        if (newState.mode === "Ensemble") {
+            updates.ensembleMasks = processedMasks;
+        } else if (newState.mode === "Compare") {
+            updates.compareMasks = processedMasks;
+        } else {
+            updates.exploreMasks = processedMasks;
+        }
     }
     if (newState.mode === "Ensemble") {
         if (newState.selectedScenarios) {

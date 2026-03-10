@@ -4029,7 +4029,8 @@ function openMapRangeOverlay(delayMs = 560) {
     mapRangeDelayTimer = window.setTimeout(() => {
         mapRangeDelayTimer = null;
         if (!state.mapMarker || state.mapPolygon) return;
-        const range = buildMapRangeForPreset(state.mapRangePreset, state.date) ?? buildMapRangeWindow(state.date);
+        const currentDate = getCurrentDateForMode(state);
+        const range = buildMapRangeForPreset(state.mapRangePreset, currentDate) ?? buildMapRangeWindow(currentDate);
         state.mapRangeStart = range.start;
         state.mapRangeEnd = range.end;
         state.mapRangeOpen = true;
@@ -4257,8 +4258,9 @@ async function loadMapInfoData() {
                   new Set(metaData.scenarios.map(normalizeScenarioLabel)),
               )
             : scenarios;
+        const currentDate = getCurrentDateForMode(state);
         const matchingScenarios = scenarioOptions.filter((scenario) =>
-            isDateWithinRange(state.date, getTimeRangeForScenario(scenario)),
+            isDateWithinRange(currentDate, getTimeRangeForScenario(scenario)),
         );
         const activeScenarios = matchingScenarios.length
             ? matchingScenarios.includes("Historical")
@@ -4286,7 +4288,7 @@ async function loadMapInfoData() {
         for (const scenario of activeScenarios) {
             if (requestId !== mapInfoRequestId) return;
             const dateForScenario = clipDateToRange(
-                state.date,
+                currentDate,
                 getTimeRangeForScenario(scenario),
             );
 
@@ -4868,8 +4870,9 @@ async function loadMapInfoDataW2() {
         const scenarioOptions = metaData?.scenarios?.length
             ? Array.from(new Set(metaData.scenarios.map(normalizeScenarioLabel)))
             : scenarios;
+        const currentDateW2 = getCurrentDateForMode(w2);
         const matchingScenarios = scenarioOptions.filter(scenario =>
-            isDateWithinRange(w2.date, getTimeRangeForScenario(scenario)));
+            isDateWithinRange(currentDateW2, getTimeRangeForScenario(scenario)));
         const activeScenarios = matchingScenarios.length
             ? matchingScenarios.includes("Historical") ? ["Historical"] : matchingScenarios
             : scenarioOptions;
@@ -4884,7 +4887,7 @@ async function loadMapInfoDataW2() {
 
         for (const scenario of activeScenarios) {
             if (requestId !== mapInfoRequestIdW2) return;
-            const dateForScenario = clipDateToRange(w2.date, getTimeRangeForScenario(scenario));
+            const dateForScenario = clipDateToRange(currentDateW2, getTimeRangeForScenario(scenario));
             await Promise.allSettled(
                 modelOptions.map(async (model) => {
                     if (requestId !== mapInfoRequestIdW2) return;
@@ -5063,7 +5066,8 @@ function openMapRangeOverlayW2(delayMs = 560) {
     mapRangeDelayTimerW2 = window.setTimeout(() => {
         mapRangeDelayTimerW2 = null;
         if (!w2.mapMarker) return;
-        const range = buildMapRangeForPreset(w2.mapRangePreset, w2.date) ?? buildMapRangeWindow(w2.date);
+        const currentDate = getCurrentDateForMode(w2);
+        const range = buildMapRangeForPreset(w2.mapRangePreset, currentDate) ?? buildMapRangeWindow(currentDate);
         w2.mapRangeStart = range.start;
         w2.mapRangeEnd = range.end;
         w2.mapRangeOpen = true;
@@ -5149,7 +5153,7 @@ function attachW2MapInfoAndRangeHandlers(root: HTMLElement) {
                 closeMapInfoWindowW2();
             } else {
                 w2.mapInfoOpen = true;
-                if (!applyRangeSamplesAsMapInfoW2(w2.date)) void loadMapInfoDataW2();
+                if (!applyRangeSamplesAsMapInfoW2(getCurrentDateForMode(w2))) void loadMapInfoDataW2();
                 render();
             }
         });
@@ -5165,7 +5169,7 @@ function attachW2MapInfoAndRangeHandlers(root: HTMLElement) {
         const preset = rangePresetSelect.value as Window2State["mapRangePreset"];
         w2.mapRangePreset = preset;
         if (preset !== "custom") {
-            const range = buildMapRangeForPreset(preset, w2.date);
+            const range = buildMapRangeForPreset(preset, getCurrentDateForMode(w2));
             if (range) { w2.mapRangeStart = range.start; w2.mapRangeEnd = range.end; void loadMapRangeDataW2(); }
         } else {
             render();
@@ -12573,6 +12577,18 @@ function getModeMasks(ms: AppState | Window2State): MaskArray {
     return ms.mode === "Explore" ? ms.exploreMasks : ms.mode === "Compare" ? ms.compareMasks : ms.ensembleMasks;
 }
 
+function getCurrentDateForMode(state: AppState | Window2State): string {
+    switch (state.mode) {
+        case "Ensemble":
+            return state.ensembleDate;
+        case "Compare":
+            return state.date; // Compare mode uses the main date field
+        case "Explore":
+        default:
+            return state.date;
+    }
+}
+
 function renderMapSearchBar(window: 1 | 2 = 1) {
     const s = getWindowState(window);
     if (s.canvasView !== "map") return "";
@@ -15949,7 +15965,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         } else {
             state.mapInfoOpen = true;
             // Populate from range samples if available, otherwise fetch
-            if (!applyRangeSamplesAsMapInfo(state.date)) {
+            if (!applyRangeSamplesAsMapInfo(getCurrentDateForMode(state))) {
                 void loadMapInfoData();
             }
             render();
@@ -15972,7 +15988,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         const preset = mapRangePresetSelect.value as AppState["mapRangePreset"];
         state.mapRangePreset = preset;
         if (preset !== "custom") {
-            const range = buildMapRangeForPreset(preset, state.date);
+            const range = buildMapRangeForPreset(preset, getCurrentDateForMode(state));
             if (range) {
                 state.mapRangeStart = range.start;
                 state.mapRangeEnd = range.end;
@@ -16009,7 +16025,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             state.mapRangeStart = startVal;
             state.mapRangeEnd = endVal;
         } else {
-            const range = buildMapRangeForPreset(state.mapRangePreset, state.date);
+            const range = buildMapRangeForPreset(state.mapRangePreset, getCurrentDateForMode(state));
             if (range) {
                 state.mapRangeStart = range.start;
                 state.mapRangeEnd = range.end;
@@ -16457,7 +16473,8 @@ async function init() {
             }
             // If no explicit range dates were supplied, derive them from the current date + preset
             if (state.mapRangeOpen && !updates.mapRangeStart) {
-                const range = buildMapRangeForPreset(state.mapRangePreset, state.date) ?? buildMapRangeWindow(state.date);
+                const currentDate = getCurrentDateForMode(state);
+                const range = buildMapRangeForPreset(state.mapRangePreset, currentDate) ?? buildMapRangeWindow(currentDate);
                 state.mapRangeStart = range.start;
                 state.mapRangeEnd = range.end;
             }
@@ -16790,9 +16807,9 @@ async function init() {
             (target as SVGSVGElement).querySelector<SVGGElement>('.mrh')?.setAttribute('opacity', '0');
             // Restore info panel to the actual selected date
             if (target.closest('#map-range-overlay-w2')) {
-                applyRangeSamplesAsMapInfoW2(state.window2.date);
+                applyRangeSamplesAsMapInfoW2(getCurrentDateForMode(state.window2));
             } else {
-                applyRangeSamplesAsMapInfo(state.date);
+                applyRangeSamplesAsMapInfo(getCurrentDateForMode(state));
             }
         }
     }, true);

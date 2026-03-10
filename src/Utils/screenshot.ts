@@ -195,7 +195,7 @@ export async function captureMapScreenshot(
         const base64 = output.toDataURL("image/jpeg", 0.7).split(",")[1];
         console.debug(`[Screenshot] Base64 size: ${(base64.length / 1024).toFixed(1)} KB`);
 
-        saveScreenshotDebug(output);
+        //saveScreenshotDebug(output);
         return base64;
     } catch (e) {
         console.warn("Failed to capture canvas screenshot:", e);

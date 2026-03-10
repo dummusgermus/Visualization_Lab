@@ -54,8 +54,11 @@ export interface ChatRequest {
             id?: number | null;
             variable?: string;
             unit?: string;
+            statistic?: EnsembleStatistic;
+            kind?: "binary" | "probability";
             lowerBound?: number | null;
             upperBound?: number | null;
+            probabilityThreshold?: number; // Minimum probability (0-1) to show pixel — only for probability masks
         }[];
         screenshot?: string | null; // ← neu: Base64-encoded PNG
         [key: string]: any;
@@ -249,6 +252,7 @@ export function buildChatContext(
             kind: mask.kind,
             lowerBound: mask.lowerBound,
             upperBound: mask.upperBound,
+            probabilityThreshold: mask.probabilityThreshold, // Include probability threshold for probability masks
         }));
     }
 

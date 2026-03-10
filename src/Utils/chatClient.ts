@@ -164,6 +164,20 @@ export async function describeScreenshotForReport(
     }
 }
 
+function getActiveMasks(state: AppState) {
+    const masksSource =
+        state.mode === "Explore"
+            ? state.exploreMasks
+            : state.mode === "Compare"
+              ? state.compareMasks
+              : state.mode === "Ensemble"
+                ? state.ensembleMasks
+                : [];
+    return masksSource.filter(
+        (m) => m.lowerBound !== null || m.upperBound !== null,
+    );
+}
+
 /**
  * Build context object from current application state
  */
@@ -243,8 +257,9 @@ export function buildChatContext(
             (context.ensembleVariable = state.ensembleVariable),
             (context.ensembleUnit = state.ensembleUnit));
     }
-    if (state.masks && state.masks.length > 0) {
-        context.masks = state.masks.map((mask) => ({
+    const activeMasks = getActiveMasks(state);
+    if (activeMasks.length > 0) {
+        context.masks = activeMasks.map((mask) => ({
             id: mask.id,
             variable: mask.variable,
             unit: mask.unit,

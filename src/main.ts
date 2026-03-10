@@ -9025,7 +9025,7 @@ function renderApiOfflineModal(state: AppState): string {
           </div>
           <div style="${styleAttr(styles.infoModalFooter)}">
             <a
-              href="/data_processing.zip"
+              href="data_processing.zip"
               download="data_processing.zip"
               style="${styleAttr(buttonStyle)}"
             >

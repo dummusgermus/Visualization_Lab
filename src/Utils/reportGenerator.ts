@@ -199,7 +199,15 @@ function buildMainViewLines(state: AppState): string[] {
         }
 
         // Active masks
-        const activeMasks = (state.masks ?? []).filter(
+        const masksSource =
+            state.mode === "Explore"
+                ? state.exploreMasks
+                : state.mode === "Compare"
+                  ? state.compareMasks
+                  : state.mode === "Ensemble"
+                    ? state.ensembleMasks
+                    : [];
+        const activeMasks = masksSource.filter(
             (m) => m.lowerBound !== null || m.upperBound !== null,
         );
         if (activeMasks.length > 0) {

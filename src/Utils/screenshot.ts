@@ -241,17 +241,5 @@ export function captureThumbnailDataUrl(
 }
 
 /**
- * Debug helper: triggers a download of the canvas as JPEG.
+ * (Removed unused debug helper saveScreenshotDebug to satisfy noUnusedLocals.)
  */
-function saveScreenshotDebug(canvas: HTMLCanvasElement): void {
-    try {
-        const link = document.createElement("a");
-        link.download = `chat-screenshot-debug-${Date.now()}.jpg`;
-        link.href = canvas.toDataURL("image/jpeg", 0.7);
-        link.click();
-        link.remove();
-        console.debug("[Screenshot] Debug image downloaded.");
-    } catch (e) {
-        console.warn("[Screenshot] Debug save failed:", e);
-    }
-}

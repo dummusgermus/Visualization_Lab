@@ -5,11 +5,14 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "predev": "npm run prepare:data-zip",
     "build": "tsc && vite build",
+    "prebuild": "npm run prepare:data-zip",
     "preview": "vite preview",
     "generate:map-labels": "node scripts/generate-map-labels.mjs",
     "predeploy": "npm run build",
-    "deploy": "gh-pages -d dist"
+    "deploy": "gh-pages -d dist",
+    "prepare:data-zip": "node scripts/create-data-processing-zip.mjs"
   },
   "devDependencies": {
     "@types/d3": "^7.4.3",
@@ -18,7 +21,8 @@
     "all-the-cities": "^3.1.0",
     "gh-pages": "^6.3.0",
     "typescript": "~5.9.3",
-    "vite": "^7.2.4"
+    "vite": "^7.2.4",
+    "adm-zip": "^0.5.16"
   },
   "dependencies": {
     "any-ascii": "^0.3.3",

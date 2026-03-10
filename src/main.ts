@@ -1,4 +1,4 @@
-﻿import * as d3 from "d3";
+import * as d3 from "d3";
 import {
     attachChatHandlers,
     type ChatMessage,
@@ -1492,6 +1492,8 @@ export type Window2State = {
 };
 
 //TODO set 0 from available models to active model and so on
+let apiOfflineDelayReady = false;
+
 const state: AppState = {
     mode: "Explore",
     panelTab: "Manual",
@@ -8791,7 +8793,7 @@ function renderWindow2Pane(vpW: number, vpH: number): string {
             <div style="text-align:center;padding:20px;color:#f87171;font-size:13px;">${w2.dataError}</div>
         </div>` : "";
 
-    const noDataHtml = !w2.isLoading && !w2.dataError && !w2.currentData ? `
+    const noDataHtml = !w2.isLoading && !w2.dataError && !w2.currentData && state.apiAvailable === true ? `
         <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.4);z-index:5;pointer-events:none;">
             <div style="text-align:center;">
                 <div style="font-size:14px;font-weight:600;color:var(--text-primary);">No data loaded</div>
@@ -8963,6 +8965,74 @@ function renderBranding() {
         >
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${themeIcon}</svg>
         </button>
+      </div>
+    `;
+}
+
+function renderApiOfflineModal(state: AppState): string {
+    if (state.apiAvailable !== false || !apiOfflineDelayReady) return "";
+
+    const overlayStyle = mergeStyles(styles.infoModalOverlay, {
+        position: "fixed",
+        inset: "0",
+        background: "rgba(3,7,18,0.35)",
+        backdropFilter: "blur(6px)",
+        zIndex: 20000,
+        pointerEvents: "auto",
+    });
+
+    const modalStyle = mergeStyles(styles.infoModal, {
+        maxWidth: "520px",
+        width: "min(520px, 94vw)",
+    });
+
+    const bodyStyle = mergeStyles(styles.infoModalBody, {
+        marginTop: 6,
+        lineHeight: 1.6,
+        whiteSpace: "normal",
+        wordBreak: "break-word",
+    });
+
+    const buttonStyle = mergeStyles(styles.infoModalConfirm, {
+        textDecoration: "none",
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        whiteSpace: "nowrap",
+    });
+
+    return `
+      <div data-role="api-offline-overlay" style="${styleAttr(overlayStyle)}">
+        <div style="${styleAttr(
+            modalStyle,
+        )}" role="dialog" aria-modal="true" aria-label="Missing data access">
+          <div style="${styleAttr(styles.infoModalHeader)}">
+            <div style="${styleAttr(styles.infoModalTitle)}">
+              Missing data access
+            </div>
+          </div>
+          <div style="${styleAttr(bodyStyle)}">
+            <p style="display:block;margin:0 0 10px 0;line-height:1.6;white-space:normal;word-break:break-word;">
+              Download our backend and run
+              <span style="font-family:var(--font-geist-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace);font-weight:400;">api_server.py</span>
+              on your local machine.
+            </p>
+            <p style="display:block;margin:0;line-height:1.6;white-space:normal;word-break:break-word;">
+              This will start a Python server on
+              <span style="font-family:var(--font-geist-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace);font-weight:400;">http://0.0.0.0:8000</span>.
+              Once it is running, refresh this page.
+            </p>
+          </div>
+          <div style="${styleAttr(styles.infoModalFooter)}">
+            <a
+              href="/data_processing.zip"
+              download="data_processing.zip"
+              style="${styleAttr(buttonStyle)}"
+            >
+              Download Python server (ZIP)
+            </a>
+          </div>
+        </div>
       </div>
     `;
 }
@@ -9143,8 +9213,8 @@ function render() {
                         : ""
                 }
                 ${
-                    !state.isLoading && !state.dataError && !state.currentData
-                        ? `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.5);z-index:5;">
+                    !state.isLoading && !state.dataError && !state.currentData && state.apiAvailable === true
+                        ? `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.5);z-index:5;pointer-events:none;">
                         <div style="text-align:center;">
                           <div style="${styleAttr(styles.mapTitle)}">No data loaded</div>
                           <div style="${styleAttr(styles.mapSubtitle)}">Adjust parameters to load climate data</div>
@@ -9198,33 +9268,23 @@ function render() {
               ${renderLoadingIndicator()}
               ${
                   state.dataError
-                      ? `<div style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.8); z-index: 10;">
-                      <div style="text-align: center; max-width: 600px; padding: 20px;">
+                      ? state.apiAvailable === false
+                          ? ""
+                          : `<div style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.8); z-index: 10;">
+                      <div style="text-align: center; max-width: 640px; padding: 24px;">
                         <div style="${styleAttr(
                             styles.mapTitle,
                         )}">Error loading data</div>
                         <div style="${styleAttr(styles.mapSubtitle)}">${
                             state.dataError
                         }</div>
-                        ${
-                            state.apiAvailable === false
-                                ? `<div style="${styleAttr(
-                                      mergeStyles(styles.mapSubtitle, {
-                                          marginTop: 12,
-                                          fontSize: 12,
-                                      }),
-                                  )}">
-                                Make sure the Python API server is running. Check the terminal for connection details.
-                              </div>`
-                                : ""
-                        }
                       </div>
                     </div>`
                       : ""
               }
               ${
-                  !state.isLoading && !state.dataError && !state.currentData
-                      ? `<div style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.5); z-index: 5;">
+                  !state.isLoading && !state.dataError && !state.currentData && state.apiAvailable === true
+                      ? `<div style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.5); z-index: 5; pointer-events:none;">
                       <div style="text-align: center;">
                         <div style="${styleAttr(
                             styles.mapTitle,
@@ -9243,7 +9303,7 @@ function render() {
 
       ${!state.splitView ? renderMapRangeOverlay() : ""}
 
-      ${!state.splitView ? `
+      ${!state.splitView && state.apiAvailable !== false ? `
       <aside data-role="sidebar" class="sidebar" style="width: ${SIDEBAR_WIDTH}px; transform: ${
           state.sidebarOpen
               ? "translateX(0)"
@@ -9334,7 +9394,8 @@ function render() {
       ${
           !state.splitView &&
           state.canvasView === "map" &&
-          !state.mapRangeOpen
+          !state.mapRangeOpen &&
+          state.apiAvailable !== false
               ? renderTimeSlider({
                     date:
                         state.mode == "Ensemble"
@@ -9352,6 +9413,7 @@ function render() {
       }
 
       ${renderTutorialOverlay(getTutorialState())}
+      ${renderApiOfflineModal(state)}
       ${renderConfigDescriptionEditor(state)}
       ${renderConfigNotes(state)}
     </div>
@@ -16502,10 +16564,19 @@ async function init() {
 
     render();
 
+    // Start a short delay timer for showing offline UI – avoids flashing the
+    // download window briefly when the API is actually available.
+    window.setTimeout(() => {
+        apiOfflineDelayReady = true;
+        if (state.apiAvailable === false) {
+            render();
+        }
+    }, 500);
+
     checkApiAvailability().then(() => {
         render();
-    
-        if (state.canvasView === "map" && state.mode === "Explore") {
+
+        if (state.apiAvailable !== false && state.canvasView === "map" && state.mode === "Explore") {
             loadClimateData();
         }
     });

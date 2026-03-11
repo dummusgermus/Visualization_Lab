@@ -13263,6 +13263,8 @@ function renderChatSectionWrapper() {
         display: "flex",
         flexDirection: "column",
         gap: 8,
+        flex: 1,
+        minHeight: 0,
     })}">
       <div style="${styleAttr(styles.sectionTitle)}">Chat</div>
       ${renderChatSection(

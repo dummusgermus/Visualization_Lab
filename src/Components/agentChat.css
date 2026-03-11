@@ -2,6 +2,8 @@
     display: flex;
     flex-direction: column;
     gap: 12px;
+    flex: 1;
+    min-height: 0;
 }
 
 .chat-lead {
@@ -21,8 +23,8 @@
     width: 100%;
     box-sizing: border-box;
     overflow-y: auto;
-    height: calc(100vh - 406px);
-    max-height: calc(100vh - 406px);
+    flex: 1;
+    min-height: 0;
 }
 
 .chat-bubble {

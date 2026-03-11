@@ -48,6 +48,7 @@
 }
 
 .legend-slide-wrapper {
+    position: relative;
     display: flex;
     flex-direction: row;
     align-items: center;
@@ -62,6 +63,15 @@
     pointer-events: none;
 }
 
+.legend-slide-wrapper.collapsed .legend-pin-tooltip {
+    display: none;
+    pointer-events: none;
+}
+
+.legend-slide-wrapper.collapsed .map-legend {
+    pointer-events: none;
+}
+
 .map-legend {
     position: fixed;
     top: 50%;
@@ -72,11 +82,11 @@
     background: var(--dark-bg);
     border: 1px solid var(--border-strong);
     border-radius: 12px;
-    padding: 16px;
+    padding: 16px 16px 16px 24px;
     box-shadow: 0 10px 26px var(--shadow-dark);
     display: flex;
-    width: 136px;
-    max-width: 136px;
+    width: 144px;
+    max-width: 144px;
     flex-direction: column;
     align-items: center;
     gap: 0;
@@ -100,6 +110,7 @@
 }
 
 .legend-container {
+    position: relative;
     display: flex;
     gap: 12px;
     align-items: stretch;
@@ -278,14 +289,186 @@
     pointer-events: none;
 }
 
-.legend-slide-wrapper {
-    transform: translateX(0);
-    transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1),
-        opacity 180ms ease;
+/* ── Legend pin button (inside .legend-container, floats left into padding) ── */
+.legend-pin-anchor {
+    position: absolute;
+    left: -24px;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 1;
 }
 
-.legend-slide-wrapper.collapsed {
-    transform: translateX(-150px);
-    opacity: 0;
-    pointer-events: none;
+.legend-pin-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    background: none;
+    border: none;
+    border-radius: 5px;
+    color: var(--text-muted, rgba(255,255,255,0.35));
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+    flex-shrink: 0;
+}
+
+.legend-pin-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-secondary);
+}
+
+.legend-pin-btn.active {
+    color: var(--accent-blue, #60a5fa);
+}
+
+.legend-pin-btn.active:hover {
+    background: rgba(96, 165, 250, 0.12);
+}
+
+/* ── Pin tooltip (direct child of .map-legend, floats to the right) ──────── */
+.legend-pin-tooltip {
+    position: absolute;
+    top: 50%;
+    left: calc(100% + 8px);
+    transform: translateY(-50%);
+    min-width: 150px;
+    max-width: 150px;
+    width: 150px;
+    background: rgba(10, 13, 22, 0.72);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border: 1px solid var(--border-subtle, rgba(255,255,255,0.1));
+    border-radius: 10px;
+    padding: 8px 10px;
+    z-index: 200;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.35);
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    pointer-events: auto;
+}
+
+.legend-pin-tooltip-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1px;
+}
+
+.legend-pin-tooltip-title {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    letter-spacing: 0.03em;
+}
+
+.legend-pin-close-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    padding: 0;
+    background: none;
+    border: none;
+    border-radius: 4px;
+    color: var(--text-muted, rgba(255,255,255,0.35));
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 0.12s ease, color 0.12s ease;
+}
+
+.legend-pin-close-btn:hover {
+    background: rgba(255,255,255,0.08);
+    color: var(--text-secondary);
+}
+
+.legend-pin-tooltip-row {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.legend-pin-tooltip-label {
+    font-size: 10px;
+    color: var(--text-secondary);
+    flex-shrink: 0;
+    min-width: 22px;
+}
+
+.legend-pin-unit {
+    font-size: 9px;
+    color: var(--text-muted, rgba(255,255,255,0.4));
+    flex-shrink: 0;
+    min-width: 12px;
+}
+
+.legend-pin-input {
+    flex: 1;
+    min-width: 0;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--border-subtle);
+    border-radius: 4px;
+    color: var(--text-primary);
+    font-size: 10px;
+    padding: 2px 4px;
+    text-align: right;
+    box-sizing: border-box;
+    -moz-appearance: textfield;
+    appearance: textfield;
+}
+
+.legend-pin-input::-webkit-inner-spin-button,
+.legend-pin-input::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+.legend-pin-input:focus {
+    outline: none;
+    border-color: rgba(96, 165, 250, 0.5);
+    background: rgba(255, 255, 255, 0.09);
+}
+
+.legend-pin-unpin-btn {
+    flex: 1;
+    padding: 3px 0;
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    border-radius: 4px;
+    color: rgba(239, 68, 68, 0.85);
+    font-size: 10px;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.legend-pin-unpin-btn:hover {
+    background: rgba(239, 68, 68, 0.18);
+    border-color: rgba(239, 68, 68, 0.5);
+}
+
+.legend-pin-reset-btn {
+    flex: 1;
+    padding: 3px 0;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--border-subtle);
+    border-radius: 4px;
+    color: var(--text-secondary);
+    font-size: 10px;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.legend-pin-reset-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: var(--border-medium);
+    color: var(--text-primary);
+}
+
+.legend-pin-tooltip-actions {
+    display: flex;
+    gap: 4px;
+    margin-top: 1px;
 }

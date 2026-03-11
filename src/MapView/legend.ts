@@ -47,6 +47,8 @@ export function renderMapLegend(
         unitOverride?: string;
         skipConversion?: boolean;
         paletteControlHtml?: string;
+        pinBtnHtml?: string;
+        pinTooltipHtml?: string;
         bottomControlsHtml?: string;
         canvasId?: string;
         /** Override the CSS `left` value (e.g. "calc(50vw + 1rem)" for split-view W2). */
@@ -95,25 +97,21 @@ export function renderMapLegend(
       <div class="map-legend" ${styleAttr}>
         <div class="legend-header">
           <div class="legend-title">${name}</div>
-          ${
-              options?.paletteControlHtml
-                  ? `<div class="legend-palette-control">${options.paletteControlHtml}</div>`
-                  : ""
-          }
+          ${options?.paletteControlHtml ? `<div class="legend-palette-control">${options.paletteControlHtml}</div>` : ""}
         </div>
         <div class="legend-container">
-        <canvas id="${options?.canvasId ?? 'legend-gradient-canvas'}" width="20" height="200" style="width: 20px; height: 200px; border-radius: 4px;"></canvas>
+          ${options?.pinBtnHtml ?? ""}
+          <canvas id="${options?.canvasId ?? 'legend-gradient-canvas'}" width="20" height="200" style="width: 20px; height: 200px; border-radius: 4px;"></canvas>
           <div class="legend-labels">
             ${values
                 .map((val) => `<span>${val != null && Number.isFinite(val) ? val.toFixed(2) : "—"} ${unit}</span>`)
                 .join("")}
           </div>
         </div>
-        ${
-            options?.bottomControlsHtml
+        ${options?.bottomControlsHtml
                 ? `<div class="legend-bottom-controls">${options.bottomControlsHtml}</div>`
-                : ""
-        }
+                : ""}
+        ${options?.pinTooltipHtml ?? ""}
       </div>
     `;
 }

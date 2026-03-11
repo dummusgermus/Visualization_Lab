@@ -222,3 +222,33 @@ export function convertMinMax(
     };
 }
 
+/**
+ * Reverse a unit conversion: convert a display-unit value back to native units.
+ * Inverse of convertValue / the option.convert function.
+ */
+export function unconvertValue(
+    value: number,
+    variable: string,
+    unitLabel: string,
+    opts?: { isDifference?: boolean },
+): number {
+    // Temperature has affine (non-multiplicative) conversions — handle specifically
+    if (["tas", "tasmin", "tasmax"].includes(variable)) {
+        if (opts?.isDifference) {
+            // For difference stats (IQR, StdDev, etc.) only the scale matters, no offset
+            if (unitLabel.startsWith("Fahrenheit")) return value * (5 / 9); // °F-diff → K-diff
+            return value; // °C-diff or K-diff → K-diff (same magnitude)
+        }
+        if (unitLabel.startsWith("Celsius"))     return value + 273.15;                   // °C → K
+        if (unitLabel.startsWith("Fahrenheit")) return (value - 32) * (5 / 9) + 273.15;  // °F → K
+        return value; // Kelvin → Kelvin
+    }
+    // All other conversions are pure multiplication: display = native * scale
+    // So: native = display / scale, where scale = convert(1)
+    const options = getUnitOptions(variable);
+    const option = options.find((o) => o.label === unitLabel);
+    if (!option) return value;
+    const scale = option.convert(1);
+    return scale !== 0 ? value / scale : value;
+}
+

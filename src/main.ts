@@ -77,6 +77,7 @@ import {
     convertValue,
     getDefaultUnitOption,
     getUnitOptions,
+    unconvertValue,
 } from "./Utils/unitConverter";
 
 // Toggle to switch between real API data and toy mock chart data (range mode)
@@ -1363,6 +1364,9 @@ export type AppState = {
     maskVariableRanges: Map<string, { min: number; max: number }>; // Raw ranges for mask variables
     dataMin: number | null;
     dataMax: number | null;
+    legendPinned: boolean;
+    legendPinnedMin: number | null;
+    legendPinnedMax: number | null;
     dataMean: number | null;
     timeRange: {
         start: string;
@@ -1416,6 +1420,9 @@ export type Window2State = {
     currentData: ClimateData | null;
     dataMin: number | null;
     dataMax: number | null;
+    legendPinned: boolean;
+    legendPinnedMin: number | null;
+    legendPinnedMax: number | null;
     timeRange: { start: string; end: string } | null;
     // Per-window UI state for independent operation
     canvasView: CanvasView;
@@ -1634,6 +1641,9 @@ const state: AppState = {
     splitRatio: 0.5,
     chatScreenshot: null,
     legendCollapsed: false,
+    legendPinned: false,
+    legendPinnedMin: null,
+    legendPinnedMax: null,
     window2: {
         scenario: "SSP245",
         model: models[0],
@@ -1703,6 +1713,9 @@ const state: AppState = {
             Array<Float32Array | Float64Array>
         >(),
         legendCollapsed: false,
+        legendPinned: false,
+        legendPinnedMin: null,
+        legendPinnedMax: null,
         mapInfoOpen: false,
         mapInfoSamples: [],
         mapInfoBoxes: null,
@@ -1731,6 +1744,7 @@ let mapCanvas: HTMLCanvasElement | null = null;
 // D3 zoom stays attached across re-renders so drag gestures are never interrupted.
 let persistentCanvas2: HTMLCanvasElement | null = null;
 let drawKeyHandler: ((e: KeyboardEvent) => void) | null = null;
+let legendPinTooltipOpen: "1" | "2" | null = null;
 
 let appRoot: HTMLDivElement | null = null;
 let cleanupBrandEyeTracking: (() => void) | null = null;
@@ -8727,8 +8741,8 @@ async function loadClimateDataWindow2() {
                 persistentCanvas2,
                 paletteOptions,
                 state.window2.mapPalette,
-                state.window2.dataMin,
-                state.window2.dataMax,
+                state.window2.legendPinned && state.window2.legendPinnedMin !== null ? state.window2.legendPinnedMin : state.window2.dataMin,
+                state.window2.legendPinned && state.window2.legendPinnedMax !== null ? state.window2.legendPinnedMax : state.window2.dataMax,
                 displayVariable,
                 displayUnit,
                 getModeMasks(state.window2) && getModeMasks(state.window2).length > 0
@@ -9082,8 +9096,8 @@ function render() {
                               : state.mode === "Ensemble"
                                 ? state.ensembleVariable
                                 : state.variable,
-                          hasProbabilityMasks ? 0 : state.dataMin,
-                          hasProbabilityMasks ? 100 : state.dataMax,
+                          hasProbabilityMasks ? 0 : (state.legendPinned && state.legendPinnedMin !== null ? state.legendPinnedMin : state.dataMin),
+                          hasProbabilityMasks ? 100 : (state.legendPinned && state.legendPinnedMax !== null ? state.legendPinnedMax : state.dataMax),
                           state.metaData,
                           hasProbabilityMasks
                               ? undefined
@@ -9103,11 +9117,15 @@ function render() {
                                     skipConversion: true,
                                     inWrapper: true,
                                     paletteControlHtml: renderLegendPaletteSelect(),
+                                    pinBtnHtml: renderLegendPinBtn("1"),
+                                    pinTooltipHtml: renderLegendPinTooltip("1"),
                                     bottomControlsHtml: renderLegendUnitControl(),
                                 }
                               : {
                                     inWrapper: true,
                                     paletteControlHtml: renderLegendPaletteSelect(),
+                                    pinBtnHtml: renderLegendPinBtn("1"),
+                                    pinTooltipHtml: renderLegendPinTooltip("1"),
                                     bottomControlsHtml: renderLegendUnitControl(),
                                 },
                       ),
@@ -9133,8 +9151,8 @@ function render() {
                           : w2.mode === "Ensemble"
                             ? w2.ensembleVariable
                             : w2.variable;
-                      const w2Min = w2HasProbabilityMasks ? 0 : w2.dataMin!;
-                      const w2Max = w2HasProbabilityMasks ? 100 : w2.dataMax!;
+                      const w2Min = w2HasProbabilityMasks ? 0 : (w2.legendPinned && w2.legendPinnedMin !== null ? w2.legendPinnedMin : w2.dataMin!);
+                      const w2Max = w2HasProbabilityMasks ? 100 : (w2.legendPinned && w2.legendPinnedMax !== null ? w2.legendPinnedMax : w2.dataMax!);
                       const w2Unit = w2HasProbabilityMasks
                           ? undefined
                           : w2.mode === "Ensemble"
@@ -9148,7 +9166,11 @@ function render() {
                               w2Max,
                               state.metaData,
                               w2Unit,
-                              false,
+                              w2HasProbabilityMasks ? false : (
+                                  w2.mode === "Compare" ||
+                                  (w2.mode === "Ensemble" &&
+                                      isDifferenceEnsembleStatistic(w2.ensembleStatistic))
+                              ),
                               0,
                               w2HasProbabilityMasks
                                   ? {
@@ -9158,12 +9180,16 @@ function render() {
                                         inWrapper: true,
                                         canvasId: "legend-gradient-canvas-w2",
                                         paletteControlHtml: renderLegendW2PaletteSelect(),
+                                        pinBtnHtml: renderLegendPinBtn("2"),
+                                        pinTooltipHtml: renderLegendPinTooltip("2"),
                                         bottomControlsHtml: renderLegendW2UnitControl(),
                                     }
                                   : {
                                         inWrapper: true,
                                         canvasId: "legend-gradient-canvas-w2",
                                         paletteControlHtml: renderLegendW2PaletteSelect(),
+                                        pinBtnHtml: renderLegendPinBtn("2"),
+                                        pinTooltipHtml: renderLegendPinTooltip("2"),
                                         bottomControlsHtml: renderLegendW2UnitControl(),
                                     },
                           ),
@@ -9473,8 +9499,8 @@ function render() {
                     mapCanvas,
                     paletteOptions,
                     state.mapPalette,
-                    state.dataMin,
-                    state.dataMax,
+                    state.legendPinned && state.legendPinnedMin !== null ? state.legendPinnedMin : state.dataMin,
+                    state.legendPinned && state.legendPinnedMax !== null ? state.legendPinnedMax : state.dataMax,
                     state.mode === "Ensemble"
                         ? state.ensembleVariable
                         : state.variable,
@@ -10628,20 +10654,142 @@ function renderLegendW2PaletteSelect() {
 
 function renderLegendW2UnitControl() {
     const w2 = state.window2;
-    const unitVariable =
-        w2.mode === "Ensemble" ? w2.ensembleVariable : w2.variable;
-    const currentUnit =
-        w2.mode === "Ensemble" ? w2.ensembleUnit : w2.selectedUnit;
+    const isEnsemble = w2.mode === "Ensemble";
+    const unitKey = isEnsemble ? "w2ensembleUnit" : "w2unit";
+    const unitVariable = isEnsemble ? w2.ensembleVariable : w2.variable;
+    const currentUnit = isEnsemble ? w2.ensembleUnit : w2.selectedUnit;
     return `
     <div class="legend-unit-select">
       ${renderSelect(
-          "w2unit",
+          unitKey,
           getUnitOptions(unitVariable).map((opt) => opt.label),
           currentUnit,
-          { dataKey: "w2unit", dataRole: "unit-selector" },
+          { dataKey: unitKey, dataRole: "unit-selector" },
       )}
     </div>
   `;
+}
+
+function redrawMapForPinnedRange(w: "1" | "2") {
+    if (w === "2") {
+        if (!state.window2.canvasView || state.window2.canvasView !== "map") return;
+        if (!state.window2.currentData || !persistentCanvas2 || state.window2.dataMin === null || state.window2.dataMax === null) return;
+        const isEns = state.window2.mode === "Ensemble";
+        renderMapDataWindow2(
+            state.window2.currentData, persistentCanvas2, paletteOptions, state.window2.mapPalette,
+            state.window2.legendPinned && state.window2.legendPinnedMin !== null ? state.window2.legendPinnedMin : state.window2.dataMin,
+            state.window2.legendPinned && state.window2.legendPinnedMax !== null ? state.window2.legendPinnedMax : state.window2.dataMax,
+            isEns ? state.window2.ensembleVariable : state.window2.variable,
+            isEns ? state.window2.ensembleUnit : state.window2.selectedUnit,
+            getModeMasks(state.window2).length > 0 ? getModeMasks(state.window2) : undefined,
+            isEns ? state.window2.ensembleStatistics ?? undefined : undefined,
+            isEns,
+            state.window2.maskVariableData.size > 0 ? state.window2.maskVariableData : undefined,
+            isEns ? state.window2.ensembleStatisticsByVariable : undefined,
+            isEns ? state.window2.ensembleRawSamplesByVariable : undefined,
+        );
+    } else {
+        if (state.canvasView !== "map" || !state.currentData || state.dataMin === null || state.dataMax === null) return;
+        const canvas = appRoot?.querySelector<HTMLCanvasElement>("#map-canvas");
+        if (!canvas) return;
+        const isEns = state.mode === "Ensemble";
+        renderMapData(
+            state.currentData, canvas, paletteOptions, state.mapPalette,
+            state.legendPinned && state.legendPinnedMin !== null ? state.legendPinnedMin : state.dataMin,
+            state.legendPinned && state.legendPinnedMax !== null ? state.legendPinnedMax : state.dataMax,
+            isEns ? state.ensembleVariable : state.variable,
+            isEns ? state.ensembleUnit : state.selectedUnit,
+            getModeMasks(state),
+            isEns ? state.ensembleStatistics : null,
+            isEns,
+            (state.mode === "Explore" || state.mode === "Compare") ? state.maskVariableData : undefined,
+            isEns ? state.ensembleStatisticsByVariable : null,
+            isEns ? state.ensembleRawSamplesByVariable : null,
+        );
+    }
+}
+
+function renderLegendPinBtn(win: "1" | "2"): string {
+    const s = win === "2" ? state.window2 : state;
+    const pinned = s.legendPinned;
+    const tooltipOpen = legendPinTooltipOpen === win;
+
+    const lockPaths = pinned
+        ? `<rect x="3" y="11" width="18" height="11" rx="2" stroke-width="1.7"/><path d="M7 11V7a5 5 0 0 1 10 0v4" stroke-width="1.7"/>`
+        : `<rect x="3" y="11" width="18" height="11" rx="2" stroke-width="1.7"/><path d="M7 11V7a5 5 0 0 1 9.9-1" stroke-width="1.7"/>`;
+
+    return `<div class="legend-pin-anchor">
+      <button type="button"
+              class="legend-pin-btn${pinned ? " active" : ""}"
+              data-action="legend-pin-toggle"
+              data-window="${win}"
+              title="${pinned ? (tooltipOpen ? "Close" : "Edit fixed range") : "Pin color range"}">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+          ${lockPaths}
+        </svg>
+      </button>
+    </div>`;
+}
+
+function renderLegendPinTooltip(win: "1" | "2"): string {
+    const s = win === "2" ? state.window2 : state;
+    if (!s.legendPinned || legendPinTooltipOpen !== win) return "";
+
+    const isEnsemble = s.mode === "Ensemble";
+    const variable = isEnsemble ? s.ensembleVariable : s.variable;
+    const selectedUnitLabel = isEnsemble ? s.ensembleUnit : s.selectedUnit;
+    const unitAbbrev =
+        getUnitOptions(variable).find((opt) => opt.label === selectedUnitLabel)?.unit ?? "";
+    const isDiff = s.mode === "Compare" || (isEnsemble && isDifferenceEnsembleStatistic(s.ensembleStatistic));
+
+    const displayMin =
+        s.legendPinnedMin !== null
+            ? convertMinMax(s.legendPinnedMin, s.legendPinnedMin, variable, selectedUnitLabel, { isDifference: isDiff }).min
+            : null;
+    const displayMax =
+        s.legendPinnedMax !== null
+            ? convertMinMax(s.legendPinnedMax, s.legendPinnedMax, variable, selectedUnitLabel, { isDifference: isDiff }).max
+            : null;
+
+    const fmt = (v: number | null) =>
+        v !== null && Number.isFinite(v) ? String(parseFloat(v.toFixed(4))) : "";
+
+    const unitSuffix = unitAbbrev
+        ? `<span class="legend-pin-unit">${unitAbbrev}</span>`
+        : "";
+
+    return `<div class="legend-pin-tooltip" data-window="${win}">
+      <div class="legend-pin-tooltip-header">
+        <span class="legend-pin-tooltip-title">Fixed range</span>
+        <button type="button" class="legend-pin-close-btn"
+                data-action="legend-pin-toggle" data-window="${win}"
+                title="Close">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2.5" stroke-linecap="round">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <label class="legend-pin-tooltip-row">
+        <span class="legend-pin-tooltip-label">Max</span>
+        <input type="number" class="legend-pin-input"
+               data-action="legend-pin-range" data-key="legendPinnedMax" data-window="${win}"
+               value="${fmt(displayMax)}" step="any">${unitSuffix}
+      </label>
+      <label class="legend-pin-tooltip-row">
+        <span class="legend-pin-tooltip-label">Min</span>
+        <input type="number" class="legend-pin-input"
+               data-action="legend-pin-range" data-key="legendPinnedMin" data-window="${win}"
+               value="${fmt(displayMin)}" step="any">${unitSuffix}
+      </label>
+      <div class="legend-pin-tooltip-actions">
+        <button type="button" class="legend-pin-reset-btn"
+                data-action="legend-pin-reset" data-window="${win}">Reset</button>
+        <button type="button" class="legend-pin-unpin-btn"
+                data-action="legend-pin-unpin" data-window="${win}">Unpin</button>
+      </div>
+    </div>`;
 }
 
 function renderTabButton(
@@ -10684,6 +10832,7 @@ function renderManualSection(params: {
         countLabel: string,
         content: string,
         dataKey: string,
+        dataWindow?: "1" | "2",
     ) => {
         return `
           <div style="${styleAttr({
@@ -10696,6 +10845,7 @@ function renderManualSection(params: {
               type="button"
               data-action="toggle-collapse"
               data-key="${dataKey}"
+              ${dataWindow ? `data-window="${dataWindow}"` : ""}
               style="${styleAttr({
                   display: "flex",
                   justifyContent: "space-between",
@@ -11343,16 +11493,17 @@ function renderManualSection(params: {
                     renderSelect(
                         "compareMode",
                         ["Scenarios", "Models", "Dates"],
-                        state.compareMode,
+                        s.compareMode,
                         {
                             dataKey: "compareMode",
+                            dataWindow: dataWindowOpt,
                         },
                     ),
                 )}
               </div>
 
               ${
-                  state.compareMode === "Scenarios"
+                  s.compareMode === "Scenarios"
                       ? `
                       <div style="${styleAttr(styles.paramGrid)}">
                         ${renderField(
@@ -11360,10 +11511,11 @@ function renderManualSection(params: {
                             renderSelect(
                                 "compareScenarioA",
                                 ["SSP245", "SSP370", "SSP585"],
-                                state.compareScenarioA,
+                                s.compareScenarioA,
                                 {
                                     dataKey: "compareScenarioA",
                                     infoType: "scenario",
+                                    dataWindow: dataWindowOpt,
                                 },
                             ),
                         )}
@@ -11372,10 +11524,11 @@ function renderManualSection(params: {
                             renderSelect(
                                 "compareScenarioB",
                                 ["SSP245", "SSP370", "SSP585"],
-                                state.compareScenarioB,
+                                s.compareScenarioB,
                                 {
                                     dataKey: "compareScenarioB",
                                     infoType: "scenario",
+                                    dataWindow: dataWindowOpt,
                                 },
                             ),
                         )}
@@ -11385,7 +11538,7 @@ function renderManualSection(params: {
               }
 
               ${
-                  state.compareMode === "Models"
+                  s.compareMode === "Models"
                       ? `
                       <div style="${styleAttr(styles.paramGrid)}">
                         ${renderField(
@@ -11394,21 +11547,21 @@ function renderManualSection(params: {
                                 "compareModelA",
                                 (() => {
                                     const filtered = models.filter(
-                                        (m) => m !== state.compareModelB,
+                                        (m) => m !== s.compareModelB,
                                     );
                                     // Ensure current value is always available
                                     if (
-                                        !filtered.includes(state.compareModelA)
+                                        !filtered.includes(s.compareModelA)
                                     ) {
                                         return [
-                                            state.compareModelA,
+                                            s.compareModelA,
                                             ...filtered,
                                         ];
                                     }
                                     return filtered;
                                 })(),
-                                state.compareModelA,
-                                { dataKey: "compareModelA", infoType: "model" },
+                                s.compareModelA,
+                                { dataKey: "compareModelA", infoType: "model", dataWindow: dataWindowOpt },
                             ),
                         )}
                         ${renderField(
@@ -11417,21 +11570,21 @@ function renderManualSection(params: {
                                 "compareModelB",
                                 (() => {
                                     const filtered = models.filter(
-                                        (m) => m !== state.compareModelA,
+                                        (m) => m !== s.compareModelA,
                                     );
                                     // Ensure current value is always available
                                     if (
-                                        !filtered.includes(state.compareModelB)
+                                        !filtered.includes(s.compareModelB)
                                     ) {
                                         return [
-                                            state.compareModelB,
+                                            s.compareModelB,
                                             ...filtered,
                                         ];
                                     }
                                     return filtered;
                                 })(),
-                                state.compareModelB,
-                                { dataKey: "compareModelB", infoType: "model" },
+                                s.compareModelB,
+                                { dataKey: "compareModelB", infoType: "model", dataWindow: dataWindowOpt },
                             ),
                         )}
                       </div>
@@ -11440,23 +11593,23 @@ function renderManualSection(params: {
               }
 
               ${
-                  state.compareMode === "Dates"
+                  s.compareMode === "Dates"
                       ? `
                       <div style="${styleAttr(styles.paramGrid)}">
                         ${renderField(
                             "Start date",
                             renderInput(
                                 "compareDateStart",
-                                state.compareDateStart,
-                                { dataKey: "compareDateStart" },
+                                s.compareDateStart,
+                                { dataKey: "compareDateStart", dataWindow: dataWindowOpt },
                             ),
                         )}
                         ${renderField(
                             "End date",
                             renderInput(
                                 "compareDateEnd",
-                                state.compareDateEnd,
-                                { dataKey: "compareDateEnd" },
+                                s.compareDateEnd,
+                                { dataKey: "compareDateEnd", dataWindow: dataWindowOpt },
                             ),
                         )}
   </div>
@@ -11470,6 +11623,7 @@ function renderManualSection(params: {
                     "Variable",
                     renderSelect("variable", variables, s.variable, {
                         infoType: "variable",
+                        dataWindow: dataWindowOpt,
                     }),
                 )}
               </div>
@@ -11489,8 +11643,9 @@ function renderManualSection(params: {
                       min="1"
                       max="3"
                       step="1"
-                      value="${state.resolution}"
+                      value="${s.resolution}"
                       data-action="set-resolution"
+                      ${dataWindowOpt ? `data-window="${dataWindowOpt}"` : ""}
                       class="resolution-slider"
                       style="${styleAttr(
                           mergeStyles(styles.range, {
@@ -11953,14 +12108,15 @@ function renderManualSection(params: {
                   "Date",
                   (() => {
                       const commonRange = intersectScenarioRange(
-                          state.ensembleScenarios.length
-                              ? state.ensembleScenarios
+                          s.ensembleScenarios.length
+                              ? s.ensembleScenarios
                               : scenarios,
                       );
-                      return renderInput("ensembleDate", state.ensembleDate, {
+                      return renderInput("ensembleDate", s.ensembleDate, {
                           dataKey: "ensembleDate",
                           min: commonRange.start,
                           max: commonRange.end,
+                          dataWindow: dataWindowOpt,
                       });
                   })(),
               )}
@@ -11977,6 +12133,7 @@ function renderManualSection(params: {
                           selectedLabel: hasProbabilityMasks
                               ? "Probability"
                               : undefined,
+                          dataWindow: dataWindowOpt,
                       },
                   ),
               )}
@@ -12002,19 +12159,20 @@ function renderManualSection(params: {
                           "percentile",
                           "extremes",
                       ],
-                      state.ensembleStatistic,
+                      s.ensembleStatistic,
                       {
                           dataKey: "ensembleStatistic",
+                          dataWindow: dataWindowOpt,
                           selectedLabel:
-                              state.ensembleStatistic === "mean"
+                              s.ensembleStatistic === "mean"
                                   ? "Mean"
-                                  : state.ensembleStatistic === "median"
+                                  : s.ensembleStatistic === "median"
                                     ? "Median"
-                                    : state.ensembleStatistic === "std"
+                                    : s.ensembleStatistic === "std"
                                       ? "Std Deviation"
-                                      : state.ensembleStatistic === "iqr"
+                                      : s.ensembleStatistic === "iqr"
                                         ? "IQR (Interquartile Range)"
-                                        : state.ensembleStatistic ===
+                                        : s.ensembleStatistic ===
                                             "percentile"
                                           ? "Percentile Band (90th-10th)"
                                           : "Extremes (Max-Min)",
@@ -12027,8 +12185,8 @@ function renderManualSection(params: {
           <div style="margin-top:14px">
             ${renderCollapsible(
                 "Scenarios",
-                state.ensembleDropdown.scenariosOpen,
-                `${state.ensembleScenarios.length} selected`,
+                s.ensembleDropdown.scenariosOpen,
+                `${s.ensembleScenarios.length} selected`,
                 renderChipGroup(
                     state.metaData?.scenarios?.length
                         ? Array.from(
@@ -12039,26 +12197,30 @@ function renderManualSection(params: {
                               ),
                           )
                         : scenarios,
-                    state.ensembleScenarios,
+                    s.ensembleScenarios,
                     "ensembleScenarios",
+                    dataWindowOpt,
                 ),
                 "ensembleScenarios",
+                dataWindowOpt,
             )}
           </div>
 
           <div style="margin-top:14px">
             ${renderCollapsible(
                 "Models",
-                state.ensembleDropdown.modelsOpen,
-                `${state.ensembleModels.length} selected`,
+                s.ensembleDropdown.modelsOpen,
+                `${s.ensembleModels.length} selected`,
                 renderChipGroup(
                     state.metaData?.models?.length
                         ? state.metaData.models
                         : models,
-                    state.ensembleModels,
+                    s.ensembleModels,
                     "ensembleModels",
+                    dataWindowOpt,
                 ),
                 "ensembleModels",
+                dataWindowOpt,
             )}
           </div>
 
@@ -12543,6 +12705,7 @@ function renderChipGroup(
     options: string[],
     selected: string[],
     dataKey: string,
+    dataWindow?: "1" | "2",
 ) {
     const selectedSet = new Set(selected);
     return `
@@ -12556,6 +12719,7 @@ function renderChipGroup(
                     data-action="toggle-multi"
                     data-key="${dataKey}"
                     data-value="${opt}"
+                    ${dataWindow ? `data-window="${dataWindow}"` : ""}
                     style="${styleAttr(
                         mergeStyles(
                             styles.chip,
@@ -13875,9 +14039,18 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             openExportDialog(state, {
                 setAnimationDate: (date: string) => {
                     state.date = date;
+                    if (state.splitView) {
+                        state.window2.date = date;
+                    }
                     render();
                 },
-                loadData: () => loadClimateData(),
+                loadData: async () => {
+                    if (state.splitView) {
+                        await Promise.all([loadClimateData(), loadClimateDataWindow2()]);
+                    } else {
+                        await loadClimateData();
+                    }
+                },
                 getState: () => state,
             });
         }),
@@ -14369,6 +14542,10 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             case "variable":
                 target.variable = val;
                 target.selectedUnit = getDefaultUnitOption(val).label;
+                target.legendPinned = false;
+                target.legendPinnedMin = null;
+                target.legendPinnedMax = null;
+                if (legendPinTooltipOpen === w) legendPinTooltipOpen = null;
                 triggerMapReload = true;
                 break;
             case "unit":
@@ -14397,8 +14574,8 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                                 mapCanvas,
                                 paletteOptions,
                                 state.mapPalette,
-                                state.dataMin,
-                                state.dataMax,
+                                state.legendPinned && state.legendPinnedMin !== null ? state.legendPinnedMin : state.dataMin,
+                                state.legendPinned && state.legendPinnedMax !== null ? state.legendPinnedMax : state.dataMax,
                                 state.variable,
                                 state.selectedUnit,
                                 getModeMasks(state),
@@ -14472,8 +14649,8 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                             mapCanvas,
                             paletteOptions,
                             state.mapPalette,
-                            state.dataMin,
-                            state.dataMax,
+                            state.legendPinned && state.legendPinnedMin !== null ? state.legendPinnedMin : state.dataMin,
+                            state.legendPinned && state.legendPinnedMax !== null ? state.legendPinnedMax : state.dataMax,
                             state.mode === "Ensemble" ? state.ensembleVariable : state.variable,
                             state.mode === "Ensemble" ? state.ensembleUnit : state.selectedUnit,
                             getModeMasks(state),
@@ -14514,7 +14691,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                 state.window2.mapPalette = val;
                 render();
                 if (
-                    state.canvasView === "map" &&
+                    state.window2.canvasView === "map" &&
                     state.window2.currentData &&
                     persistentCanvas2 &&
                     state.window2.dataMin !== null &&
@@ -14528,8 +14705,8 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                         persistentCanvas2,
                         paletteOptions,
                         state.window2.mapPalette,
-                        state.window2.dataMin,
-                        state.window2.dataMax,
+                        state.window2.legendPinned && state.window2.legendPinnedMin !== null ? state.window2.legendPinnedMin : state.window2.dataMin,
+                        state.window2.legendPinned && state.window2.legendPinnedMax !== null ? state.window2.legendPinnedMax : state.window2.dataMax,
                         w2DisplayVar,
                         w2DisplayUnit,
                         getModeMasks(state.window2) && getModeMasks(state.window2).length > 0
@@ -14553,7 +14730,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                 state.window2.selectedUnit = val;
                 render();
                 if (
-                    state.canvasView === "map" &&
+                    state.window2.canvasView === "map" &&
                     state.window2.currentData &&
                     persistentCanvas2 &&
                     state.window2.dataMin !== null &&
@@ -14567,8 +14744,8 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                         persistentCanvas2,
                         paletteOptions,
                         state.window2.mapPalette,
-                        state.window2.dataMin,
-                        state.window2.dataMax,
+                        state.window2.legendPinned && state.window2.legendPinnedMin !== null ? state.window2.legendPinnedMin : state.window2.dataMin,
+                        state.window2.legendPinned && state.window2.legendPinnedMax !== null ? state.window2.legendPinnedMax : state.window2.dataMax,
                         w2DisplayVar,
                         w2DisplayUnit,
                         getModeMasks(state.window2) && getModeMasks(state.window2).length > 0
@@ -14583,6 +14760,47 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                         w2IsEnsemble ? state.window2.ensembleRawSamplesByVariable : undefined,
                     );
                     setupWindow2Interactions(persistentCanvas2, w2DisplayUnit ?? "", {
+                        onMapClick: (coords) => void handleMapClickW2(coords),
+                        onTransform: renderMapMarkerPositionW2,
+                    });
+                }
+                return;
+            case "w2ensembleUnit":
+                state.window2.ensembleUnit = val;
+                render();
+                if (
+                    state.window2.canvasView === "map" &&
+                    state.window2.currentData &&
+                    persistentCanvas2 &&
+                    state.window2.dataMin !== null &&
+                    state.window2.dataMax !== null &&
+                    state.window2.mode === "Ensemble"
+                ) {
+                    renderMapDataWindow2(
+                        state.window2.currentData,
+                        persistentCanvas2,
+                        paletteOptions,
+                        state.window2.mapPalette,
+                        state.window2.legendPinned && state.window2.legendPinnedMin !== null ? state.window2.legendPinnedMin : state.window2.dataMin,
+                        state.window2.legendPinned && state.window2.legendPinnedMax !== null ? state.window2.legendPinnedMax : state.window2.dataMax,
+                        state.window2.ensembleVariable,
+                        state.window2.ensembleUnit,
+                        getModeMasks(state.window2) && getModeMasks(state.window2).length > 0
+                            ? getModeMasks(state.window2)
+                            : undefined,
+                        state.window2.ensembleStatistics ?? undefined,
+                        true,
+                        state.window2.maskVariableData.size > 0
+                            ? state.window2.maskVariableData
+                            : undefined,
+                        state.window2.ensembleStatisticsByVariable,
+                        state.window2.ensembleRawSamplesByVariable,
+                    );
+                    const w2Pal =
+                        paletteOptions.find((p) => p.name === state.window2.mapPalette) ||
+                        paletteOptions[0];
+                    drawLegendGradient("legend-gradient-canvas-w2", w2Pal.colors);
+                    setupWindow2Interactions(persistentCanvas2, val ?? "", {
                         onMapClick: (coords) => void handleMapClickW2(coords),
                         onTransform: renderMapMarkerPositionW2,
                     });
@@ -14654,6 +14872,10 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                 }
                 target.ensembleVariable = val;
                 target.ensembleUnit = getDefaultUnitOption(val).label;
+                target.legendPinned = false;
+                target.legendPinnedMin = null;
+                target.legendPinnedMax = null;
+                if (legendPinTooltipOpen === w) legendPinTooltipOpen = null;
                 triggerMapReload = true;
                 break;
             case "ensembleUnit":
@@ -14673,8 +14895,8 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                             persistentCanvas2,
                             paletteOptions,
                             state.window2.mapPalette,
-                            state.window2.dataMin,
-                            state.window2.dataMax,
+                            state.window2.legendPinned && state.window2.legendPinnedMin !== null ? state.window2.legendPinnedMin : state.window2.dataMin,
+                            state.window2.legendPinned && state.window2.legendPinnedMax !== null ? state.window2.legendPinnedMax : state.window2.dataMax,
                             state.window2.ensembleVariable,
                             state.window2.ensembleUnit,
                             getModeMasks(state.window2),
@@ -14714,8 +14936,8 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                             mapCanvas,
                             paletteOptions,
                             state.mapPalette,
-                            state.dataMin,
-                            state.dataMax,
+                            state.legendPinned && state.legendPinnedMin !== null ? state.legendPinnedMin : state.dataMin,
+                            state.legendPinned && state.legendPinnedMax !== null ? state.legendPinnedMax : state.dataMax,
                             state.ensembleVariable,
                             state.ensembleUnit,
                             getModeMasks(state),
@@ -14765,6 +14987,10 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                 return;
             case "ensembleStatistic":
                 target.ensembleStatistic = val as EnsembleStatistic;
+                target.legendPinned = false;
+                target.legendPinnedMin = null;
+                target.legendPinnedMax = null;
+                if (legendPinTooltipOpen === w) legendPinTooltipOpen = null;
                 triggerMapReload = true;
                 break;
             case "maskStatistic": {
@@ -14963,8 +15189,8 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                                         persistentCanvas2,
                                         paletteOptions,
                                         state.window2.mapPalette,
-                                        state.window2.dataMin,
-                                        state.window2.dataMax,
+                                        state.window2.legendPinned && state.window2.legendPinnedMin !== null ? state.window2.legendPinnedMin : state.window2.dataMin,
+                                        state.window2.legendPinned && state.window2.legendPinnedMax !== null ? state.window2.legendPinnedMax : state.window2.dataMax,
                                         w2DisplayVar,
                                         w2DisplayUnit,
                                         getModeMasks(state.window2),
@@ -15003,8 +15229,8 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                                         mapCanvas,
                                         paletteOptions,
                                         state.mapPalette,
-                                        state.dataMin,
-                                        state.dataMax,
+                                        state.legendPinned && state.legendPinnedMin !== null ? state.legendPinnedMin : state.dataMin,
+                                        state.legendPinned && state.legendPinnedMax !== null ? state.legendPinnedMax : state.dataMax,
                                         state.ensembleVariable,
                                         state.ensembleUnit,
                                         getModeMasks(state),
@@ -15478,6 +15704,8 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             }
 
             if (key === "ensembleScenarios") {
+                const w = (btn.dataset.window || "1") as "1" | "2";
+                const t = w === "2" ? state.window2 : state;
                 const available =
                     state.metaData?.scenarios?.length &&
                     state.metaData.scenarios
@@ -15490,7 +15718,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                           )
                         : scenarios;
                 const isHistorical = value === "Historical";
-                const set = new Set(state.ensembleScenarios);
+                const set = new Set(t.ensembleScenarios);
 
                 if (set.has(value)) {
                     set.delete(value);
@@ -15512,25 +15740,27 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                     set.add(isHistorical ? "Historical" : value);
                 }
 
-                state.ensembleScenarios = Array.from(set).filter((s) =>
+                t.ensembleScenarios = Array.from(set).filter((s) =>
                     available.includes(s),
                 );
 
                 // Clip date to new common range
                 const commonRange = intersectScenarioRange(
-                    state.ensembleScenarios,
+                    t.ensembleScenarios,
                 );
-                state.ensembleDate = clipDateToRange(
-                    state.ensembleDate,
+                t.ensembleDate = clipDateToRange(
+                    t.ensembleDate,
                     commonRange,
                 );
             }
 
             if (key === "ensembleModels") {
+                const w = (btn.dataset.window || "1") as "1" | "2";
+                const t = w === "2" ? state.window2 : state;
                 const available = state.metaData?.models?.length
                     ? state.metaData.models
                     : models;
-                const set = new Set(state.ensembleModels);
+                const set = new Set(t.ensembleModels);
 
                 if (set.has(value)) {
                     set.delete(value);
@@ -15538,7 +15768,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                     set.add(value);
                 }
 
-                state.ensembleModels = set.size
+                t.ensembleModels = set.size
                     ? Array.from(set)
                     : [...available];
             }
@@ -15546,11 +15776,15 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             render();
             if (state.canvasView === "chart") {
                 loadChartData();
-            } else if (
-                state.canvasView === "map" &&
-                state.mode === "Ensemble"
-            ) {
-                loadClimateData();
+            } else {
+                const w = (btn.dataset.window || "1") as "1" | "2";
+                if (w === "2") {
+                    if (state.window2.canvasView === "map" && state.window2.mode === "Ensemble") {
+                        loadClimateDataWindow2();
+                    }
+                } else if (state.canvasView === "map" && state.mode === "Ensemble") {
+                    loadClimateData();
+                }
             }
         }),
     );
@@ -15571,12 +15805,16 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                     !state.chartDropdown.modelsOpen;
             }
             if (key === "ensembleScenarios") {
-                state.ensembleDropdown.scenariosOpen =
-                    !state.ensembleDropdown.scenariosOpen;
+                const w = (btn.dataset.window || "1") as "1" | "2";
+                const t = w === "2" ? state.window2 : state;
+                t.ensembleDropdown.scenariosOpen =
+                    !t.ensembleDropdown.scenariosOpen;
             }
             if (key === "ensembleModels") {
-                state.ensembleDropdown.modelsOpen =
-                    !state.ensembleDropdown.modelsOpen;
+                const w = (btn.dataset.window || "1") as "1" | "2";
+                const t = w === "2" ? state.window2 : state;
+                t.ensembleDropdown.modelsOpen =
+                    !t.ensembleDropdown.modelsOpen;
             }
             render();
         }),
@@ -16434,6 +16672,31 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             if (e.key === "Enter") { e.preventDefault(); commit(); }
         });
     });
+
+    // ── Legend pin range inputs ─────────────────────────────────────────────
+    const pinInputs = root.querySelectorAll<HTMLInputElement>('[data-action="legend-pin-range"]');
+    pinInputs.forEach((input) => {
+        const commit = () => {
+            const key = input.dataset.key as "legendPinnedMin" | "legendPinnedMax";
+            const w = (input.dataset.window || "1") as "1" | "2";
+            const s = w === "2" ? state.window2 : state;
+            const displayVal = parseFloat(input.value);
+            if (Number.isFinite(displayVal) && key) {
+                // Input is in display units — convert back to native units before storing
+                const isEns = s.mode === "Ensemble";
+                const variable = isEns ? s.ensembleVariable : s.variable;
+                const unitLabel = isEns ? s.ensembleUnit : s.selectedUnit;
+                const isDiff = s.mode === "Compare" || (isEns && isDifferenceEnsembleStatistic(s.ensembleStatistic));
+                s[key] = unconvertValue(displayVal, variable, unitLabel, { isDifference: isDiff });
+                render();
+                redrawMapForPinnedRange(w);
+            }
+        };
+        input.addEventListener("change", commit);
+        input.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") { e.preventDefault(); commit(); }
+        });
+    });
 }
 
 async function init() {
@@ -16697,6 +16960,51 @@ async function init() {
                 state.legendCollapsed = !state.legendCollapsed;
             }
             render();
+            return;
+        }
+
+        if (action === "legend-pin-toggle") {
+            e.preventDefault();
+            e.stopPropagation();
+            const w = (actionElement?.getAttribute("data-window") || "1") as "1" | "2";
+            const s = w === "2" ? state.window2 : state;
+            if (!s.legendPinned) {
+                // Pin and open tooltip
+                s.legendPinned = true;
+                s.legendPinnedMin = s.dataMin;
+                s.legendPinnedMax = s.dataMax;
+                legendPinTooltipOpen = w;
+            } else {
+                // Already pinned — toggle tooltip
+                legendPinTooltipOpen = legendPinTooltipOpen === w ? null : w;
+            }
+            render();
+            return;
+        }
+
+        if (action === "legend-pin-unpin") {
+            e.preventDefault();
+            e.stopPropagation();
+            const w = (actionElement?.getAttribute("data-window") || "1") as "1" | "2";
+            const s = w === "2" ? state.window2 : state;
+            s.legendPinned = false;
+            s.legendPinnedMin = null;
+            s.legendPinnedMax = null;
+            legendPinTooltipOpen = null;
+            render();
+            redrawMapForPinnedRange(w);
+            return;
+        }
+
+        if (action === "legend-pin-reset") {
+            e.preventDefault();
+            e.stopPropagation();
+            const w = (actionElement?.getAttribute("data-window") || "1") as "1" | "2";
+            const s = w === "2" ? state.window2 : state;
+            s.legendPinnedMin = s.dataMin;
+            s.legendPinnedMax = s.dataMax;
+            render();
+            redrawMapForPinnedRange(w);
             return;
         }
 

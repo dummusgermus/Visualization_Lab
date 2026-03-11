@@ -9172,7 +9172,7 @@ function render() {
                                   (w2.mode === "Ensemble" &&
                                       isDifferenceEnsembleStatistic(w2.ensembleStatistic))
                               ),
-                              0,
+                              w2.mapRangeOpen ? 70 : 0,
                               w2HasProbabilityMasks
                                   ? {
                                         titleOverride: "Joint Probability",
@@ -9197,6 +9197,7 @@ function render() {
                           w2.legendCollapsed,
                           "2",
                           w2Left,
+                          w2.mapRangeOpen ? 70 : 0,
                       );
                   })()
                 : ""

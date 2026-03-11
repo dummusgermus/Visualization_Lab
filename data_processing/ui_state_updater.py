@@ -40,7 +40,15 @@ def update_unit(**kwargs) -> dict:
 def update_masks(**kwargs) -> dict:
     """Update value masks from keyword arguments."""
     current_state = kwargs.get('_current_state', {})
-    curr_masks = current_state.get('masks', [])
+
+    window = kwargs.get('window', 1)
+    if isinstance(window, str):
+        window = int(window) if window.isdigit() else 1
+
+    if window == 2:
+        curr_masks = list(current_state.get('window2', {}).get('masks', []))
+    else:
+        curr_masks = list(current_state.get('masks', []))
 
     masks_str = kwargs.get('masks')
     if not masks_str or masks_str in ('None', 'null', None):
@@ -54,6 +62,9 @@ def update_masks(**kwargs) -> dict:
         else:
             curr_masks.append(mask)
             mask_index[mask_id] = len(curr_masks) - 1
+
+    if window == 2:
+        return {"window2": {"masks": curr_masks}}
 
     return {
         "masks": curr_masks 

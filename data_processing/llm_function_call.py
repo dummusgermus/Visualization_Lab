@@ -218,6 +218,7 @@ def _build_system_prompt(context: Optional[dict] = None) -> str:
         "== MASK RULES ==",
         "- For probability masks in ENSEMBLE mode: pass masks DIRECTLY in the 'masks' parameter of switch_to_ensemble_mode. Do NOT call update_masks separately.",
         "- To add/change masks in an already-active view (Explore, Compare, or binary masks): call update_masks.",
+        "- MASKS IN SPLIT VIEW: When applying a mask to a specific window in split view, ALWAYS pass the 'window' parameter to update_masks (window=1 for View 1, window=2 for View 2). Apply the mask to the window that shows the variable being masked (e.g. a humidity/precipitation filter on the precipitation window → window=2).",
         "- Each mask must have a unique ID. If updating an existing mask, use its current ID; otherwise assign a new unique ID.",
         "- 'kind'='binary' (default): hides pixels whose value is outside [lowerBound, upperBound]. Use a very small number for no lower bound, a very large number for no upper bound.",
         "- 'kind'='probability' (ENSEMBLE MODE ONLY): shows how likely a condition is across models.",
@@ -881,10 +882,15 @@ def _get_state_control_functions(context: Optional[dict] = None) -> List[dict]:
             "type": "function",
             "function": {
                 "name": "update_masks",
-                "description": "Update the masks applied to the visualization to highlight specific value ranges.",
+                "description": "Update the masks applied to the visualization to highlight specific value ranges. In split view, use the 'window' parameter to target the correct window.",
                 "parameters": {
                     "type": "object",
                     "properties": {
+                        "window": {
+                            "type": "integer",
+                            "enum": [1, 2],
+                            "description": "Which window to apply the mask to. 1 = View 1 (default), 2 = View 2. In split view, set this to the window showing the variable being masked."
+                        },
                         "masks": {
                             "type": "array",
                             "description": "List of masks to apply.",

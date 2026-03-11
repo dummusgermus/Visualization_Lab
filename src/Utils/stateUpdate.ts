@@ -213,6 +213,28 @@ export function updateState(
         if (typeof w2.colorPalette === "string") {
             window2Updates.mapPalette = normalizeColorPalette(w2.colorPalette);
         }
+        if (Array.isArray(w2.masks)) {
+            const processedW2Masks = (w2.masks as any[]).map((mask: any) => ({
+                id: mask.id,
+                variable: mask.variable,
+                unit: mask.unit,
+                lowerBound: mask.lowerBound ?? null,
+                upperBound: mask.upperBound ?? null,
+                lowerEdited: mask.lowerBound != null,
+                upperEdited: mask.upperBound != null,
+                statistic: mask.statistic,
+                kind: mask.kind ?? "binary",
+                probabilityThreshold: mask.probabilityThreshold,
+            }));
+            const w2Mode = typeof w2.mode === "string" ? w2.mode : undefined;
+            if (w2Mode === "Ensemble") {
+                window2Updates.ensembleMasks = processedW2Masks;
+            } else if (w2Mode === "Compare") {
+                window2Updates.compareMasks = processedW2Masks;
+            } else {
+                window2Updates.exploreMasks = processedW2Masks;
+            }
+        }
         // Map location / range view for Window 2
         if (w2.mapMarker && typeof w2.mapMarker === "object") {
             window2Updates.mapMarker = w2.mapMarker;

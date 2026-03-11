@@ -111,7 +111,7 @@ export function updateState(
         updates.chartScenarios = newState.scenarios;
     }
     if (newState.colorPalette) {
-        updates.palette = normalizeColorPalette(newState.colorPalette);
+        updates.mapPalette = normalizeColorPalette(newState.colorPalette);
     }
     if (newState.selectedUnit) {
         updates.selectedUnit = newState.selectedUnit;

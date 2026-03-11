@@ -4818,7 +4818,7 @@ function updateMapInfoPreviewW2(samples: ChartSample[]) {
     const infoPanel = appRoot.querySelector<HTMLDivElement>("#map-info-panel-w2");
     if (infoPanel) {
         const bodyEl = infoPanel.querySelector<HTMLDivElement>(".map-info-body-w2");
-        if (bodyEl) { bodyEl.innerHTML = renderMapInfoBodyW2(); return; }
+        if (bodyEl) { bodyEl.innerHTML = renderMapInfoBodyW2(); setTimeout(() => { attachMapInfoBoxplotHoverListeners("map-info-panel-w2"); }, 0); return; }
     }
     if (!w2.mapInfoOpen) return;
     render();
@@ -5171,6 +5171,7 @@ function attachW2MapInfoAndRangeHandlers(root: HTMLElement) {
                 w2.mapInfoOpen = true;
                 if (!applyRangeSamplesAsMapInfoW2(getCurrentDateForMode(w2))) void loadMapInfoDataW2();
                 render();
+                setTimeout(() => { attachMapInfoBoxplotHoverListeners("map-info-panel-w2"); }, 0);
             }
         });
 
@@ -7231,9 +7232,9 @@ function attachBoxplotHoverListeners() {
     });
 }
 
-function attachMapInfoBoxplotHoverListeners() {
+function attachMapInfoBoxplotHoverListeners(panelId = "map-info-panel") {
     const hoverOverlay = document.querySelector(
-        "#map-info-panel .boxplot-hover-overlay",
+        `#${panelId} .boxplot-hover-overlay`,
     ) as SVGElement | null;
     if (!hoverOverlay) return;
     const svg = hoverOverlay.closest("svg") as SVGElement | null;
@@ -9598,6 +9599,9 @@ function render() {
     // Re-attach hover listeners for map info boxplots whenever the panel is visible
     if (state.mapInfoOpen && state.mapInfoBoxes?.length) {
         setTimeout(() => { attachMapInfoBoxplotHoverListeners(); }, 0);
+    }
+    if (state.window2.mapInfoOpen && state.window2.mapInfoBoxes?.length) {
+        setTimeout(() => { attachMapInfoBoxplotHoverListeners("map-info-panel-w2"); }, 0);
     }
 }
 
@@ -14764,6 +14768,26 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                         onTransform: renderMapMarkerPositionW2,
                     });
                 }
+                if (state.window2.mapMarker) {
+                    if (state.window2.mapInfoOpen) {
+                        if (state.window2.mapInfoSamples.length) {
+                            const { variable, unit } = getActiveMapVariableW2();
+                            state.window2.mapInfoBoxes = buildChartBoxes(state.window2.mapInfoSamples, variable, unit);
+                            render();
+                        } else if (!state.window2.mapInfoLoading) {
+                            void loadMapInfoDataW2();
+                        }
+                    }
+                    if (state.window2.mapRangeOpen) {
+                        if (state.window2.mapRangeSamples.length) {
+                            const { variable, unit } = getActiveMapVariableW2();
+                            state.window2.mapRangeSeries = buildChartRangeSeries(state.window2.mapRangeSamples, variable, unit);
+                            render();
+                        } else if (!state.window2.mapRangeLoading) {
+                            void loadMapRangeDataW2();
+                        }
+                    }
+                }
                 return;
             case "w2ensembleUnit":
                 state.window2.ensembleUnit = val;
@@ -14804,6 +14828,26 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                         onMapClick: (coords) => void handleMapClickW2(coords),
                         onTransform: renderMapMarkerPositionW2,
                     });
+                }
+                if (state.window2.mapMarker) {
+                    if (state.window2.mapInfoOpen) {
+                        if (state.window2.mapInfoSamples.length) {
+                            const { variable, unit } = getActiveMapVariableW2();
+                            state.window2.mapInfoBoxes = buildChartBoxes(state.window2.mapInfoSamples, variable, unit);
+                            render();
+                        } else if (!state.window2.mapInfoLoading) {
+                            void loadMapInfoDataW2();
+                        }
+                    }
+                    if (state.window2.mapRangeOpen) {
+                        if (state.window2.mapRangeSamples.length) {
+                            const { variable, unit } = getActiveMapVariableW2();
+                            state.window2.mapRangeSeries = buildChartRangeSeries(state.window2.mapRangeSamples, variable, unit);
+                            render();
+                        } else if (!state.window2.mapRangeLoading) {
+                            void loadMapRangeDataW2();
+                        }
+                    }
                 }
                 return;
             case "compareMode":
@@ -16718,6 +16762,18 @@ async function init() {
             ? (updates.window2 as Record<string, any>)
             : null;
 
+        // When split view is newly opened and the agent didn't supply an explicit W2 date,
+        // inherit V1's final date (updates.date from switch_to_explore_mode, or current state.date).
+        // This is done before the deep-merge so it participates in the merge correctly.
+        if (updates.splitView === true && !state.splitView) {
+            if (!w2Delta?.date) {
+                if (!updates.window2 || typeof updates.window2 !== "object") {
+                    updates.window2 = {};
+                }
+                (updates.window2 as Record<string, any>).date = updates.date ?? state.date;
+            }
+        }
+
         // Deep-merge window2 to avoid replacing existing fields (e.g. dataMin/dataMax) with undefined
         if (updates.window2 && typeof updates.window2 === "object") {
             updates = { ...updates, window2: { ...state.window2, ...updates.window2 } };
@@ -16852,17 +16908,32 @@ async function init() {
                 const plotX = (e.clientX - bbox.left) * scaleX - ml;
                 if (plotX >= 0 && plotX <= plotW) {
                     const t = Math.max(0, Math.min(1, plotX / plotW));
-                    const newDate = clipDateToScenarioRange(
-                        new Date(domainStartTs + t * (domainEndTs - domainStartTs)).toISOString().slice(0, 10),
-                        state.scenario,
-                    );
-                    if (newDate !== state.date) {
-                        state.date = newDate;
-                        state.ensembleDate = newDate;
-                        render();
-                        loadClimateData();
-                        // Reuse already-loaded range data instead of re-querying
-                        applyRangeSamplesAsMapInfo(newDate);
+                    const isW2 = !!mapRangeSvgEl.closest('#map-range-overlay-w2');
+                    if (isW2) {
+                        const w2Scenario = state.window2.scenario || state.scenario;
+                        const newDate = clipDateToScenarioRange(
+                            new Date(domainStartTs + t * (domainEndTs - domainStartTs)).toISOString().slice(0, 10),
+                            w2Scenario,
+                        );
+                        if (newDate !== state.window2.date) {
+                            state.window2.date = newDate;
+                            render();
+                            loadClimateDataWindow2();
+                            applyRangeSamplesAsMapInfoW2(newDate);
+                        }
+                    } else {
+                        const newDate = clipDateToScenarioRange(
+                            new Date(domainStartTs + t * (domainEndTs - domainStartTs)).toISOString().slice(0, 10),
+                            state.scenario,
+                        );
+                        if (newDate !== state.date) {
+                            state.date = newDate;
+                            state.ensembleDate = newDate;
+                            render();
+                            loadClimateData();
+                            // Reuse already-loaded range data instead of re-querying
+                            applyRangeSamplesAsMapInfo(newDate);
+                        }
                     }
                 }
             }

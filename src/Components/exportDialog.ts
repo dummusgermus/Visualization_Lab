@@ -84,7 +84,7 @@ interface DialogState {
     dataEndDate: string;
     dataSpatial: "full" | "draw" | "range";
     dataResolution: "low" | "medium" | "high";
-    dataStep: "monthly" | "yearly";
+    dataStep: "daily" | "monthly" | "yearly";
     dataProgress: number;
     dataStatus: string;
     dataBusy: boolean;
@@ -457,7 +457,7 @@ export function openExportDialog(
 
         <hr class="export-divider"/>
 
-        <!-- Variable + resolution -->
+        <!-- Variables, dates, time step, resolution, format -->
         <div class="export-form-grid" style="margin-bottom:14px;">
             <div class="export-form-group full-width" style="grid-column:1/-1;">
                 <span class="export-label">Variables</span>
@@ -465,14 +465,6 @@ export function openExportDialog(
                     ${Object.entries(ALL_VARIABLES).map(([k, v]) =>
                         checkChip("data-variable", k, v, ds.dataVariables.has(k))
                     ).join("")}
-                </div>
-            </div>
-            <div class="export-form-group">
-                <span class="export-label">Resolution</span>
-                <div class="export-radio-group">
-                    ${radioChip("data-res", "low",    "Low",    ds.dataResolution === "low")}
-                    ${radioChip("data-res", "medium", "Medium", ds.dataResolution === "medium")}
-                    ${radioChip("data-res", "high",   "High",   ds.dataResolution === "high")}
                 </div>
             </div>
             <div class="export-form-group">
@@ -488,8 +480,17 @@ export function openExportDialog(
             <div class="export-form-group">
                 <span class="export-label">Time step</span>
                 <div class="export-radio-group">
+                    ${radioChip("data-step", "daily",   "Daily",   ds.dataStep === "daily")}
                     ${radioChip("data-step", "monthly", "Monthly", ds.dataStep === "monthly")}
                     ${radioChip("data-step", "yearly",  "Yearly",  ds.dataStep === "yearly")}
+                </div>
+            </div>
+            <div class="export-form-group">
+                <span class="export-label">Resolution</span>
+                <div class="export-radio-group">
+                    ${radioChip("data-res", "low",    "Low",    ds.dataResolution === "low")}
+                    ${radioChip("data-res", "medium", "Medium", ds.dataResolution === "medium")}
+                    ${radioChip("data-res", "high",   "High",   ds.dataResolution === "high")}
                 </div>
             </div>
             <div class="export-form-group">
@@ -648,7 +649,7 @@ export function openExportDialog(
                   ds.dataResolution = inp.value as "low" | "medium" | "high"; }));
         dialog.querySelectorAll<HTMLInputElement>('input[name="data-step"]')
               .forEach((inp) => inp.addEventListener("change", () => {
-                  ds.dataStep = inp.value as "monthly" | "yearly"; }));
+                  ds.dataStep = inp.value as "daily" | "monthly" | "yearly"; }));
         dialog.querySelectorAll<HTMLInputElement>('input[name="data-fmt"]')
               .forEach((inp) => inp.addEventListener("change", () => {
                   ds.dataFormat = inp.value as "csv" | "json"; }));
@@ -911,7 +912,7 @@ export function openExportDialog(
             const models    = [...ds.dataModels];
             const scenarios = [...ds.dataScenarios];
             const isSingleDate = ds.dataStartDate === ds.dataEndDate;
-            const stepDays = ds.dataStep === "monthly" ? 30 : 365;
+            const stepDays = ds.dataStep === "daily" ? 1 : ds.dataStep === "monthly" ? 30 : 365;
             const total = variables.length * models.length * scenarios.length;
             let done = 0;
 

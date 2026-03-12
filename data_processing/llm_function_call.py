@@ -14,6 +14,7 @@ FUNCTION_REGISTRY: Dict[str, callable] = {
     "update_unit": ui_state_updater.update_unit,
     "update_color_palette": ui_state_updater.update_color_palette,
     "update_masks": ui_state_updater.update_masks,
+    "update_legend_range": ui_state_updater.update_legend_range,
     "switch_to_compare_mode": ui_state_updater.switch_to_compare_mode,
     "switch_to_explore_mode": ui_state_updater.switch_to_explore_mode,
     "switch_to_chart_view": ui_state_updater.switch_to_chart_view,
@@ -210,10 +211,23 @@ def _build_system_prompt(context: Optional[dict] = None) -> str:
         "- If a SINGLE model/scenario/date is requested (no location, no ensemble) -> switch_to_explore_mode",
         "- To close the split view -> toggle_split_view(enable=False)",
         "",
-        "You may additionally call update_variable and/or update_color_palette and/or update_unit and/or update_masks together with the one view switch.",
+        "You may additionally call update_variable and/or update_color_palette and/or update_unit and/or update_masks and/or update_legend_range together with the one view switch.",
         "Do not ignore the user's request to change variable or palette or unit if mentioned. Execute each of these functions as needed.",
         "COLOR PALETTES IN SPLIT VIEW: When the user asks for an 'appropriate' or 'suitable' color map/palette and split view is active (or being activated), you MUST call update_color_palette TWICE — once with window=1 and once with window=2 — using a palette that semantically fits each variable. Suggested defaults: temperature variables (tas/tasmin/tasmax) -> thermal or magma; precipitation (pr) -> viridis; wind (sfcWind) -> cividis; humidity (hurs) -> viridis. Never skip the color palette calls when the user explicitly requests them.",
         "Never call two different switch_to_* tools in the same request.",
+        "",
+        "== COLOR RANGE (LEGEND PIN) ==",
+        "- The legend has a lock/pin button that opens a 'Fixed range' tooltip.",
+        "- Users can manually enter Min/Max values to fix the color scale of the map.",
+        "- 'Reset' restores the range to the full data min/max.",
+        "- 'Fit to masks': when binary masks are active, this button sets the range to the min/max of *unmasked* pixels only.",
+        "- 'Unpin' removes the fixed range and reverts to automatic scaling.",
+        "- You CAN set the color range programmatically via the update_legend_range tool (values in display units, e.g. \u00b0C).",
+        "- IMPORTANT: Whenever the user asks to 'set a range for the filtered data', 'focus the colors on the masked area', 'adjust the range to the mask', 'fit the range', or similar WITHOUT giving explicit numeric bounds, ALWAYS call update_legend_range(fit_to_masks=True, window=<n>). This tells the frontend to automatically compute the min/max of the unmasked pixels.",
+        "- Only use explicit min_value/max_value when the user provides specific numeric bounds (e.g. 'set range to 10-35\u00b0C').",
+        "- Call update_legend_range whenever the user asks to: 'fix the range', 'set the color scale to X-Y', 'focus the legend on X to Y', 'pin the range', 'limit the colors to X-Y', 'range for the filtered data'.",
+        "- Use window=1 (default) or window=2 in split view. Pass reset=True to restore full data range; unpin=True to deactivate the pin.",
+        "- When a mask is applied to a specific window AND the user wants the range to match, call update_legend_range(fit_to_masks=True, window=<same window as mask>).",
         "",
         "== MASK RULES ==",
         "- For probability masks in ENSEMBLE mode: pass masks DIRECTLY in the 'masks' parameter of switch_to_ensemble_mode. Do NOT call update_masks separately.",
@@ -262,6 +276,8 @@ def _build_system_prompt(context: Optional[dict] = None) -> str:
         "User: 'Where is there a 30% chance of temperature above 35°C in 2060?' -> switch_to_ensemble_mode(models=[all], scenarios=['ssp585'], date='2060-01-01', variable='tas', unit='Celsius (°C)', masks=[{id:1, kind:'probability', variable:'tas', unit:'Celsius (°C)', lowerBound:35, upperBound:1000000, probabilityThreshold:0.3}]).",
         "User: 'Find areas where potatoes can grow in 30 years, worst-case, 20% probability, temperature and precipitation' -> switch_to_ensemble_mode(models=[all], scenarios=['ssp585'], date='2055-07-01', variable='tas', unit='°C', masks=[{id:1, kind:'probability', variable:'tas', unit:'°C', lowerBound:10, upperBound:25, probabilityThreshold:0.2}, {id:2, kind:'probability', variable:'pr', unit:'mm/day', lowerBound:1.4, upperBound:6.0, probabilityThreshold:0.2}]). NOTE: for precipitation use 'mm/day' (typical range 0–20 mm/day), NOT 'kg m⁻² s⁻¹'.",
         "User: 'Show uncertainty in precipitation for 2050' -> switch_to_ensemble_mode(statistic='std', variable='pr', ...) (std deviation = uncertainty, no masks needed).",
+        "User: 'Show precip side by side with temp, apply a humidity mask to the precip window, and set the range to the filtered data' -> toggle_split_view(enable=True, variable='pr') + update_masks(masks=[{id:1, variable:'hurs', ...}], window=2) + update_legend_range(fit_to_masks=True, window=2). NEVER skip the tool calls because the range value is unknown — use fit_to_masks=True.",
+        "User: 'Set a range for the filtered data' (masks already active) -> update_legend_range(fit_to_masks=True, window=<window with mask>).",
     ]
 
     if context:
@@ -1031,6 +1047,52 @@ def _get_state_control_functions(context: Optional[dict] = None) -> List[dict]:
                         }
                     },
                     "required": ["location_name"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "update_legend_range",
+                "description": (
+                    "Pin or update the color-scale range shown in the map legend. "
+                    "Use this when the user wants to fix, focus, or change the color range. "
+                    "Example triggers: 'set the range to 10–35°C', 'pin the legend to 0–50 mm/day', 'focus the colors on 20 to 40', 'limit the color scale to X–Y'. "
+                    "IMPORTANT: When the user says 'set a range for the filtered data', 'fit the range to the mask', 'adjust the range to show only filtered areas', or similar "
+                    "WITHOUT giving specific numbers, use fit_to_masks=True instead of guessing values. "
+                    "The frontend will then automatically compute min/max from the unmasked pixels. "
+                    "Values (when provided) are in the current display unit (e.g. °C for temperature, mm/day for precipitation). "
+                    "In split view, use window=1 or window=2 to target the correct map."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "min_value": {
+                            "type": "number",
+                            "description": "Lower bound of the color range, in the current display unit. Only required when fit_to_masks is false."
+                        },
+                        "max_value": {
+                            "type": "number",
+                            "description": "Upper bound of the color range, in the current display unit. Only required when fit_to_masks is false."
+                        },
+                        "fit_to_masks": {
+                            "type": "boolean",
+                            "description": "Set to true to automatically set the range to the min/max of unmasked (visible) pixels. Use this whenever the user asks for a range matching filtered/masked data without giving explicit numbers."
+                        },
+                        "window": {
+                            "type": "integer",
+                            "enum": [1, 2],
+                            "description": "Which map window to apply the range to. 1 = main/Window 1 (default), 2 = Window 2 in split view."
+                        },
+                        "reset": {
+                            "type": "boolean",
+                            "description": "Set to true to restore the range to the full data min/max (keeps the pin active)."
+                        },
+                        "unpin": {
+                            "type": "boolean",
+                            "description": "Set to true to remove the fixed range and revert to automatic scaling."
+                        }
+                    }
                 }
             }
         },

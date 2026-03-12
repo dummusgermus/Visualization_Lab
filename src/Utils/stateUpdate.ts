@@ -188,6 +188,30 @@ export function updateState(
         updates.mapRangeEnd = newState.mapRangeEnd;
     }
 
+    // Legend pin / color range (set by agent via update_legend_range)
+    if (typeof newState.legendPinned === "boolean") {
+        updates.legendPinned = newState.legendPinned;
+    }
+    if (newState.legendPinnedMin === null) {
+        updates.legendPinnedMin = null;
+    }
+    if (newState.legendPinnedMax === null) {
+        updates.legendPinnedMax = null;
+    }
+    // Display-unit values that need conversion to raw in the callback
+    if (typeof newState.legendPinnedDisplayMin === "number" || newState.legendPinnedDisplayMin === null) {
+        updates.legendPinnedDisplayMin = newState.legendPinnedDisplayMin;
+    }
+    if (typeof newState.legendPinnedDisplayMax === "number" || newState.legendPinnedDisplayMax === null) {
+        updates.legendPinnedDisplayMax = newState.legendPinnedDisplayMax;
+    }
+    if (newState._legendReset === true) {
+        updates._legendReset = true;
+    }
+    if (newState._legendFitToMasks === true) {
+        updates._legendFitToMasks = true;
+    }
+
     // Window 2 configuration (partial update – only override fields that were explicitly provided)
     if (newState.window2 && typeof newState.window2 === "object") {
         const w2 = newState.window2 as Record<string, unknown>;
@@ -250,6 +274,28 @@ export function updateState(
         }
         if (typeof w2.mapRangeEnd === "string") {
             window2Updates.mapRangeEnd = w2.mapRangeEnd;
+        }
+        // Legend pin for Window 2
+        if (typeof w2.legendPinned === "boolean") {
+            window2Updates.legendPinned = w2.legendPinned;
+        }
+        if (w2.legendPinnedMin === null) {
+            window2Updates.legendPinnedMin = null;
+        }
+        if (w2.legendPinnedMax === null) {
+            window2Updates.legendPinnedMax = null;
+        }
+        if (typeof w2.legendPinnedDisplayMin === "number" || w2.legendPinnedDisplayMin === null) {
+            window2Updates.legendPinnedDisplayMin = w2.legendPinnedDisplayMin;
+        }
+        if (typeof w2.legendPinnedDisplayMax === "number" || w2.legendPinnedDisplayMax === null) {
+            window2Updates.legendPinnedDisplayMax = w2.legendPinnedDisplayMax;
+        }
+        if (w2._legendReset === true) {
+            window2Updates._legendReset = true;
+        }
+        if (w2._legendFitToMasks === true) {
+            window2Updates._legendFitToMasks = true;
         }
         if (Object.keys(window2Updates).length > 0) {
             updates.window2 = window2Updates;

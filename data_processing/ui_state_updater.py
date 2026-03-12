@@ -70,6 +70,65 @@ def update_masks(**kwargs) -> dict:
         "masks": curr_masks 
     }
 
+def update_legend_range(**kwargs) -> dict:
+    """Pin / update the color-scale range shown in the map legend.
+    Values are expected in the current display unit (e.g. °C for temperature).
+    The frontend converts them to native units before storing.
+    Pass fit_to_masks=True to automatically set the range to the min/max of unmasked pixels.
+    Pass reset=True to restore the full data min/max without unpinning.
+    Pass unpin=True to remove the fixed range entirely.
+    """
+    window = kwargs.get('window', 1)
+    if isinstance(window, str):
+        window = int(window) if window.isdigit() else 1
+
+    unpin = kwargs.get('unpin', False)
+    reset = kwargs.get('reset', False)
+    fit_to_masks = kwargs.get('fit_to_masks', False)
+
+    if unpin:
+        patch = {"legendPinned": False, "legendPinnedMin": None, "legendPinnedMax": None}
+        if window == 2:
+            return {"window2": patch}
+        return patch
+
+    if reset:
+        # Signal the frontend to reset to full data range; null values trigger the reset logic
+        patch = {"legendPinned": True, "legendPinnedDisplayMin": None, "legendPinnedDisplayMax": None, "_legendReset": True}
+        if window == 2:
+            return {"window2": patch}
+        return patch
+
+    if fit_to_masks:
+        # Signal the frontend to compute min/max from unmasked pixels
+        patch = {"legendPinned": True, "_legendFitToMasks": True}
+        if window == 2:
+            return {"window2": patch}
+        return patch
+
+    min_value = kwargs.get('min_value')
+    max_value = kwargs.get('max_value')
+
+    if min_value is None or max_value is None:
+        raise ValueError("Both min_value and max_value are required unless fit_to_masks=True, reset=True or unpin=True")
+
+    min_value = float(min_value)
+    max_value = float(max_value)
+
+    if min_value >= max_value:
+        raise ValueError("min_value must be less than max_value")
+
+    # Values are in display units; the frontend will convert them to native units (e.g. K)
+    patch = {
+        "legendPinned": True,
+        "legendPinnedDisplayMin": min_value,
+        "legendPinnedDisplayMax": max_value,
+    }
+    if window == 2:
+        return {"window2": patch}
+    return patch
+
+
 def update_color_palette(**kwargs) -> dict:
     """Update color palette from keyword arguments."""
     color_palette = kwargs.get('color_palette')

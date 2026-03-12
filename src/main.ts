@@ -22,6 +22,7 @@ import {
     applyMapTransform,
     applyW2MapTransform,
     clearW2Cache,
+    computeMaskedMinMax,
     getCurrentZoomLevel,
     getMapTransform,
     getW2MapTransform,
@@ -10788,6 +10789,10 @@ function renderLegendPinTooltip(win: "1" | "2"): string {
                data-action="legend-pin-range" data-key="legendPinnedMin" data-window="${win}"
                value="${fmt(displayMin)}" step="any">${unitSuffix}
       </label>
+      ${getModeMasks(s).some((m) => m.kind !== "probability") ? `
+      <button type="button" class="legend-pin-fit-masks-btn"
+              data-action="legend-pin-masked-range" data-window="${win}"
+              title="Set range to min/max of unmasked pixels">Fit to masks</button>` : ""}
       <div class="legend-pin-tooltip-actions">
         <button type="button" class="legend-pin-reset-btn"
                 data-action="legend-pin-reset" data-window="${win}">Reset</button>
@@ -16782,6 +16787,70 @@ async function init() {
             updates = { ...updates, window2: { ...state.window2, ...updates.window2 } };
         }
         Object.assign(state, updates);
+
+        // Convert agent-supplied display-unit legend range values to raw/native units
+        const applyAgentLegendRange = (s: typeof state | typeof state.window2, w: "1" | "2") => {
+            if ((s as any)._legendReset) {
+                s.legendPinnedMin = s.dataMin;
+                s.legendPinnedMax = s.dataMax;
+                delete (s as any)._legendReset;
+                redrawMapForPinnedRange(w);
+                return;
+            }
+            if ((s as any)._legendFitToMasks) {
+                delete (s as any)._legendFitToMasks;
+                // Compute masked min/max after a short delay so pending mask/data updates settle first
+                setTimeout(() => {
+                    const sc = w === "2" ? state.window2 : state;
+                    if (!sc.currentData) return;
+                    const isEns = sc.mode === "Ensemble";
+                    const maskedRange = computeMaskedMinMax(
+                        sc.currentData,
+                        isEns ? (sc as any).ensembleVariable : sc.variable,
+                        isEns ? (sc as any).ensembleUnit : sc.selectedUnit,
+                        getModeMasks(sc),
+                        isEns ? (sc as any).ensembleStatistics : null,
+                        isEns,
+                        (sc.mode === "Explore" || sc.mode === "Compare") ? sc.maskVariableData : undefined,
+                        isEns ? (sc as any).ensembleStatisticsByVariable : null,
+                    );
+                    if (maskedRange) {
+                        sc.legendPinned = true;
+                        sc.legendPinnedMin = maskedRange.min;
+                        sc.legendPinnedMax = maskedRange.max;
+                        render();
+                        redrawMapForPinnedRange(w);
+                    }
+                }, 300);
+                return;
+            }
+            const hasMin = typeof (s as any).legendPinnedDisplayMin === "number";
+            const hasMax = typeof (s as any).legendPinnedDisplayMax === "number";
+            if (hasMin || hasMax) {
+                const isEns = s.mode === "Ensemble";
+                const variable = isEns ? (s as any).ensembleVariable : s.variable;
+                const unitLabel = isEns ? (s as any).ensembleUnit : s.selectedUnit;
+                const isDiff = s.mode === "Compare" || (isEns && isDifferenceEnsembleStatistic((s as any).ensembleStatistic));
+                if (hasMin) {
+                    s.legendPinnedMin = unconvertValue((s as any).legendPinnedDisplayMin, variable, unitLabel, { isDifference: isDiff });
+                }
+                if (hasMax) {
+                    s.legendPinnedMax = unconvertValue((s as any).legendPinnedDisplayMax, variable, unitLabel, { isDifference: isDiff });
+                }
+                delete (s as any).legendPinnedDisplayMin;
+                delete (s as any).legendPinnedDisplayMax;
+                redrawMapForPinnedRange(w);
+            }
+        };
+        const needsLegendW1 = updates.legendPinnedDisplayMin !== undefined || updates.legendPinnedDisplayMax !== undefined || updates._legendReset || updates._legendFitToMasks;
+        const needsLegendW2 = updates.window2 && (updates.window2.legendPinnedDisplayMin !== undefined || updates.window2.legendPinnedDisplayMax !== undefined || updates.window2._legendReset || updates.window2._legendFitToMasks);
+        if (needsLegendW1) {
+            applyAgentLegendRange(state, "1");
+        }
+        if (needsLegendW2) {
+            applyAgentLegendRange(state.window2, "2");
+        }
+
         render();
 
         // Reload data if necessary
@@ -17079,6 +17148,32 @@ async function init() {
             s.legendPinnedMax = s.dataMax;
             render();
             redrawMapForPinnedRange(w);
+            return;
+        }
+
+        if (action === "legend-pin-masked-range") {
+            e.preventDefault();
+            e.stopPropagation();
+            const w = (actionElement?.getAttribute("data-window") || "1") as "1" | "2";
+            const s = w === "2" ? state.window2 : state;
+            if (!s.currentData) return;
+            const isEns = s.mode === "Ensemble";
+            const maskedRange = computeMaskedMinMax(
+                s.currentData,
+                isEns ? s.ensembleVariable : s.variable,
+                isEns ? s.ensembleUnit : s.selectedUnit,
+                getModeMasks(s),
+                isEns ? s.ensembleStatistics : null,
+                isEns,
+                (s.mode === "Explore" || s.mode === "Compare") ? s.maskVariableData : undefined,
+                isEns ? s.ensembleStatisticsByVariable : null,
+            );
+            if (maskedRange) {
+                s.legendPinnedMin = maskedRange.min;
+                s.legendPinnedMax = maskedRange.max;
+                render();
+                redrawMapForPinnedRange(w);
+            }
             return;
         }
 

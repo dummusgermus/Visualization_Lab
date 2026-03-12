@@ -1353,6 +1353,170 @@ function runRenderMapData(
     }
 }
 
+/**
+ * Compute the min/max of the raw data values for pixels that pass the active binary masks.
+ * Returns null when probability masks are active (display is 0–1 probability) or when no
+ * valid unmasked pixels are found.
+ */
+export function computeMaskedMinMax(
+    data: ClimateData,
+    variable?: string,
+    selectedUnit?: string,
+    masks?: Array<{
+        lowerBound: number | null;
+        upperBound: number | null;
+        lowerEdited: boolean;
+        upperEdited: boolean;
+        statistic?: "mean" | "std" | "median" | "iqr" | "percentile" | "extremes";
+        variable?: string;
+        unit?: string;
+        kind?: "binary" | "probability";
+        probabilityThreshold?: number;
+    }>,
+    ensembleStatistics?: Map<"mean" | "std" | "median" | "iqr" | "percentile" | "extremes", Float32Array> | null,
+    isEnsembleMode?: boolean,
+    maskVariableData?: Map<string, ClimateData>,
+    ensembleStatisticsByVariable?: Map<
+        string,
+        Map<"mean" | "std" | "median" | "iqr" | "percentile" | "extremes", Float32Array>
+    > | null,
+): { min: number; max: number } | null {
+    const arrayData = dataToArray(data);
+    if (!arrayData) return null;
+
+    const [height, width] = data.shape;
+    const expectedLen = width * height;
+
+    const isDifference =
+        Boolean((data as any)?.metadata?.comparison) ||
+        (typeof data.model === "string" && data.model.includes(" minus "));
+
+    const binaryMasks = masks?.filter((mask) => mask.kind !== "probability") ?? [];
+    const hasProbabilityMasks =
+        Boolean(isEnsembleMode) && (masks?.some((mask) => mask.kind === "probability") ?? false);
+
+    // Probability rendering overrides the color range to 0–1; masked minmax not applicable.
+    if (hasProbabilityMasks) return null;
+
+    // Pre-build mask variable arrays for non-ensemble mode (same as runRenderMapData)
+    const maskVariableArrays = new Map<string, Float32Array | Float64Array>();
+    if (!isEnsembleMode && binaryMasks.length > 0 && maskVariableData) {
+        const uniqueMaskVars = new Set<string>();
+        for (const mask of binaryMasks) {
+            if (mask.variable && mask.variable !== variable) {
+                uniqueMaskVars.add(mask.variable);
+            }
+        }
+        uniqueMaskVars.forEach((maskVar) => {
+            const cachedVarData = maskVariableData.get(maskVar);
+            if (!cachedVarData) return;
+            try {
+                const varArrayData = dataToArray(cachedVarData);
+                if (varArrayData && varArrayData.length === expectedLen) {
+                    maskVariableArrays.set(maskVar, varArrayData);
+                }
+            } catch { /* ignore decode errors */ }
+        });
+    }
+
+    let resultMin = Infinity;
+    let resultMax = -Infinity;
+
+    for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+            const value = getDataValue(x, y, width, height, arrayData);
+            if (value === null) continue;
+
+            // Cap hurs (relative humidity) at 100, consistent with calculateMinMax
+            const rawValue = variable === "hurs" ? Math.min(value, 100) : value;
+
+            let passesMask = false;
+            if (binaryMasks.length > 0) {
+                if (isEnsembleMode && ensembleStatistics) {
+                    // Ensemble mode: intersection (AND) across all masks
+                    passesMask = true;
+                    for (const mask of binaryMasks) {
+                        const lowerUnrestricted = !mask.lowerEdited || mask.lowerBound === null;
+                        const upperUnrestricted = !mask.upperEdited || mask.upperBound === null;
+                        const maskVar = mask.variable || variable;
+                        const maskUnit = mask.unit || selectedUnit;
+                        const maskStat = mask.statistic || "mean";
+                        const statsForVar =
+                            (maskVar ? ensembleStatisticsByVariable?.get(maskVar) : undefined) ??
+                            (maskVar === variable ? ensembleStatistics : undefined);
+                        const statArray = statsForVar?.get(maskStat);
+                        if (!statArray) continue;
+                        const idx = (height - 1 - y) * width + x;
+                        const statValue = statArray[idx];
+                        if (!isFinite(statValue)) { passesMask = false; break; }
+                        let statDisplayValue = statValue;
+                        if (maskVar && maskUnit) {
+                            const isStatDifference = isDifferenceEnsembleStatistic(maskStat);
+                            statDisplayValue = convertValue(statValue, maskVar, maskUnit, {
+                                isDifference: isStatDifference,
+                            });
+                        }
+                        if (!lowerUnrestricted && mask.lowerBound !== null && statDisplayValue < mask.lowerBound) {
+                            passesMask = false; break;
+                        }
+                        if (!upperUnrestricted && mask.upperBound !== null && statDisplayValue > mask.upperBound) {
+                            passesMask = false; break;
+                        }
+                    }
+                } else {
+                    // Explore/Compare mode: union within variable, intersection across variables
+                    const masksByVariable = new Map<string, typeof binaryMasks>();
+                    for (const mask of binaryMasks) {
+                        const maskVar = mask.variable;
+                        if (!maskVar) continue;
+                        if (!masksByVariable.has(maskVar)) masksByVariable.set(maskVar, []);
+                        masksByVariable.get(maskVar)!.push(mask);
+                    }
+                    passesMask = true;
+                    for (const [maskVar, varMasks] of masksByVariable) {
+                        let varRawValue: number;
+                        if (maskVar === variable) {
+                            varRawValue = value;
+                        } else if (maskVariableArrays.has(maskVar)) {
+                            const varData = maskVariableArrays.get(maskVar)!;
+                            const varIdx = (height - 1 - y) * width + x;
+                            varRawValue = varData[varIdx];
+                            if (!isFinite(varRawValue)) { passesMask = false; break; }
+                        } else {
+                            passesMask = false; break;
+                        }
+                        let passesThisVariable = false;
+                        for (const mask of varMasks) {
+                            const lowerUnrestricted = !mask.lowerEdited;
+                            const upperUnrestricted = !mask.upperEdited;
+                            const maskUnit = mask.unit;
+                            let varDisplayValue = varRawValue;
+                            if (maskUnit) {
+                                varDisplayValue = convertValue(varRawValue, maskVar, maskUnit, { isDifference });
+                            }
+                            let passesThisMask = true;
+                            if (!lowerUnrestricted && mask.lowerBound !== null && varDisplayValue < mask.lowerBound) passesThisMask = false;
+                            if (!upperUnrestricted && mask.upperBound !== null && varDisplayValue > mask.upperBound) passesThisMask = false;
+                            if (passesThisMask) { passesThisVariable = true; break; }
+                        }
+                        if (!passesThisVariable) { passesMask = false; break; }
+                    }
+                }
+            } else {
+                passesMask = true;
+            }
+
+            if (passesMask) {
+                if (rawValue < resultMin) resultMin = rawValue;
+                if (rawValue > resultMax) resultMax = rawValue;
+            }
+        }
+    }
+
+    if (!isFinite(resultMin) || !isFinite(resultMax)) return null;
+    return { min: resultMin, max: resultMax };
+}
+
 export function zoomToLocation(
     canvas: HTMLCanvasElement,
     lon: number,

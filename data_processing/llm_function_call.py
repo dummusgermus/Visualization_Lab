@@ -213,7 +213,7 @@ def _build_system_prompt(context: Optional[dict] = None) -> str:
         "",
         "You may additionally call update_variable and/or update_color_palette and/or update_unit and/or update_masks and/or update_legend_range together with the one view switch.",
         "Do not ignore the user's request to change variable or palette or unit if mentioned. Execute each of these functions as needed.",
-        "COLOR PALETTES IN SPLIT VIEW: When the user asks for an 'appropriate' or 'suitable' color map/palette and split view is active (or being activated), you MUST call update_color_palette TWICE — once with window=1 and once with window=2 — using a palette that semantically fits each variable. Suggested defaults: temperature variables (tas/tasmin/tasmax) -> thermal or magma; precipitation (pr) -> viridis; wind (sfcWind) -> cividis; humidity (hurs) -> viridis. Never skip the color palette calls when the user explicitly requests them.",
+        "COLOR PALETTES IN SPLIT VIEW: When the user asks for an 'appropriate' or 'suitable' color map/palette and split view is active (or being activated), you MUST call update_color_palette TWICE — once with window=1 and once with window=2 — using a palette that semantically fits each variable. Suggested defaults: temperature variables (tas/tasmin/tasmax) -> thermal or magma; precipitation (pr) -> viridis; wind (sfcWind) -> cividis; humidity (hurs/huss) -> viridis. Never skip the color palette calls when the user explicitly requests them.",
         "Never call two different switch_to_* tools in the same request.",
         "",
         "== COLOR RANGE (LEGEND PIN) ==",
@@ -243,7 +243,8 @@ def _build_system_prompt(context: Optional[dict] = None) -> str:
         "  * tas/tasmin/tasmax: use 'Celsius (°C)', typical range -40 to +50 °C.",
         "  * pr (precipitation): use 'mm/day', typical range 0 to 20 mm/day. NEVER use 'kg', 'kg/m2', 'kg m-2 s-1' or 'mm/day' variants with spaces.",
         "  * sfcWind: use 'm/s', typical range 0 to 20 m/s.",
-        "  * hurs: use 'Percent (%)', range 0 to 100.",
+        "  * hurs: use 'Percent (%)', range 0 to 100. (Relative Humidity \u2014 fraction of maximum moisture the air can hold)",
+        "  * huss: use 'g/kg', typical range 0 to 30 g/kg. (Specific Humidity \u2014 absolute mass of water vapor per kg of air)",
         "",
         "== DATE & SCENARIO RULES (when setting/choosing dates) ==",
         "- Dates must be YYYY-MM-DD.",
@@ -276,7 +277,7 @@ def _build_system_prompt(context: Optional[dict] = None) -> str:
         "User: 'Where is there a 30% chance of temperature above 35°C in 2060?' -> switch_to_ensemble_mode(models=[all], scenarios=['ssp585'], date='2060-01-01', variable='tas', unit='Celsius (°C)', masks=[{id:1, kind:'probability', variable:'tas', unit:'Celsius (°C)', lowerBound:35, upperBound:1000000, probabilityThreshold:0.3}]).",
         "User: 'Find areas where potatoes can grow in 30 years, worst-case, 20% probability, temperature and precipitation' -> switch_to_ensemble_mode(models=[all], scenarios=['ssp585'], date='2055-07-01', variable='tas', unit='°C', masks=[{id:1, kind:'probability', variable:'tas', unit:'°C', lowerBound:10, upperBound:25, probabilityThreshold:0.2}, {id:2, kind:'probability', variable:'pr', unit:'mm/day', lowerBound:1.4, upperBound:6.0, probabilityThreshold:0.2}]). NOTE: for precipitation use 'mm/day' (typical range 0–20 mm/day), NOT 'kg m⁻² s⁻¹'.",
         "User: 'Show uncertainty in precipitation for 2050' -> switch_to_ensemble_mode(statistic='std', variable='pr', ...) (std deviation = uncertainty, no masks needed).",
-        "User: 'Show precip side by side with temp, apply a humidity mask to the precip window, and set the range to the filtered data' -> toggle_split_view(enable=True, variable='pr') + update_masks(masks=[{id:1, variable:'hurs', ...}], window=2) + update_legend_range(fit_to_masks=True, window=2). NEVER skip the tool calls because the range value is unknown — use fit_to_masks=True.",
+        "User: 'Show precip side by side with temp, apply a humidity mask to the precip window, and set the range to the filtered data' -> toggle_split_view(enable=True, variable='pr') + update_masks(masks=[{id:1, variable:'hurs', unit:'Percent (%)', lowerBound:70, upperBound:100}], window=2) + update_legend_range(fit_to_masks=True, window=2). NEVER skip the tool calls because the range value is unknown — use fit_to_masks=True. NOTE: use 'hurs' (relative humidity, %) for general humidity masking; use 'huss' (specific humidity, g/kg) only when the user specifically asks for specific humidity.",
         "User: 'Set a range for the filtered data' (masks already active) -> update_legend_range(fit_to_masks=True, window=<window with mask>).",
     ]
 

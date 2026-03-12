@@ -3,7 +3,7 @@ import os
 # Climate variables
 VALID_VARIABLES = [
     "hurs",      # Near-Surface Relative Humidity (%)
-    "huss",      # Near-Surface Specific Humidity (%)
+    "huss",      # Near-Surface Specific Humidity (g/kg)
     "pr",        # Precipitation (kg m-2 s-1)
     "rlds",      # Surface Downwelling Longwave Radiation (W/m²)
     "rsds",      # Surface Downwelling Shortwave Radiation (W/m²)
@@ -15,7 +15,7 @@ VALID_VARIABLES = [
 
 VARIABLE_UNIT_MAP = {
     "hurs": ["Percent (%)"],
-    "huss": ["Percent (%)"],
+    "huss": ["g/kg"],
     "pr": ["mm/day", "g m⁻² s⁻¹", "kg m⁻² s⁻¹"],
     "rlds": ["W/m²", "kW/m²"],
     "rsds": ["W/m²", "kW/m²"],
@@ -92,7 +92,7 @@ VARIABLE_METADATA = {
     },
     "huss": {
         "name": "Near-Surface Specific Humidity",
-        "unit": "%",
+        "unit": "g/kg",
         "description": "Daily mean specific humidity at 2 meters height",
     },
     "rsds": {

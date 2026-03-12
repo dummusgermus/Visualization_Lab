@@ -29,6 +29,7 @@ const ALL_VARIABLES: Record<string, string> = {
     pr:       "Precipitation (pr)",
     rsds:     "SW Radiation (rsds)",
     hurs:     "Relative Humidity (hurs)",
+    huss:     "Specific Humidity (huss)",
     rlds:     "LW Radiation (rlds)",
     sfcWind:  "Wind Speed (sfcWind)",
     tasmin:   "Min Air Temp (tasmin)",

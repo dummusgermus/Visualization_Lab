@@ -295,6 +295,7 @@ const variables = [
     "pr",
     "rsds",
     "hurs",
+    "huss",
     "rlds",
     "sfcWind",
     "tasmin",
@@ -316,6 +317,7 @@ const variableFullNames: Record<string, string> = {
     pr: "Precipitation",
     rsds: "Surface Downwelling Shortwave Radiation",
     hurs: "Near-Surface Relative Humidity",
+    huss: "Near-Surface Specific Humidity",
     rlds: "Surface Downwelling Longwave Radiation",
     sfcWind: "Daily-Mean Near-Surface Wind Speed",
     tasmin: "Daily Minimum Near-Surface Air Temperature",
@@ -328,6 +330,7 @@ const variableInfo: Record<string, string> = {
     pr: "The amount of water that falls from the atmosphere to the surface, measured as mass per unit area per unit time.",
     rsds: "Incoming solar radiation reaching the Earth's surface, measured in Watts per square meter.",
     hurs: "The amount of moisture in the air relative to the maximum it can hold, expressed as a percentage.",
+    huss: "The mass of water vapor per unit mass of air near the surface, expressed in grams per kilogram.",
     rlds: "Incoming thermal radiation from the atmosphere, measured in Watts per square meter.",
     sfcWind:
         "The average wind speed near the surface over a day, measured in meters per second.",
@@ -2561,15 +2564,17 @@ function formatMaskLimit(value: number | null): string {
 function getMaskRangeFor(
     maskVar: string,
     unitLabel: string,
+    winState?: AppState | Window2State,
 ): { min: number; max: number } | null {
+    const ws = winState ?? state;
     let rawMin: number | null = null;
     let rawMax: number | null = null;
 
-    if (maskVar === state.variable) {
-        rawMin = state.dataMin;
-        rawMax = state.dataMax;
+    if (maskVar === ws.variable) {
+        rawMin = ws.dataMin;
+        rawMax = ws.dataMax;
     } else {
-        const range = state.maskVariableRanges.get(maskVar);
+        const range = ws.maskVariableRanges.get(maskVar);
         if (range) {
             rawMin = range.min;
             rawMax = range.max;
@@ -11077,7 +11082,7 @@ function renderManualSection(params: {
                                         : getDefaultUnitOption(maskVar).label);
                                 const maskRange =
                                     s.mode === "Explore"
-                                        ? getMaskRangeFor(maskVar, maskUnit)
+                                        ? getMaskRangeFor(maskVar, maskUnit, s)
                                         : null;
                                 const ensembleRange =
                                     s.mode === "Ensemble"
@@ -11165,6 +11170,7 @@ function renderManualSection(params: {
                                         {
                                             dataKey: "maskVariable",
                                             infoType: "variable",
+                                            dataWindow: dataWindowOpt,
                                         },
                                     ).replace(
                                         'class="custom-select-wrapper"',
@@ -11178,6 +11184,7 @@ function renderManualSection(params: {
                                         maskUnit,
                                         {
                                             dataKey: "maskUnit",
+                                            dataWindow: dataWindowOpt,
                                         },
                                     ).replace(
                                         'class="custom-select-wrapper"',
@@ -11200,6 +11207,7 @@ function renderManualSection(params: {
                                         {
                                             dataKey: "maskVariable",
                                             infoType: "variable",
+                                            dataWindow: dataWindowOpt,
                                         },
                                     ).replace(
                                         'class="custom-select-wrapper"',
@@ -11216,6 +11224,7 @@ function renderManualSection(params: {
                                             ).label,
                                         {
                                             dataKey: "maskUnit",
+                                            dataWindow: dataWindowOpt,
                                         },
                                     ).replace(
                                         'class="custom-select-wrapper"',
@@ -11705,7 +11714,7 @@ function renderManualSection(params: {
                                             : getDefaultUnitOption(maskVar).label);
                                     const maskRange =
                                         s.mode === "Explore"
-                                            ? getMaskRangeFor(maskVar, maskUnit)
+                                            ? getMaskRangeFor(maskVar, maskUnit, s)
                                             : null;
                                     const ensembleRange =
                                         s.mode === "Ensemble"
@@ -11794,6 +11803,7 @@ function renderManualSection(params: {
                                               {
                                                   dataKey: "maskVariable",
                                                   infoType: "variable",
+                                                  dataWindow: dataWindowOpt,
                                               },
                                           ).replace(
                                               'class="custom-select-wrapper"',
@@ -11807,6 +11817,7 @@ function renderManualSection(params: {
                                               maskUnit,
                                               {
                                                   dataKey: "maskUnit",
+                                                  dataWindow: dataWindowOpt,
                                               },
                                           ).replace(
                                               'class="custom-select-wrapper"',
@@ -11821,6 +11832,7 @@ function renderManualSection(params: {
                                                 {
                                                     dataKey: "maskVariable",
                                                     infoType: "variable",
+                                                    dataWindow: dataWindowOpt,
                                                 },
                                             ).replace(
                                                 'class="custom-select-wrapper"',
@@ -11839,6 +11851,7 @@ function renderManualSection(params: {
                                                     ).label,
                                                 {
                                                     dataKey: "maskUnit",
+                                                    dataWindow: dataWindowOpt,
                                                 },
                                             ).replace(
                                                 'class="custom-select-wrapper"',
@@ -12299,7 +12312,7 @@ function renderManualSection(params: {
                                         : getDefaultUnitOption(maskVar).label);
                                 const maskRange =
                                     s.mode === "Explore"
-                                        ? getMaskRangeFor(maskVar, maskUnit)
+                                        ? getMaskRangeFor(maskVar, maskUnit, s)
                                         : null;
                                 const ensembleRange =
                                     s.mode === "Ensemble"
@@ -12387,6 +12400,7 @@ function renderManualSection(params: {
                                         {
                                             dataKey: "maskVariable",
                                             infoType: "variable",
+                                            dataWindow: dataWindowOpt,
                                         },
                                     ).replace(
                                         'class="custom-select-wrapper"',
@@ -12400,6 +12414,7 @@ function renderManualSection(params: {
                                         maskUnit,
                                         {
                                             dataKey: "maskUnit",
+                                            dataWindow: dataWindowOpt,
                                         },
                                     ).replace(
                                         'class="custom-select-wrapper"',
@@ -12422,6 +12437,7 @@ function renderManualSection(params: {
                                         {
                                             dataKey: "maskVariable",
                                             infoType: "variable",
+                                            dataWindow: dataWindowOpt,
                                         },
                                     ).replace(
                                         'class="custom-select-wrapper"',
@@ -12438,6 +12454,7 @@ function renderManualSection(params: {
                                             ).label,
                                         {
                                             dataKey: "maskUnit",
+                                            dataWindow: dataWindowOpt,
                                         },
                                     ).replace(
                                         'class="custom-select-wrapper"',
@@ -16136,6 +16153,7 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             const range = getMaskRangeFor(
                 ms.variable,
                 ms.selectedUnit,
+                ms,
             );
             if (range) {
                 lowerBound = range.min;

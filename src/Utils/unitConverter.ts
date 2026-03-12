@@ -116,11 +116,21 @@ export function getUnitOptions(variable: string): UnitOption[] {
             ];
 
         case "hurs":
-            // Humidity - no conversion needed
+            // Relative Humidity - no conversion needed
             return [
                 {
                     label: "Percent (%)",
                     unit: "%",
+                    convert: identity,
+                },
+            ];
+
+        case "huss":
+            // Specific Humidity - raw data is already in g/kg, no conversion needed
+            return [
+                {
+                    label: "g/kg",
+                    unit: "g/kg",
                     convert: identity,
                 },
             ];

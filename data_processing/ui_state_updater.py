@@ -185,6 +185,10 @@ def switch_to_ensemble_mode(**kwargs) -> dict:
         unit = current_state.get('selectedUnit') or current_state.get('unit')
     if not variable:
         variable = current_state.get('variable') or current_state.get('variable')
+    # Expand 'all' placeholder to the full list of valid models
+    if models and any(m.lower() == 'all' for m in models):
+        models = list(config.VALID_MODELS)
+
     if not scenarios:
         raise ValueError("At least one scenario is required for ensemble mode")
     if not models:

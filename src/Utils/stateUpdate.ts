@@ -146,7 +146,15 @@ export function updateState(
             );
         }
         if (newState.selectedModels) {
-            updates.ensembleModels = newState.selectedModels;
+            // Guard: if the LLM sent ['all'] as a placeholder, treat it as
+            // "use all models" by storing an empty array (the ensemble loader
+            // already falls back to the full model list when the array is empty).
+            const rawModels: string[] = newState.selectedModels;
+            updates.ensembleModels = rawModels.some(
+                (m: string) => m.toLowerCase() === "all",
+            )
+                ? []
+                : rawModels;
         }
         if (newState.selectedDate) {
             updates.ensembleDate = newState.selectedDate;

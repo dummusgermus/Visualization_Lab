@@ -3286,24 +3286,6 @@ function renderMapInfoWindow() {
         <div class="map-info-body" style="${styleAttr(styles.mapInfoBody)}">
           ${renderMapInfoBody()}
         </div>
-        <button
-          type="button"
-          data-action="open-map-info-chart"
-          aria-label="Open chart view"
-          style="${styleAttr({
-              ...styles.mapInfoActionBtn,
-              ...styles.mapInfoExpandBtn,
-          })}"
-          onmouseover="this.style.color='var(--text-primary)';this.style.background='rgba(15, 23, 42, 0.85)';"
-          onmouseout="this.style.color='var(--text-secondary)';this.style.background='transparent';"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path d="M9 5H5v4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-            <path d="M15 5h4v4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-            <path d="M9 19H5v-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-            <path d="M15 19h4v-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-        </button>
         <div
           class="map-info-resize-handle"
           aria-hidden="true"
@@ -16405,42 +16387,6 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         });
     });
 
-    const mapInfoExpandBtn = root.querySelector<HTMLButtonElement>(
-        '[data-action="open-map-info-chart"]',
-    );
-    mapInfoExpandBtn?.addEventListener("click", (e) => {
-        e.preventDefault();
-        if (!state.mapMarker && !state.mapPolygon) return;
-        state.canvasView = "chart";
-        state.chartMode = "single";
-        // Keep expanded boxplot colors consistent with the map info palette selection
-        state.chartPalette = state.mapInfoPalette;
-        if (state.mapPolygon && state.mapPolygon.length >= 3) {
-            state.chartLocation = "Draw";
-            state.chartPolygon = state.mapPolygon;
-            state.chartPoint = null;
-            state.chartLocationName = null;
-        } else if (state.mapMarker) {
-            state.chartLocation = "Point";
-            state.chartPoint = {
-                lat: state.mapMarker.lat,
-                lon: state.mapMarker.lon,
-            };
-            state.chartLocationName = state.mapMarker.name ?? null;
-            state.chartPolygon = null;
-        }
-        // Use the active variable/unit based on current mode (ensemble vs explore)
-        const { variable, unit } = getActiveMapVariable();
-        state.chartVariable = variable;
-        state.chartUnit = unit;
-        // Use the appropriate date based on mode
-        state.chartDate =
-            state.mode === "Ensemble" ? state.ensembleDate : state.date;
-        state.chartError = null;
-        render();
-        loadChartData();
-    });
-
     const mapInfoPanel = root.querySelector<HTMLDivElement>("#map-info-panel");
     const mapInfoHeader = mapInfoPanel?.querySelector<HTMLElement>(
         ".map-info-header",
@@ -16782,16 +16728,9 @@ async function init() {
     }
 
     // Initialize available models from the API
-    import('./Components/agentChat').then(async ({ initializeModels, forceRefreshModels }) => {
+    import('./Components/agentChat').then(async ({ initializeModels }) => {
         try {
             await initializeModels();
-            console.log('Models initialized successfully');
-            
-            // Also try to refresh after a delay to ensure UI is rendered
-            setTimeout(async () => {
-                await forceRefreshModels();
-                console.log('Models force-refreshed after UI render');
-            }, 2000);
         } catch (error) {
             console.error('Failed to initialize available models:', error);
         }

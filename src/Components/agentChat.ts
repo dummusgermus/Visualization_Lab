@@ -43,7 +43,6 @@ async function fetchAvailableModels(): Promise<string[]> {
         const data = await response.json();
         
         if (data.success && Array.isArray(data.models)) {
-            console.log("Fetched available models:", data.models);
             return data.models;
         } else {
             console.warn("API returned unexpected format or error:", data);
@@ -77,22 +76,11 @@ async function fetchAvailableModels(): Promise<string[]> {
 export async function initializeModels(): Promise<void> {
     if (modelsInitialized) return;
     
-    console.log('Initializing models...');
     availableChatModels = await fetchAvailableModels();
     modelsInitialized = true;
-    console.log('Models initialized:', availableChatModels);
     
     // Refresh the dropdown if it exists
     refreshModelsDropdown();
-}
-
-/**
- * Force a refresh of models by re-fetching them from the API
- */
-export async function forceRefreshModels(): Promise<void> {
-    console.log('Force refreshing models...');
-    modelsInitialized = false;
-    await initializeModels();
 }
 
 /**
@@ -123,8 +111,6 @@ export function refreshModelsDropdown(): void {
             chatModelSelect.value = validValue;
             chatModelSelect.dispatchEvent(new Event('change', { bubbles: true }));
         }
-        
-        console.log("Models dropdown refreshed with", currentModels);
     }
 }
 
@@ -267,8 +253,6 @@ export function renderChatSection(
     selectedChatModel: string = "gpt-4o",
 ): string {
     const currentModels = getAvailableModels();
-    console.log('Rendering chat section with models:', currentModels);
-    
     const modelOptions = currentModels.map(
         (m) =>
             `<option value="${m}" ${m === selectedChatModel ? "selected" : ""}>${m}</option>`,
@@ -333,11 +317,6 @@ export function attachChatHandlers(
     root: HTMLElement,
     appStateContext: AppState,
 ): void {
-    // Refresh the models dropdown if models have been initialized
-    if (modelsInitialized) {
-        refreshModelsDropdown();
-    }
-    
     const messagesContainer = root.querySelector<HTMLElement>(".chat-messages");
     if (messagesContainer && !messagesContainer.dataset.initialScroll) {
         messagesContainer.dataset.initialScroll = "true";

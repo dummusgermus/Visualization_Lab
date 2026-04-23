@@ -20,14 +20,113 @@ export type ChatState = {
     chatMessages: ChatMessage[];
 };
 
-const AVAILABLE_CHAT_MODELS = [
-    "gpt-4.1",
-    "gpt-4o",
-    "gpt-4o-mini",
-    "gpt-5.1",
-    "gpt-oss-120b",
-    "mistral-small-3.2-24B-instruct-2506",
+// Global variable to store dynamically fetched models
+let availableChatModels: string[] = [
+    "gpt-4o", // fallback default
 ];
+
+// Global flag to track if models have been fetched
+let modelsInitialized = false;
+
+/**
+ * Fetch available models from the API
+ */
+async function fetchAvailableModels(): Promise<string[]> {
+    try {
+        const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
+        const response = await fetch(`${apiBaseUrl}/models`);
+        
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        const data = await response.json();
+        
+        if (data.success && Array.isArray(data.models)) {
+            console.log("Fetched available models:", data.models);
+            return data.models;
+        } else {
+            console.warn("API returned unexpected format or error:", data);
+            // Return fallback models 
+            return [
+                "gpt-4.1",
+                "gpt-4o",
+                "gpt-4o-mini",
+                "gpt-5.1", 
+                "gpt-oss-120b",
+                "mistral-small-3.2-24B-instruct-2506",
+            ];
+        }
+    } catch (error) {
+        console.error("Failed to fetch available models:", error);
+        // Return fallback models on error
+        return [
+            "gpt-4.1",
+            "gpt-4o",
+            "gpt-4o-mini", 
+            "gpt-5.1",
+            "gpt-oss-120b",
+            "mistral-small-3.2-24B-instruct-2506",
+        ];
+    }
+}
+
+/**
+ * Initialize available models (call this once when the app starts)
+ */
+export async function initializeModels(): Promise<void> {
+    if (modelsInitialized) return;
+    
+    console.log('Initializing models...');
+    availableChatModels = await fetchAvailableModels();
+    modelsInitialized = true;
+    console.log('Models initialized:', availableChatModels);
+    
+    // Refresh the dropdown if it exists
+    refreshModelsDropdown();
+}
+
+/**
+ * Force a refresh of models by re-fetching them from the API
+ */
+export async function forceRefreshModels(): Promise<void> {
+    console.log('Force refreshing models...');
+    modelsInitialized = false;
+    await initializeModels();
+}
+
+/**
+ * Get the current list of available models
+ */
+export function getAvailableModels(): string[] {
+    return availableChatModels;
+}
+
+/**
+ * Refresh the models dropdown if it exists in the DOM
+ */
+export function refreshModelsDropdown(): void {
+    const chatModelSelect = document.querySelector<HTMLSelectElement>('[data-action="chat-model-select"]');
+    if (chatModelSelect) {
+        const currentModels = getAvailableModels();
+        const currentValue = chatModelSelect.value;
+        
+        // Check if current value is still valid, otherwise pick the first available model
+        const validValue = currentModels.includes(currentValue) ? currentValue : currentModels[0];
+        
+        chatModelSelect.innerHTML = currentModels.map(
+            (m) => `<option value="${m}" ${m === validValue ? "selected" : ""}>${m}</option>`
+        ).join("");
+        
+        // Update the selection if it changed
+        if (currentValue !== validValue) {
+            chatModelSelect.value = validValue;
+            chatModelSelect.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        
+        console.log("Models dropdown refreshed with", currentModels);
+    }
+}
 
 /**
  * Formats a chat message with markdown-like syntax (bold, code, lists)
@@ -167,7 +266,10 @@ export function renderChatSection(
     screenshotAttached: boolean = false,
     selectedChatModel: string = "gpt-4o",
 ): string {
-    const modelOptions = AVAILABLE_CHAT_MODELS.map(
+    const currentModels = getAvailableModels();
+    console.log('Rendering chat section with models:', currentModels);
+    
+    const modelOptions = currentModels.map(
         (m) =>
             `<option value="${m}" ${m === selectedChatModel ? "selected" : ""}>${m}</option>`,
     ).join("");
@@ -231,6 +333,11 @@ export function attachChatHandlers(
     root: HTMLElement,
     appStateContext: AppState,
 ): void {
+    // Refresh the models dropdown if models have been initialized
+    if (modelsInitialized) {
+        refreshModelsDropdown();
+    }
+    
     const messagesContainer = root.querySelector<HTMLElement>(".chat-messages");
     if (messagesContainer && !messagesContainer.dataset.initialScroll) {
         messagesContainer.dataset.initialScroll = "true";

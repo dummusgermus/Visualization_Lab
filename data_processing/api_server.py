@@ -382,13 +382,35 @@ def chat(request: llm_chat.ChatRequest):
 @app.post("/set-model")
 def set_model(request: SetModelRequest):
     """Hot-swap the LLM model used for chat without restarting the server."""
-    if request.model not in ALLOWED_CHAT_MODELS:
+    # Get available models dynamically instead of using hardcoded list
+    try:
+        available_models = llm_function_call.get_available_models()
+    except Exception:
+        # Fallback to hardcoded list if fetching fails
+        available_models = list(ALLOWED_CHAT_MODELS)
+    
+    if request.model not in available_models:
         raise HTTPException(
             status_code=400,
-            detail=f"Model '{request.model}' is not allowed. Valid models: {sorted(ALLOWED_CHAT_MODELS)}"
+            detail=f"Model '{request.model}' is not available. Valid models: {sorted(available_models)}"
         )
     llm_function_call.set_model(request.model)
     return {"success": True, "model": request.model}
+
+
+@app.get("/models")
+def get_available_models():
+    """Get the list of available models from the LLM provider."""
+    try:
+        models = llm_function_call.get_available_models()
+        return {"models": models, "success": True}
+    except Exception as e:
+        # Return fallback models if there's an error
+        return {
+            "models": list(ALLOWED_CHAT_MODELS), 
+            "success": False,
+            "error": str(e)
+        }
 
 
 @app.post("/pixel-data")

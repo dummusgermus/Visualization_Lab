@@ -16781,6 +16781,22 @@ async function init() {
         document.documentElement.dataset.theme = 'light';
     }
 
+    // Initialize available models from the API
+    import('./Components/agentChat').then(async ({ initializeModels, forceRefreshModels }) => {
+        try {
+            await initializeModels();
+            console.log('Models initialized successfully');
+            
+            // Also try to refresh after a delay to ensure UI is rendered
+            setTimeout(async () => {
+                await forceRefreshModels();
+                console.log('Models force-refreshed after UI render');
+            }, 2000);
+        } catch (error) {
+            console.error('Failed to initialize available models:', error);
+        }
+    });
+
     // Register callback for state updates from chat/backend
     registerStateUpdateCallback((updates: Record<string, any>) => {
         // Capture the raw window2 delta before merge (to detect which fields the agent actually set)

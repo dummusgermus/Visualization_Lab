@@ -452,6 +452,51 @@ class OpenAICompatibleClient:
                 error=str(e)
             )
 
+    def get_available_models(self) -> List[str]:
+        """Fetch available models from the OpenAI-compatible endpoint."""
+        try:
+            response = requests.get(
+                f"{self.base_url}/models",
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                },
+                timeout=30
+            )
+            response.raise_for_status()
+            
+            result = response.json()
+            models = []
+            
+            # Extract model IDs from the response
+            if "data" in result and isinstance(result["data"], list):
+                models = [model.get("id", "") for model in result["data"] if model.get("id")]
+            
+            print(f"[DEBUG] Fetched {len(models)} available models from kiconnect API")
+            return sorted(models)
+            
+        except requests.exceptions.RequestException as e:
+            print(f"[ERROR] Failed to fetch available models: {e}")
+            # Return a fallback list if the API is not available
+            return [
+                "gpt-4.1",
+                "gpt-4o",
+                "gpt-4o-mini", 
+                "gpt-5.1",
+                "gpt-oss-120b",
+                "mistral-small-3.2-24B-instruct-2506",
+            ]
+        except Exception as e:
+            print(f"[ERROR] Unexpected error while fetching models: {e}")
+            return [
+                "gpt-4.1",
+                "gpt-4o", 
+                "gpt-4o-mini",
+                "gpt-5.1",
+                "gpt-oss-120b",
+                "mistral-small-3.2-24B-instruct-2506",
+            ]
+
 
 class OllamaClient:
     """Client for RWTH Ollama server."""
@@ -654,6 +699,24 @@ def set_model(new_model: str) -> None:
         client.model = new_model
     else:
         print("[WARN] Current client does not support model switching.")
+
+
+def get_available_models() -> List[str]:
+    """Get the list of available models from the LLM provider."""
+    client = get_llm_client()
+    if hasattr(client, "get_available_models"):
+        return client.get_available_models()
+    else:
+        print("[WARN] Current client does not support listing available models.")
+        # Return a fallback list for Ollama or other clients
+        return [
+            "gpt-4.1", 
+            "gpt-4o",
+            "gpt-4o-mini",
+            "gpt-5.1",
+            "gpt-oss-120b",
+            "mistral-small-3.2-24B-instruct-2506",
+        ]
 
 
 def process_chat_message(

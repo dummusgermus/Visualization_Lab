@@ -15,6 +15,9 @@ interface RenderTimeSliderParams {
     compareMode: "Scenarios" | "Models" | "Dates";
     compareDateStart?: string;
     compareDateEnd?: string;
+    temporalAggEnabled?: boolean;
+    temporalAggStart?: string;
+    temporalAggEnd?: string;
 }
 
 export function renderTimeSlider(params: RenderTimeSliderParams): string {
@@ -27,7 +30,22 @@ export function renderTimeSlider(params: RenderTimeSliderParams): string {
         compareMode,
         compareDateStart,
         compareDateEnd,
+        temporalAggEnabled = false,
+        temporalAggStart,
+        temporalAggEnd,
     } = params;
+
+    // Dual slider is shown for Compare→Dates or when temporal aggregation is ON
+    const isCompareDates = mode === "Compare" && compareMode === "Dates";
+    const isDualSlider = isCompareDates || temporalAggEnabled;
+
+    // Resolve the effective start/end dates for the dual slider
+    const dualRangeStart = temporalAggEnabled && temporalAggStart
+        ? temporalAggStart
+        : (compareDateStart ?? null);
+    const dualRangeEnd = temporalAggEnabled && temporalAggEnd
+        ? temporalAggEnd
+        : (compareDateEnd ?? null);
 
     let timeSliderMin = 0;
     let timeSliderMax = 0;
@@ -53,11 +71,11 @@ export function renderTimeSlider(params: RenderTimeSliderParams): string {
         timeSliderFill =
             timeSliderMax > 0 ? (timeSliderValue / timeSliderMax) * 100 : 0;
 
-        if (mode === "Compare" && compareMode === "Dates") {
-            const startVal = compareDateStart
-                ? new Date(compareDateStart)
+        if (isDualSlider) {
+            const startVal = dualRangeStart
+                ? new Date(dualRangeStart)
                 : startDate;
-            const endVal = compareDateEnd ? new Date(compareDateEnd) : endDate;
+            const endVal = dualRangeEnd ? new Date(dualRangeEnd) : endDate;
 
             dualStartValue = Math.max(
                 0,
@@ -82,12 +100,12 @@ export function renderTimeSlider(params: RenderTimeSliderParams): string {
 
     const rightPosition = sidebarOpen ? sidebarWidth + 16 : 16;
 
-    if (mode === "Compare" && compareMode === "Dates" && timeRange) {
-        const startLabel = compareDateStart
-            ? formatDateDisplay(compareDateStart)
+    if (isDualSlider && timeRange) {
+        const startLabel = dualRangeStart
+            ? formatDateDisplay(dualRangeStart)
             : formatDateDisplay(timeRange.start);
-        const endLabel = compareDateEnd
-            ? formatDateDisplay(compareDateEnd)
+        const endLabel = dualRangeEnd
+            ? formatDateDisplay(dualRangeEnd)
             : formatDateDisplay(timeRange.end);
 
         return `
@@ -161,6 +179,8 @@ interface AttachTimeSliderHandlersParams {
     getCompareMode?: () => "Scenarios" | "Models" | "Dates";
     getCompareDates?: () => { start: string; end: string };
     onDateRangeChange?: (start: string, end: string) => void;
+    getTemporalAgg?: () => { enabled: boolean; start: string; end: string };
+    onTemporalAggRangeChange?: (start: string, end: string) => void;
 }
 
 export function attachTimeSliderHandlers(
@@ -174,6 +194,8 @@ export function attachTimeSliderHandlers(
         getCompareMode,
         getCompareDates,
         onDateRangeChange,
+        getTemporalAgg,
+        onTemporalAggRangeChange,
     } = params;
 
     // Store reference to time slider element
@@ -184,12 +206,25 @@ export function attachTimeSliderHandlers(
     const isCompareDates = () =>
         getMode?.() === "Compare" && getCompareMode?.() === "Dates";
 
+    // True whenever the dual-thumb slider should be active
+    const isDualSlider = () =>
+        isCompareDates() || (getTemporalAgg?.().enabled ?? false);
+
+    // Route range changes to the correct handler
+    const dispatchRangeChange = (start: string, end: string) => {
+        if (getTemporalAgg?.().enabled) {
+            onTemporalAggRangeChange?.(start, end);
+        } else {
+            onDateRangeChange?.(start, end);
+        }
+    };
+
     const singleInputs = root.querySelectorAll<HTMLInputElement>(
         '[data-action="set-time"]'
     );
     singleInputs.forEach((input) =>
         input.addEventListener("input", () => {
-            if (isCompareDates()) return;
+            if (isDualSlider()) return;
             const dayOffset = Number.parseInt(input.value, 10);
             const timeRange = getTimeRange();
             if (!Number.isNaN(dayOffset) && timeRange) {
@@ -284,7 +319,7 @@ export function attachTimeSliderHandlers(
         isStart: boolean
     ) => {
         input.addEventListener("input", () => {
-            if (!isCompareDates()) return;
+            if (!isDualSlider()) return;
             const timeRange = getTimeRange();
             if (!timeRange) return;
 
@@ -336,7 +371,7 @@ export function attachTimeSliderHandlers(
             }
 
             timeSliderTimer = window.setTimeout(() => {
-                onDateRangeChange?.(startIso, endIso);
+                dispatchRangeChange(startIso, endIso);
             }, 300);
         });
     };
@@ -381,7 +416,7 @@ export function attachTimeSliderHandlers(
             counterpart: HTMLInputElement
         ) => {
             input.addEventListener("pointerdown", (e) => {
-                if (!isCompareDates()) return;
+                if (!isDualSlider()) return;
                 const timeRange = getTimeRange();
                 if (!timeRange) return;
 
@@ -423,10 +458,13 @@ export function attachTimeSliderHandlers(
         addThumbGuard(rangeStartInputs[0], rangeEndInputs[0]);
         addThumbGuard(rangeEndInputs[0], rangeStartInputs[0]);
 
-        // Initialize UI if mode is compare dates
-        if (isCompareDates()) {
+        // Initialize UI if dual slider is active
+        if (isDualSlider()) {
             const timeRange = getTimeRange();
-            const compareDates = getCompareDates?.();
+            const temporalAgg = getTemporalAgg?.();
+            const compareDates = temporalAgg?.enabled
+                ? { start: temporalAgg.start, end: temporalAgg.end }
+                : getCompareDates?.();
             if (timeRange && compareDates) {
             const startOffset = Math.max(
                 0,
@@ -463,7 +501,7 @@ export function attachTimeSliderHandlers(
             root.querySelectorAll<HTMLElement>(".dual-slider");
         dualContainers.forEach((container) => {
             container.addEventListener("pointermove", (e) => {
-                if (!isCompareDates()) return;
+                if (!isDualSlider()) return;
                 const timeRange = getTimeRange();
                 if (!timeRange) return;
 

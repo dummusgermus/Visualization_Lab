@@ -3269,7 +3269,9 @@ function renderMapInfoWindow() {
     const { variable, unit } = getActiveMapVariable();
     const variableLabel = getVariableLabel(variable, state.metaData);
     const title = `${locationLabel} · ${variableLabel}`;
-    const subtitle = `${formatDisplayDate(state.date)} · ${unit}`;
+    const subtitle = state.temporalAggEnabled
+        ? `${state.temporalAggStart} – ${state.temporalAggEnd} · ${unit}`
+        : `${formatDisplayDate(state.date)} · ${unit}`;
     const panelSizeStyle = mapInfoSize
         ? `; width:${mapInfoSize.width}px; max-width:none; height:${mapInfoSize.height}px;`
         : "";
@@ -3432,6 +3434,12 @@ function renderMapRangeOverlay(inPane = false) {
                   title,
               )}</div>
               <div style="display:flex;align-items:center;gap:5px;margin-top:5px;flex-wrap:wrap;">
+                ${state.temporalAggEnabled ? `
+                <span style="color:var(--text-secondary);font-size:11.5px;">
+                  ${state.temporalAggStart} – ${state.temporalAggEnd}
+                  &nbsp;·&nbsp; ${state.temporalAggSampleRate === "custom" ? `every ${state.temporalAggCustomDays}d` : state.temporalAggSampleRate}
+                </span>
+                ` : `
                 <select
                   data-action="map-range-preset"
                   style="background:var(--dark-bg);border:1px solid var(--border-default);border-radius:6px;color:var(--text-primary);font-size:12px;padding:3px 6px;outline:none;cursor:pointer;"
@@ -3471,6 +3479,7 @@ function renderMapRangeOverlay(inPane = false) {
                   data-action="map-range-apply"
                   style="padding:3px 9px;border-radius:6px;border:1px solid rgba(125,211,252,0.4);background:rgba(125,211,252,0.12);color:var(--text-primary);font-size:11.5px;font-weight:700;cursor:pointer;letter-spacing:0.2px;"
                 >Apply</button>
+                `}
               </div>
             </div>
             <div style="${styleAttr(styles.mapInfoActions)}">
@@ -4126,7 +4135,10 @@ async function loadMapRangeData() {
 
     const requestId = ++mapRangeRequestId;
     const { variable: rangeVariable, unit: rangeUnit } = getMapRangeVariable();
-    const range = { start: state.mapRangeStart, end: state.mapRangeEnd };
+    // When temporal aggregation is active, mirror its range and step in the time plot.
+    const range = state.temporalAggEnabled
+        ? { start: state.temporalAggStart, end: state.temporalAggEnd }
+        : { start: state.mapRangeStart, end: state.mapRangeEnd };
     state.mapRangeLoading = true;
     state.mapRangeError = null;
     state.mapRangeSamples = [];
@@ -4165,15 +4177,18 @@ async function loadMapRangeData() {
             return;
         }
 
-        const useFixedAnnualSamples = shouldUseFixedAnnualSamples(
-            range.start,
-            range.end,
-        );
+        // When temporal aggregation is active use its step directly so the time
+        // plot shows exactly the same sample dates that were averaged on the map.
+        const useFixedAnnualSamples = state.temporalAggEnabled
+            ? false
+            : shouldUseFixedAnnualSamples(range.start, range.end);
         const fixedReferenceDate = range.start;
         const spanDays = Math.max(1, Math.round(
             (parseDate(range.end).getTime() - parseDate(range.start).getTime()) / (24 * 60 * 60 * 1000)
         ));
-        const computedStepDays = Math.max(1, Math.round(spanDays / state.mapRangeNumSamples));
+        const computedStepDays = state.temporalAggEnabled
+            ? sampleRateToStepDays(state.temporalAggSampleRate, state.temporalAggCustomDays)
+            : Math.max(1, Math.round(spanDays / state.mapRangeNumSamples));
 
         const totalRequests = activeScenarios.length * activeModels.length;
         state.mapRangeLoadingProgress = { total: totalRequests, done: 0 };
@@ -4310,6 +4325,15 @@ async function loadMapInfoData() {
 
         const samples: ChartSample[] = [];
 
+        // Resolve temporal aggregation dates once (shared across scenarios)
+        const aggDates: string[] | null = state.temporalAggEnabled
+            ? generateTemporalDates(
+                  state.temporalAggStart,
+                  state.temporalAggEnd,
+                  sampleRateToStepDays(state.temporalAggSampleRate, state.temporalAggCustomDays),
+              )
+            : null;
+
         for (const scenario of activeScenarios) {
             if (requestId !== mapInfoRequestId) return;
             const dateForScenario = clipDateToRange(
@@ -4318,40 +4342,31 @@ async function loadMapInfoData() {
             );
 
             if (hasPoint && state.mapMarker) {
-                // Point selection – fire all models in parallel (full raster; pixel-data
-                // endpoint returns 502 for single-date reads — see debug notes)
+                // Point selection – fire all models in parallel
                 const _marker = state.mapMarker;
                 await Promise.allSettled(
                     modelOptions.map(async (model) => {
                         try {
-                            const request = createDataRequest({
-                                variable: mapVariable,
-                                date: dateForScenario,
-                                model,
-                                scenario,
-                                resolution: 1,
-                            });
-                            const data = await fetchClimateData(request);
-                            const arr = dataToArray(data);
-                            if (arr) {
-                                const avg = valueAtPoint(
-                                    arr,
-                                    mapVariable,
-                                    data.shape,
-                                    { lat: _marker.lat, lon: _marker.lon },
-                                );
-                                samples.push({
-                                    scenario,
-                                    model,
-                                    rawValue: avg,
-                                    dateUsed: dateForScenario,
-                                });
+                            if (aggDates && aggDates.length > 0) {
+                                // ── Temporal aggregation: average pixel value across dates ──
+                                const params = { variable: mapVariable, model, scenario, resolution: 1 };
+                                const aggResult = await fetchAndAverageDates(params, aggDates);
+                                const arr = dataToArray(aggResult.data);
+                                if (arr) {
+                                    const avg = valueAtPoint(arr, mapVariable, aggResult.data.shape, { lat: _marker.lat, lon: _marker.lon });
+                                    samples.push({ scenario, model, rawValue: avg, dateUsed: `${state.temporalAggStart}–${state.temporalAggEnd}` });
+                                }
+                            } else {
+                                const request = createDataRequest({ variable: mapVariable, date: dateForScenario, model, scenario, resolution: 1 });
+                                const data = await fetchClimateData(request);
+                                const arr = dataToArray(data);
+                                if (arr) {
+                                    const avg = valueAtPoint(arr, mapVariable, data.shape, { lat: _marker.lat, lon: _marker.lon });
+                                    samples.push({ scenario, model, rawValue: avg, dateUsed: dateForScenario });
+                                }
                             }
                         } catch (error) {
-                            console.warn(
-                                `Map info request failed for model ${model}:`,
-                                error,
-                            );
+                            console.warn(`Map info request failed for model ${model}:`, error);
                         }
                         state.mapInfoLoadingProgress = {
                             total: totalRequests,
@@ -4364,48 +4379,47 @@ async function loadMapInfoData() {
                 // Polygon selection - use aggregate API
                 const [x0, x1, clientY0, clientY1] = polygonToGridBounds(state.mapPolygon);
                 // Flip y bounds: OpenVisus is south-up, polygonToGridBounds is north-down.
-                // North-down y0 (small = north) → large OV index; y1 (large = south) → small OV index.
                 const y0 = GRID_HEIGHT - 1 - clientY1;
                 const y1 = GRID_HEIGHT - 1 - clientY0;
                 // Mask rows were built north-to-south; reverse them to match south-up OV window.
-                const mask = createPolygonMask(
-                    state.mapPolygon,
-                    x0,
-                    x1,
-                    clientY0,
-                    clientY1,
-                ).reverse();
+                const mask = createPolygonMask(state.mapPolygon, x0, x1, clientY0, clientY1).reverse();
+
+                // When temporal aggregation is active, pass the full date range to the
+                // aggregate API so it returns one value per sampled date; we then average them.
+                const aggStepDays = aggDates && aggDates.length > 1
+                    ? sampleRateToStepDays(state.temporalAggSampleRate, state.temporalAggCustomDays)
+                    : 1;
+                const aggStartDate = aggDates && aggDates.length > 0 ? aggDates[0] : dateForScenario;
+                const aggEndDate = aggDates && aggDates.length > 0 ? aggDates[aggDates.length - 1] : dateForScenario;
 
                 try {
                     const aggregateData = await fetchAggregateOnDemand({
                         variable: mapVariable,
                         models: modelOptions,
-                        x0,
-                        x1,
-                        y0,
-                        y1,
-                        start_date: dateForScenario,
-                        end_date: dateForScenario,
+                        x0, x1, y0, y1,
+                        start_date: aggStartDate,
+                        end_date: aggEndDate,
                         scenario: normalizeScenario(scenario),
                         resolution: "low",
-                        step_days: 1,
+                        step_days: aggStepDays,
                         mask,
                     });
 
                     for (const model of modelOptions) {
                         const modelData = aggregateData.models[model];
                         if (modelData) {
-                            const value = modelData.values[0];
-                            if (value !== null && isFinite(value)) {
-                                const rawValue =
-                                    mapVariable === "hurs"
-                                        ? Math.min(value, 100)
-                                        : value;
+                            // Average all returned time-step values (single value when not aggregating)
+                            const validValues = modelData.values.filter(
+                                (v): v is number => v !== null && isFinite(v),
+                            );
+                            if (validValues.length > 0) {
+                                let rawValue = validValues.reduce((s, v) => s + v, 0) / validValues.length;
+                                if (mapVariable === "hurs") rawValue = Math.min(rawValue, 100);
                                 samples.push({
                                     scenario,
                                     model,
                                     rawValue,
-                                    dateUsed: dateForScenario,
+                                    dateUsed: aggDates ? `${aggStartDate}–${aggEndDate}` : dateForScenario,
                                 });
                             }
                         }
@@ -4413,48 +4427,40 @@ async function loadMapInfoData() {
 
                     state.mapInfoLoadingProgress = {
                         total: totalRequests,
-                        done:
-                            state.mapInfoLoadingProgress.done +
-                            modelOptions.length,
+                        done: state.mapInfoLoadingProgress.done + modelOptions.length,
                     };
                     updateMapInfoPreview(samples);
                 } catch (error) {
-                    // If batch fails, fall back to old method for all models
+                    // If batch fails, fall back to per-model full-raster load
                     console.warn(
                         `Aggregate API failed for scenario ${scenario}, falling back to full map load:`,
                         error,
                     );
                     for (const model of modelOptions) {
                         if (requestId !== mapInfoRequestId) return;
-                        const request = createDataRequest({
-                            variable: mapVariable,
-                            date: dateForScenario,
-                            model,
-                            scenario,
-                            resolution: 1,
-                        });
                         try {
-                            const data = await fetchClimateData(request);
-                            const arr = dataToArray(data);
-                            if (arr) {
-                                const avg = averageArrayInPolygon(
-                                    arr,
-                                    mapVariable,
-                                    data.shape,
-                                    state.mapPolygon,
+                            let rawValue: number;
+                            if (aggDates && aggDates.length > 0) {
+                                const aggResult = await fetchAndAverageDates(
+                                    { variable: mapVariable, model, scenario, resolution: 1 },
+                                    aggDates,
                                 );
+                                const arr = dataToArray(aggResult.data);
+                                rawValue = arr ? averageArrayInPolygon(arr, mapVariable, aggResult.data.shape, state.mapPolygon) : NaN;
+                            } else {
+                                const request = createDataRequest({ variable: mapVariable, date: dateForScenario, model, scenario, resolution: 1 });
+                                const data = await fetchClimateData(request);
+                                const arr = dataToArray(data);
+                                rawValue = arr ? averageArrayInPolygon(arr, mapVariable, data.shape, state.mapPolygon) : NaN;
+                            }
+                            if (isFinite(rawValue)) {
                                 samples.push({
-                                    scenario,
-                                    model,
-                                    rawValue: avg,
-                                    dateUsed: dateForScenario,
+                                    scenario, model, rawValue,
+                                    dateUsed: aggDates ? `${aggStartDate}–${aggEndDate}` : dateForScenario,
                                 });
                             }
                         } catch (modelError) {
-                            console.warn(
-                                `Failed to load data for model ${model}:`,
-                                modelError,
-                            );
+                            console.warn(`Failed to load data for model ${model}:`, modelError);
                         }
                         state.mapInfoLoadingProgress = {
                             total: totalRequests,
@@ -9692,6 +9698,9 @@ function render() {
                     compareMode: state.compareMode,
                     compareDateStart: state.compareDateStart,
                     compareDateEnd: state.compareDateEnd,
+                    temporalAggEnabled: state.temporalAggEnabled,
+                    temporalAggStart: state.temporalAggStart,
+                    temporalAggEnd: state.temporalAggEnd,
                 })
               : ""
       }
@@ -16347,6 +16356,10 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                 loadClimateDataWindow2();
             } else {
                 loadClimateData();
+                if (state.mapRangeOpen && state.mapMarker) void loadMapRangeData();
+                const hasPoint = state.mapMarker !== null;
+                const hasPolygon = state.mapPolygon !== null && state.mapPolygon.length >= 3;
+                if ((hasPoint || hasPolygon) && state.mapInfoOpen) void loadMapInfoData();
             }
         });
     });
@@ -16366,6 +16379,10 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                     loadClimateDataWindow2();
                 } else {
                     loadClimateData();
+                    if (state.mapRangeOpen && state.mapMarker) void loadMapRangeData();
+                    const hasPoint = state.mapMarker !== null;
+                    const hasPolygon = state.mapPolygon !== null && state.mapPolygon.length >= 3;
+                    if ((hasPoint || hasPolygon) && state.mapInfoOpen) void loadMapInfoData();
                 }
             }
         });
@@ -16411,7 +16428,15 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                     if (target.temporalAggCustomDays !== numVal) {
                         target.temporalAggCustomDays = numVal;
                         render();
-                        if (target.temporalAggEnabled) loadClimateData();
+                        if (target.temporalAggEnabled) {
+                            loadClimateData();
+                            if (w === "1") {
+                                if (state.mapRangeOpen && state.mapMarker) void loadMapRangeData();
+                                const hasPoint = state.mapMarker !== null;
+                                const hasPolygon = state.mapPolygon !== null && state.mapPolygon.length >= 3;
+                                if ((hasPoint || hasPolygon) && state.mapInfoOpen) void loadMapInfoData();
+                            }
+                        }
                     }
                 }
                 return;
@@ -16551,6 +16576,13 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                     state.mapPolygon !== null && state.mapPolygon.length >= 3;
                 if ((hasPoint || hasPolygon) && state.mapInfoOpen) {
                     void loadMapInfoData();
+                }
+                if (
+                    target.temporalAggEnabled &&
+                    (key === "temporalAggStart" || key === "temporalAggEnd") &&
+                    state.mapRangeOpen && state.mapMarker
+                ) {
+                    void loadMapRangeData();
                 }
             }
             if (
@@ -17168,6 +17200,21 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             state.compareDateStart = start;
             state.compareDateEnd = end;
             loadClimateData();
+        },
+        getTemporalAgg: () => ({
+            enabled: state.temporalAggEnabled,
+            start: state.temporalAggStart,
+            end: state.temporalAggEnd,
+        }),
+        onTemporalAggRangeChange: (start, end) => {
+            state.temporalAggStart = start;
+            state.temporalAggEnd = end;
+            render();
+            loadClimateData();
+            if (state.mapRangeOpen && state.mapMarker) void loadMapRangeData();
+            const _hasPoint = state.mapMarker !== null;
+            const _hasPolygon = state.mapPolygon !== null && state.mapPolygon.length >= 3;
+            if ((_hasPoint || _hasPolygon) && state.mapInfoOpen) void loadMapInfoData();
         },
     });
 

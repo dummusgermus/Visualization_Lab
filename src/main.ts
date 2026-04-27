@@ -121,6 +121,7 @@ type Mode = "Explore" | "Compare" | "Ensemble";
 type PanelTab = "Manual" | "Chat";
 type CanvasView = "map" | "chart";
 type CompareMode = "Scenarios" | "Models" | "Dates";
+type TemporalAggSampleRate = "day" | "week" | "month" | "year" | "custom";
 type ChartMode = "single" | "range";
 export type ChartLocation = "World" | "Draw" | "Point" | "Search";
 type LocationSearchResult = {
@@ -1406,6 +1407,11 @@ export type AppState = {
     splitRatio: number;
     chatScreenshot: string | null;
     legendCollapsed: boolean;
+    temporalAggEnabled: boolean;
+    temporalAggStart: string;
+    temporalAggEnd: string;
+    temporalAggSampleRate: TemporalAggSampleRate;
+    temporalAggCustomDays: number;
     window2: Window2State;
 };
 
@@ -1500,6 +1506,11 @@ export type Window2State = {
     mapRangePreset: "1month" | "1year" | "10years" | "full" | "custom";
     mapRangeHiddenScenarios: string[];
     mapRangePalette: string;
+    temporalAggEnabled: boolean;
+    temporalAggStart: string;
+    temporalAggEnd: string;
+    temporalAggSampleRate: TemporalAggSampleRate;
+    temporalAggCustomDays: number;
 };
 
 //TODO set 0 from available models to active model and so on
@@ -1648,6 +1659,11 @@ const state: AppState = {
     legendPinned: false,
     legendPinnedMin: null,
     legendPinnedMax: null,
+    temporalAggEnabled: false,
+    temporalAggStart: "2026-03-01",
+    temporalAggEnd: "2026-03-31",
+    temporalAggSampleRate: "month" as TemporalAggSampleRate,
+    temporalAggCustomDays: 7,
     window2: {
         scenario: "SSP245",
         model: models[0],
@@ -1739,6 +1755,11 @@ const state: AppState = {
         mapRangePreset: "1year",
         mapRangeHiddenScenarios: [],
         mapRangePalette: paletteOptions[0].name,
+        temporalAggEnabled: false,
+        temporalAggStart: "2026-03-01",
+        temporalAggEnd: "2026-03-31",
+        temporalAggSampleRate: "month" as TemporalAggSampleRate,
+        temporalAggCustomDays: 7,
     },
 };
 
@@ -5869,6 +5890,117 @@ function setLoadingProgress(value: number, forceRender = false) {
     }
 }
 
+// ── Temporal aggregation helpers ──────────────────────────────────────────────
+
+function sampleRateToStepDays(rate: TemporalAggSampleRate, customDays: number): number {
+    if (rate === "day") return 1;
+    if (rate === "week") return 7;
+    if (rate === "month") return 30;
+    if (rate === "year") return 365;
+    return Math.max(1, Math.round(customDays));
+}
+
+/** Generate ISO date strings from `start` to `end` (inclusive) stepping by `stepDays`. */
+function generateTemporalDates(start: string, end: string, stepDays: number): string[] {
+    const dates: string[] = [];
+    const endTime = new Date(end).getTime();
+    let current = new Date(start);
+    while (current.getTime() <= endTime) {
+        dates.push(current.toISOString().slice(0, 10));
+        current.setDate(current.getDate() + stepDays);
+    }
+    return dates;
+}
+
+/**
+ * Fetch climate data for multiple dates and return their pixel-wise mean as a
+ * single ClimateData object (data is a Float32Array, data_encoding is "none").
+ */
+async function fetchAndAverageDates(
+    params: { variable: string; model: string; scenario: string; resolution: number },
+    dates: string[],
+    onProgress?: (pct: number) => void,
+): Promise<{ data: ClimateData; min: number; max: number; mean: number }> {
+    if (dates.length === 0) {
+        throw new Error("No dates to aggregate");
+    }
+
+    // Single date → fast path (no averaging needed)
+    if (dates.length === 1) {
+        const req = createDataRequest({ ...params, date: dates[0] });
+        const data = await fetchClimateData(req);
+        const arr = dataToArray(data);
+        if (!arr) throw new Error("No data returned for date " + dates[0]);
+        const { min, max } = calculateMinMax(arr);
+        const mean = averageArray(arr, params.variable);
+        onProgress?.(100);
+        return { data, min, max, mean };
+    }
+
+    let completed = 0;
+    const fetchResults = await pLimit(
+        dates.map((date) => async () => {
+            const req = createDataRequest({ ...params, date });
+            try {
+                const d = await fetchClimateData(req);
+                const arr = dataToArray(d);
+                return arr ? { arr, data: d } : null;
+            } catch {
+                return null;
+            } finally {
+                completed++;
+                onProgress?.(Math.round((completed / dates.length) * 100));
+            }
+        }),
+        PARALLEL_REQUEST_LIMIT,
+    );
+
+    type FetchItem = { arr: Float32Array | Float64Array; data: ClimateData };
+    const validResults: FetchItem[] = fetchResults
+        .filter((r): r is PromiseFulfilledResult<FetchItem | null> => r.status === "fulfilled" && r.value !== null)
+        .map((r) => (r as PromiseFulfilledResult<FetchItem>).value);
+
+    if (validResults.length === 0) {
+        throw new Error("No valid data could be loaded for any of the selected dates.");
+    }
+
+    const referenceData = validResults[0].data;
+    const length = validResults[0].arr.length;
+
+    // Accumulate sum and counts per pixel (handle NaN properly)
+    const sumArr = new Float32Array(length);
+    const countArr = new Float32Array(length);
+    for (const { arr } of validResults) {
+        for (let i = 0; i < length; i++) {
+            const val = arr[i];
+            if (isFinite(val)) {
+                sumArr[i] += val;
+                countArr[i]++;
+            }
+        }
+    }
+
+    const meanArr = new Float32Array(length);
+    for (let i = 0; i < length; i++) {
+        meanArr[i] = countArr[i] > 0 ? sumArr[i] / countArr[i] : NaN;
+    }
+
+    const { min, max } = calculateMinMax(meanArr);
+    const mean = averageArray(meanArr, params.variable);
+
+    const mergedData: ClimateData = {
+        ...referenceData,
+        data: meanArr,
+        data_encoding: "none",
+        dtype: "float32",
+        time: `${dates[0]}–${dates[dates.length - 1]}`,
+    };
+
+    return { data: mergedData, min, max, mean };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 async function loadCompareData(
     activeScenarioForRange: string,
     onProgress?: (progress: number) => void,
@@ -5978,6 +6110,32 @@ async function loadCompareData(
         }
     }
 
+    // ── Temporal aggregation for Compare Scenarios / Models modes ────────────
+    if (state.temporalAggEnabled && state.compareMode !== "Dates") {
+        const stepDays = sampleRateToStepDays(state.temporalAggSampleRate, state.temporalAggCustomDays);
+        const scenarioForClip =
+            state.compareMode === "Scenarios" ? state.compareScenarioA : state.scenario;
+        const aggStart = clipDateToScenarioRange(state.temporalAggStart, scenarioForClip);
+        const aggEnd = clipDateToScenarioRange(state.temporalAggEnd, scenarioForClip);
+        const dates = generateTemporalDates(aggStart, aggEnd, stepDays);
+        if (dates.length === 0) {
+            throw new Error("No dates in the selected aggregation range.");
+        }
+
+        // Determine params A/B from already-built requestA/requestB
+        const paramsA = { variable: requestA.variable, model: requestA.model!, scenario: requestA.scenario!, resolution: state.resolution };
+        const paramsB = { variable: requestB.variable, model: requestB.model!, scenario: requestB.scenario!, resolution: state.resolution };
+
+        onProgress?.(35);
+        const [resultA, resultB] = await Promise.all([
+            fetchAndAverageDates(paramsA, dates, (p) => onProgress?.(35 + Math.round(p * 0.25))),
+            fetchAndAverageDates(paramsB, dates, (p) => onProgress?.(60 + Math.round(p * 0.25))),
+        ]);
+        onProgress?.(85);
+        return createDifferenceData(resultA.data, resultB.data, labelA, labelB);
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
     const dataA = await fetchClimateData(requestA);
     onProgress?.(65);
 
@@ -6029,8 +6187,13 @@ async function loadEnsembleData(
 
     const scenariosKey = activeScenarios.slice().sort().join("|");
     const modelsKey = activeModels.slice().sort().join("|");
+    // When temporal aggregation is active, encode the range+rate into the cache
+    // key so stale single-date data is never reused.
+    const effectiveDateKey = state.temporalAggEnabled
+        ? `agg:${state.temporalAggStart}..${state.temporalAggEnd}:${state.temporalAggSampleRate}:${state.temporalAggCustomDays}`
+        : ensembleDate;
     const currentCacheKey: EnsembleStatsCacheKey = {
-        date: ensembleDate,
+        date: effectiveDateKey,
         scenariosKey,
         modelsKey,
         resolution: state.resolution,
@@ -6112,19 +6275,51 @@ async function loadEnsembleData(
         const combos = activeScenarios.flatMap((scenario) =>
             activeModels.map((model) => ({ scenario, model }))
         );
+
+        // Prepare temporal aggregation dates (shared across all combos when enabled)
+        const temporalDates: string[] | null = state.temporalAggEnabled
+            ? (() => {
+                  const stepDays = sampleRateToStepDays(state.temporalAggSampleRate, state.temporalAggCustomDays);
+                  const commonRange = intersectScenarioRange(activeScenarios);
+                  const aggStart = clipDateToRange(state.temporalAggStart, commonRange);
+                  const aggEnd = clipDateToRange(state.temporalAggEnd, commonRange);
+                  return generateTemporalDates(aggStart, aggEnd, stepDays);
+              })()
+            : null;
+
         const fetchResults = await pLimit(
             combos.map(({ scenario, model }) => async () => {
-                const request = createDataRequest({
-                    variable: targetVariable,
-                    date: ensembleDate,
-                    model,
-                    scenario,
-                    resolution: state.resolution,
-                });
                 try {
-                    const data = await fetchClimateData(request);
-                    const arrayData = dataToArray(data);
-                    return arrayData ? { arrayData, shape: data.shape } : null;
+                    let arrayData: Float32Array | Float64Array | null = null;
+                    let shape: [number, number] = [0, 0];
+
+                    if (temporalDates && temporalDates.length > 0) {
+                        // Temporal aggregation: average across multiple dates
+                        const aggResult = await fetchAndAverageDates(
+                            { variable: targetVariable, model, scenario, resolution: state.resolution },
+                            temporalDates,
+                        );
+                        const arr = dataToArray(aggResult.data);
+                        if (arr) {
+                            arrayData = arr;
+                            shape = aggResult.data.shape;
+                        }
+                    } else {
+                        const request = createDataRequest({
+                            variable: targetVariable,
+                            date: ensembleDate,
+                            model,
+                            scenario,
+                            resolution: state.resolution,
+                        });
+                        const data = await fetchClimateData(request);
+                        const arr = dataToArray(data);
+                        if (arr) {
+                            arrayData = arr;
+                            shape = data.shape;
+                        }
+                    }
+                    return arrayData ? { arrayData, shape } : null;
                 } catch (error) {
                     console.warn(
                         `Failed to fetch data for ${targetVariable} (${scenario}/${model}):`,
@@ -8367,6 +8562,45 @@ async function loadClimateData() {
                   ? await loadEnsembleData(setLoadingProgress)
                   : await (async () => {
                         setLoadingProgress(40);
+
+                        // ── Temporal aggregation path (Explore mode) ──────────
+                        if (state.temporalAggEnabled) {
+                            const stepDays = sampleRateToStepDays(state.temporalAggSampleRate, state.temporalAggCustomDays);
+                            const aggStart = clipDateToScenarioRange(state.temporalAggStart, activeScenarioForRange);
+                            const aggEnd = clipDateToScenarioRange(state.temporalAggEnd, activeScenarioForRange);
+                            const dates = generateTemporalDates(aggStart, aggEnd, stepDays);
+                            if (dates.length === 0) {
+                                throw new Error("No dates in the selected aggregation range.");
+                            }
+                            setLoadingProgress(45);
+                            const aggResult = await fetchAndAverageDates(
+                                { variable: state.variable, model: state.model, scenario: state.scenario, resolution: state.resolution },
+                                dates,
+                                (pct) => setLoadingProgress(45 + Math.round(pct * 0.45)),
+                            );
+                            // Cap relative humidity to 100%
+                            if (state.variable === "hurs") {
+                                const arr = dataToArray(aggResult.data);
+                                if (arr) {
+                                    const clamped = new Float32Array(arr.length);
+                                    let min = Infinity, max = -Infinity, sum = 0, count = 0;
+                                    for (let i = 0; i < arr.length; i++) {
+                                        const val = arr[i];
+                                        if (!isFinite(val)) { clamped[i] = NaN; continue; }
+                                        const capped = Math.min(val, 100);
+                                        clamped[i] = capped;
+                                        min = Math.min(min, capped); max = Math.max(max, capped);
+                                        sum += capped; count++;
+                                    }
+                                    setLoadingProgress(95);
+                                    return { data: { ...aggResult.data, data: clamped, data_encoding: "none" as const }, min, max, mean: count > 0 ? sum / count : NaN };
+                                }
+                            }
+                            setLoadingProgress(95);
+                            return aggResult;
+                        }
+                        // ─────────────────────────────────────────────────────
+
                         const clippedDate = clipDateToScenarioRange(
                             state.date,
                             activeScenarioForRange,
@@ -8592,56 +8826,92 @@ async function loadClimateDataWindow2() {
         } else if (w2.mode === "Ensemble") {
             result = await loadEnsembleDataForWindow2(w2, setW2LoadingProgress);
         } else {
-            const clippedDate = clipDateToScenarioRange(w2.date, activeScenarioForRange);
-            if (clippedDate !== w2.date) w2.date = clippedDate;
             setW2LoadingProgress(40);
 
-            const request = createDataRequest({
-                variable: w2.variable,
-                date: clippedDate,
-                model: w2.model,
-                scenario: w2.scenario,
-                resolution: w2.resolution,
-            });
-
-            const data = await fetchClimateData(request);
-            if (requestId !== window2DataRequestId) return;
-
-            let arrayData = dataToArray(data);
-            if (!arrayData) {
-                throw new Error("No data returned for the selected parameters.");
-            }
-
-            if (w2.variable === "hurs") {
-                const clamped = new Float32Array(arrayData.length);
-                let min = Infinity;
-                let max = -Infinity;
-                let sum = 0;
-                let count = 0;
-                for (let i = 0; i < arrayData.length; i++) {
-                    const val = arrayData[i];
-                    if (!isFinite(val)) {
-                        clamped[i] = NaN;
-                        continue;
+            if (w2.temporalAggEnabled) {
+                // ── Temporal aggregation path (Window 2, Explore mode) ────────
+                const stepDays = sampleRateToStepDays(w2.temporalAggSampleRate, w2.temporalAggCustomDays);
+                const aggStart = clipDateToScenarioRange(w2.temporalAggStart, activeScenarioForRange);
+                const aggEnd = clipDateToScenarioRange(w2.temporalAggEnd, activeScenarioForRange);
+                const dates = generateTemporalDates(aggStart, aggEnd, stepDays);
+                if (dates.length === 0) throw new Error("No dates in the selected aggregation range.");
+                const aggResult = await fetchAndAverageDates(
+                    { variable: w2.variable, model: w2.model, scenario: w2.scenario, resolution: w2.resolution },
+                    dates,
+                    (pct) => setW2LoadingProgress(40 + Math.round(pct * 0.5)),
+                );
+                if (requestId !== window2DataRequestId) return;
+                if (w2.variable === "hurs") {
+                    const arr = dataToArray(aggResult.data);
+                    if (arr) {
+                        const clamped = new Float32Array(arr.length);
+                        let min = Infinity, max = -Infinity, sum = 0, count = 0;
+                        for (let i = 0; i < arr.length; i++) {
+                            const val = arr[i];
+                            if (!isFinite(val)) { clamped[i] = NaN; continue; }
+                            const capped = Math.min(val, 100);
+                            clamped[i] = capped;
+                            min = Math.min(min, capped); max = Math.max(max, capped); sum += capped; count++;
+                        }
+                        result = { data: { ...aggResult.data, data: clamped, data_encoding: "none" }, min, max, mean: count > 0 ? sum / count : NaN };
+                    } else {
+                        result = aggResult;
                     }
-                    const capped = Math.min(val, 100);
-                    clamped[i] = capped;
-                    min = Math.min(min, capped);
-                    max = Math.max(max, capped);
-                    sum += capped;
-                    count += 1;
+                } else {
+                    result = aggResult;
                 }
-                const mean = count > 0 ? sum / count : NaN;
-                result = {
-                    data: { ...data, data: clamped, data_encoding: "none" },
-                    min,
-                    max,
-                    mean,
-                };
+                // ─────────────────────────────────────────────────────────────
             } else {
-                const { min, max } = calculateMinMax(arrayData);
-                const mean = averageArray(arrayData, w2.variable);
-                result = { data, min, max, mean };
+                const clippedDate = clipDateToScenarioRange(w2.date, activeScenarioForRange);
+                if (clippedDate !== w2.date) w2.date = clippedDate;
+
+                const request = createDataRequest({
+                    variable: w2.variable,
+                    date: clippedDate,
+                    model: w2.model,
+                    scenario: w2.scenario,
+                    resolution: w2.resolution,
+                });
+
+                const data = await fetchClimateData(request);
+                if (requestId !== window2DataRequestId) return;
+
+                let arrayData = dataToArray(data);
+                if (!arrayData) {
+                    throw new Error("No data returned for the selected parameters.");
+                }
+
+                if (w2.variable === "hurs") {
+                    const clamped = new Float32Array(arrayData.length);
+                    let min = Infinity;
+                    let max = -Infinity;
+                    let sum = 0;
+                    let count = 0;
+                    for (let i = 0; i < arrayData.length; i++) {
+                        const val = arrayData[i];
+                        if (!isFinite(val)) {
+                            clamped[i] = NaN;
+                            continue;
+                        }
+                        const capped = Math.min(val, 100);
+                        clamped[i] = capped;
+                        min = Math.min(min, capped);
+                        max = Math.max(max, capped);
+                        sum += capped;
+                        count += 1;
+                    }
+                    const mean = count > 0 ? sum / count : NaN;
+                    result = {
+                        data: { ...data, data: clamped, data_encoding: "none" },
+                        min,
+                        max,
+                        mean,
+                    };
+                } else {
+                    const { min, max } = calculateMinMax(arrayData);
+                    const mean = averageArray(arrayData, w2.variable);
+                    result = { data, min, max, mean };
+                }
             }
         }
 
@@ -10333,6 +10603,7 @@ function renderInput(
         max?: string;
         dataRole?: string;
         dataWindow?: "1" | "2";
+        disabled?: boolean;
     },
 ) {
     const type = opts?.type ?? "date";
@@ -10341,6 +10612,8 @@ function renderInput(
     const maxAttr = opts?.max ? `max="${opts.max}"` : "";
     const dataRole = opts?.dataRole ? `data-role="${opts.dataRole}"` : "";
     const dataWindow = opts?.dataWindow ? `data-window="${opts.dataWindow}"` : "";
+    const disabledAttr = opts?.disabled ? "disabled" : "";
+    const disabledStyle = opts?.disabled ? "opacity:0.4; cursor:not-allowed; pointer-events:none;" : "";
     return `
     <input
       type="${type}"
@@ -10351,6 +10624,8 @@ function renderInput(
       ${maxAttr}
       ${dataRole}
       ${dataWindow}
+      ${disabledAttr}
+      style="${disabledStyle}"
     />
   `;
 }
@@ -10810,6 +11085,191 @@ function renderTabButton(
   `;
 }
 
+/**
+ * Renders the "Temporal Aggregation" collapsible section that appears in every
+ * mode pane (Explore, Compare, Ensemble).  It lets the user define a date range
+ * and a sample rate so that data for multiple time steps is averaged before
+ * being displayed on the map.
+ */
+function renderTemporalAggSection(
+    s: AppState | Window2State,
+    dataWindowOpt: "1" | "2" | undefined,
+    currentMode: Mode,
+): string {
+    const stepDays = sampleRateToStepDays(s.temporalAggSampleRate, s.temporalAggCustomDays);
+    const dates = s.temporalAggEnabled
+        ? generateTemporalDates(s.temporalAggStart, s.temporalAggEnd, stepDays)
+        : [];
+    const sampleCount = dates.length;
+
+    const rateLabels: Record<TemporalAggSampleRate, string> = {
+        day: "Day",
+        week: "Week",
+        month: "Month",
+        year: "Year",
+        custom: "Custom",
+    };
+    const rates: TemporalAggSampleRate[] = ["day", "week", "month", "year", "custom"];
+
+    const inputStyle = styleAttr({
+        background: "var(--gradient-bg)",
+        border: "1px solid var(--border-strong)",
+        borderRadius: 8,
+        color: "var(--text-primary)",
+        padding: "6px 10px",
+        fontSize: 12.5,
+        fontWeight: 600,
+        fontFamily: "var(--font-geist-sans)",
+        minHeight: 32,
+        boxShadow: "inset 0 1px 0 var(--inset-light)",
+        width: "100%",
+    });
+
+    const isCompareMode = currentMode === "Compare";
+
+    return `
+      <div style="margin-bottom:14px">
+        <div style="${styleAttr({ display: "flex", flexDirection: "column", gap: 8 })}">
+          <div style="${styleAttr({ display: "flex", justifyContent: "space-between", alignItems: "center" })}">
+            <div style="${styleAttr(styles.sectionTitle)}">Time Aggregation</div>
+            <button
+              type="button"
+              data-action="toggle-temporal-agg"
+              ${dataWindowOpt ? `data-window="${dataWindowOpt}"` : ""}
+              style="${styleAttr({
+                  padding: "3px 10px",
+                  borderRadius: 20,
+                  border: "1px solid " + (s.temporalAggEnabled ? "var(--accent-border-bright)" : "var(--border-medium)"),
+                  background: s.temporalAggEnabled ? "var(--gradient-primary)" : "var(--bg-subtle)",
+                  color: s.temporalAggEnabled ? "white" : "var(--text-secondary)",
+                  fontSize: 11,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  letterSpacing: 0.3,
+                  transition: "all 0.15s ease",
+              })}"
+            >${s.temporalAggEnabled ? "ON" : "OFF"}</button>
+          </div>
+
+          ${s.temporalAggEnabled ? `
+          <div style="${styleAttr({ display: "flex", flexDirection: "column", gap: 10 })}">
+            <div style="${styleAttr({ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 })}">
+              <div>
+                <div style="${styleAttr({ fontSize: 11, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 4, letterSpacing: 0.2 })}">From</div>
+                <input
+                  type="date"
+                  value="${s.temporalAggStart}"
+                  data-action="update-input"
+                  data-key="temporalAggStart"
+                  ${dataWindowOpt ? `data-window="${dataWindowOpt}"` : ""}
+                  style="${inputStyle}"
+                />
+              </div>
+              <div>
+                <div style="${styleAttr({ fontSize: 11, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 4, letterSpacing: 0.2 })}">To</div>
+                <input
+                  type="date"
+                  value="${s.temporalAggEnd}"
+                  data-action="update-input"
+                  data-key="temporalAggEnd"
+                  ${dataWindowOpt ? `data-window="${dataWindowOpt}"` : ""}
+                  style="${inputStyle}"
+                />
+              </div>
+            </div>
+
+            <div>
+              <div style="${styleAttr({ fontSize: 11, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 6, letterSpacing: 0.2 })}">Sample rate</div>
+              <div style="${styleAttr({ display: "flex", gap: 4, flexWrap: "wrap" })}">
+                ${rates.map((rate) => {
+                    const active = s.temporalAggSampleRate === rate;
+                    return `
+                    <button
+                      type="button"
+                      data-action="set-temporal-agg-rate"
+                      data-value="${rate}"
+                      ${dataWindowOpt ? `data-window="${dataWindowOpt}"` : ""}
+                      style="${styleAttr({
+                          padding: "5px 10px",
+                          borderRadius: 8,
+                          border: "1px solid " + (active ? "var(--accent-border-bright)" : "var(--border-medium)"),
+                          background: active ? "var(--gradient-primary)" : "var(--bg-subtle)",
+                          color: active ? "white" : "var(--text-secondary)",
+                          fontSize: 11.5,
+                          fontWeight: 600,
+                          cursor: "pointer",
+                          transition: "all 0.15s ease",
+                          whiteSpace: "nowrap",
+                      })}"
+                    >${rateLabels[rate]}</button>
+                  `;
+                }).join("")}
+              </div>
+            </div>
+
+            ${s.temporalAggSampleRate === "custom" ? `
+            <div style="${styleAttr({ display: "flex", alignItems: "center", gap: 8 })}">
+              <span style="${styleAttr({ fontSize: 12, color: "var(--text-secondary)", whiteSpace: "nowrap" })}">Every</span>
+              <input
+                type="number"
+                min="1"
+                max="3650"
+                step="1"
+                value="${s.temporalAggCustomDays}"
+                data-action="update-input"
+                data-key="temporalAggCustomDays"
+                ${dataWindowOpt ? `data-window="${dataWindowOpt}"` : ""}
+                style="${styleAttr({
+                    background: "var(--gradient-bg)",
+                    border: "1px solid var(--border-strong)",
+                    borderRadius: 8,
+                    color: "var(--text-primary)",
+                    padding: "6px 10px",
+                    fontSize: 12.5,
+                    fontWeight: 600,
+                    fontFamily: "var(--font-geist-sans)",
+                    minHeight: 32,
+                    boxShadow: "inset 0 1px 0 var(--inset-light)",
+                    width: "72px",
+                })}"
+              />
+              <span style="${styleAttr({ fontSize: 12, color: "var(--text-secondary)", whiteSpace: "nowrap" })}">days</span>
+            </div>
+            ` : ""}
+
+            <div style="${styleAttr({
+                fontSize: 12,
+                color: sampleCount > 0 ? "var(--text-secondary)" : "rgba(239,68,68,0.85)",
+                background: "var(--bg-subtle)",
+                borderRadius: 8,
+                padding: "6px 10px",
+                border: "1px solid var(--border-subtle)",
+            })}">
+              ${sampleCount > 0
+                  ? `<strong>${sampleCount}</strong> sample${sampleCount !== 1 ? "s" : ""}`
+                  : `No dates in range — adjust start/end`
+              }
+            </div>
+
+            ${isCompareMode && (s as AppState).compareMode === "Dates" ? `
+            <div style="${styleAttr({
+                fontSize: 11.5,
+                color: "var(--text-secondary)",
+                background: "var(--bg-subtle)",
+                borderRadius: 8,
+                padding: "6px 10px",
+                border: "1px solid var(--border-subtle)",
+            })}">
+              ℹ️ Aggregation applies to each date independently in Dates comparison.
+            </div>
+            ` : ""}
+          </div>
+          ` : ""}
+        </div>
+      </div>
+    `;
+}
+
 function renderManualSection(params: {
     modeTransform: string;
     resolutionFill: number;
@@ -10887,7 +11347,7 @@ function renderManualSection(params: {
                           dataWindow: dataWindowOpt,
                       }),
                   ),
-                  renderField("Date", renderInput("date", s.date, { dataWindow: dataWindowOpt })),
+                  renderField("Date", renderInput("date", s.date, { dataWindow: dataWindowOpt, disabled: s.temporalAggEnabled })),
               ]
             : s.compareMode === "Dates"
               ? [
@@ -10914,7 +11374,7 @@ function renderManualSection(params: {
                             dataWindow: dataWindowOpt,
                         }),
                     ),
-                    renderField("Date", renderInput("date", s.date, { dataWindow: dataWindowOpt })),
+                    renderField("Date", renderInput("date", s.date, { dataWindow: dataWindowOpt, disabled: s.temporalAggEnabled })),
                 ];
 
     return `
@@ -10953,6 +11413,7 @@ function renderManualSection(params: {
           transform: modeTransform,
       })}">
         <div class="mode-pane-scrollable" style="${styleAttr(styles.modePane)}">
+          ${renderTemporalAggSection(s, dataWindowOpt, "Explore")}
           <div style="${styleAttr({
               display: "flex",
               flexDirection: "column",
@@ -10985,6 +11446,7 @@ function renderManualSection(params: {
                           max: timeRange.end,
                           dataRole: "date-picker",
                           dataWindow: dataWindowOpt,
+                          disabled: s.temporalAggEnabled,
                       });
                   })(),
               )}
@@ -11477,6 +11939,7 @@ function renderManualSection(params: {
         </div>
 
                 <div class="mode-pane-scrollable" style="${styleAttr(styles.modePane)}">
+                    ${renderTemporalAggSection(s, dataWindowOpt, "Compare")}
                     <div data-role="compare-parameters" style="${styleAttr({
                         display: "flex",
                         flexDirection: "column",
@@ -12102,6 +12565,7 @@ function renderManualSection(params: {
         </div>
 
         <div class="mode-pane-scrollable" style="${styleAttr(styles.modePane)}">
+          ${renderTemporalAggSection(s, dataWindowOpt, "Ensemble")}
           <div style="${styleAttr({
               display: "flex",
               flexDirection: "column",
@@ -12122,6 +12586,7 @@ function renderManualSection(params: {
                           min: commonRange.start,
                           max: commonRange.end,
                           dataWindow: dataWindowOpt,
+                          disabled: s.temporalAggEnabled,
                       });
                   })(),
               )}
@@ -15871,6 +16336,42 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         }),
     );
 
+    // ── Temporal aggregation: toggle ON/OFF ───────────────────────────────────
+    root.querySelectorAll<HTMLButtonElement>('[data-action="toggle-temporal-agg"]').forEach((btn) => {
+        btn.addEventListener("click", () => {
+            const w = (btn.dataset.window || "1") as "1" | "2";
+            const t = w === "2" ? state.window2 : state;
+            t.temporalAggEnabled = !t.temporalAggEnabled;
+            render();
+            if (w === "2" && state.splitView) {
+                loadClimateDataWindow2();
+            } else {
+                loadClimateData();
+            }
+        });
+    });
+
+    // ── Temporal aggregation: sample rate buttons ─────────────────────────────
+    root.querySelectorAll<HTMLButtonElement>('[data-action="set-temporal-agg-rate"]').forEach((btn) => {
+        btn.addEventListener("click", () => {
+            const w = (btn.dataset.window || "1") as "1" | "2";
+            const t = w === "2" ? state.window2 : state;
+            const rate = btn.dataset.value as TemporalAggSampleRate;
+            if (!rate) return;
+            if (t.temporalAggSampleRate === rate) return;
+            t.temporalAggSampleRate = rate;
+            render();
+            if (t.temporalAggEnabled) {
+                if (w === "2" && state.splitView) {
+                    loadClimateDataWindow2();
+                } else {
+                    loadClimateData();
+                }
+            }
+        });
+    });
+    // ─────────────────────────────────────────────────────────────────────────
+
     const textInputs = root.querySelectorAll<HTMLInputElement>(
         '[data-action="update-input"]',
     );
@@ -15903,6 +16404,19 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             const value = input.value;
             const target = w === "2" ? state.window2 : state;
 
+            // Number input for custom temporal agg days – skip date validation
+            if (key === "temporalAggCustomDays") {
+                const numVal = parseInt(value, 10);
+                if (!isNaN(numVal) && numVal >= 1) {
+                    if (target.temporalAggCustomDays !== numVal) {
+                        target.temporalAggCustomDays = numVal;
+                        render();
+                        if (target.temporalAggEnabled) loadClimateData();
+                    }
+                }
+                return;
+            }
+
             // Validate date format (YYYY-MM-DD) and that it's a valid date
             const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
             const isValidFormat = dateRegex.test(value);
@@ -15918,6 +16432,10 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                           ? target.compareDateStart
                           : key === "compareDateEnd"
                             ? target.compareDateEnd
+                          : key === "temporalAggStart"
+                            ? target.temporalAggStart
+                          : key === "temporalAggEnd"
+                            ? target.temporalAggEnd
                             : key === "chartRangeStart"
                               ? state.chartRangeStart
                               : key === "chartRangeEnd"
@@ -15951,11 +16469,15 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                         ? target.compareDateEnd
                         : key === "ensembleDate"
                           ? target.ensembleDate
-                          : key === "chartRangeStart"
-                            ? state.chartRangeStart
-                            : key === "chartRangeEnd"
-                              ? state.chartRangeEnd
-                              : state.chartDate;
+                          : key === "temporalAggStart"
+                            ? target.temporalAggStart
+                            : key === "temporalAggEnd"
+                              ? target.temporalAggEnd
+                              : key === "chartRangeStart"
+                                ? state.chartRangeStart
+                                : key === "chartRangeEnd"
+                                  ? state.chartRangeEnd
+                                  : state.chartDate;
 
             if (currentValue === clippedValue) return; // No change, skip update
 
@@ -15982,6 +16504,12 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                     break;
                 case "ensembleDate":
                     target.ensembleDate = value;
+                    break;
+                case "temporalAggStart":
+                    target.temporalAggStart = value;
+                    break;
+                case "temporalAggEnd":
+                    target.temporalAggEnd = value;
                     break;
             }
 
@@ -16014,7 +16542,8 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
                 key === "date" ||
                 (state.mode === "Compare" &&
                     (key === "compareDateStart" || key === "compareDateEnd")) ||
-                (state.mode === "Ensemble" && key === "ensembleDate")
+                (state.mode === "Ensemble" && key === "ensembleDate") ||
+                (target.temporalAggEnabled && (key === "temporalAggStart" || key === "temporalAggEnd"))
             ) {
                 loadClimateData();
                 const hasPoint = state.mapMarker !== null;

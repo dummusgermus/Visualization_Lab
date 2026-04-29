@@ -1,6 +1,7 @@
 import configparser
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Optional
 
 import config
@@ -452,51 +453,6 @@ class OpenAICompatibleClient:
                 error=str(e)
             )
 
-    def get_available_models(self) -> List[str]:
-        """Fetch available models from the OpenAI-compatible endpoint."""
-        try:
-            response = requests.get(
-                f"{self.base_url}/models",
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                },
-                timeout=30
-            )
-            response.raise_for_status()
-            
-            result = response.json()
-            models = []
-            
-            # Extract model IDs from the response
-            if "data" in result and isinstance(result["data"], list):
-                models = [model.get("id", "") for model in result["data"] if model.get("id")]
-            
-            print(f"[DEBUG] Fetched {len(models)} available models from kiconnect API")
-            return sorted(models)
-            
-        except requests.exceptions.RequestException as e:
-            print(f"[ERROR] Failed to fetch available models: {e}")
-            # Return a fallback list if the API is not available
-            return [
-                "gpt-4.1",
-                "gpt-4o",
-                "gpt-4o-mini", 
-                "gpt-5.1",
-                "gpt-oss-120b",
-                "mistral-small-3.2-24B-instruct-2506",
-            ]
-        except Exception as e:
-            print(f"[ERROR] Unexpected error while fetching models: {e}")
-            return [
-                "gpt-4.1",
-                "gpt-4o", 
-                "gpt-4o-mini",
-                "gpt-5.1",
-                "gpt-oss-120b",
-                "mistral-small-3.2-24B-instruct-2506",
-            ]
-
 
 class OllamaClient:
     """Client for RWTH Ollama server."""
@@ -702,21 +658,62 @@ def set_model(new_model: str) -> None:
 
 
 def get_available_models() -> List[str]:
-    """Get the list of available models from the LLM provider."""
-    client = get_llm_client()
-    if hasattr(client, "get_available_models"):
-        return client.get_available_models()
-    else:
-        print("[WARN] Current client does not support listing available models.")
-        # Return a fallback list for Ollama or other clients
-        return [
-            "gpt-4.1", 
-            "gpt-4o",
-            "gpt-4o-mini",
-            "gpt-5.1",
-            "gpt-oss-120b",
-            "mistral-small-3.2-24B-instruct-2506",
-        ]
+    """Fetch available chat models from the provider.
+
+    Probes each model via a minimal /chat/completions request (max_tokens=1)
+    in parallel, so only models that actually support the chat endpoint are
+    returned — embeddings, rerankers and other non-chat models are excluded
+    automatically regardless of their naming convention.
+    """
+    api_config = _load_api_config()
+    if api_config is None:
+        raise ValueError("No API config found; cannot fetch available models.")
+
+    base_url = api_config.get("api", "endpoint_url", fallback=None)
+    api_key  = api_config.get("api", "api_key",      fallback=None)
+    base_url = os.environ.get("OPENAI_BASE_URL", base_url)
+    api_key  = os.environ.get("OPENAI_API_KEY",  api_key)
+
+    if not base_url or not api_key:
+        raise ValueError("endpoint_url and api_key are required to fetch available models.")
+
+    base_url = base_url.rstrip("/")
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+
+    # 1. List every model the provider exposes
+    response = requests.get(f"{base_url}/models", headers=headers, timeout=10)
+    response.raise_for_status()
+    all_ids = [m.get("id") for m in response.json().get("data", []) if m.get("id")]
+
+    # 2. Probe each model against /chat/completions with a 1-token request.
+    #    Models that respond with HTTP 2xx support the chat endpoint.
+    #    Concurrency is kept low (3) to avoid triggering API rate limits.
+    def _probe(model_id: str) -> str | None:
+        try:
+            r = requests.post(
+                f"{base_url}/chat/completions",
+                headers=headers,
+                json={
+                    "model": model_id,
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "max_tokens": 1,
+                    "stream": False,
+                },
+                timeout=(10, 30),
+            )
+            return model_id if r.ok else None
+        except Exception:
+            return None
+
+    chat_models = []
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        futures = {pool.submit(_probe, mid): mid for mid in all_ids}
+        for fut in as_completed(futures):
+            result = fut.result()
+            if result is not None:
+                chat_models.append(result)
+
+    return sorted(chat_models)
 
 
 def process_chat_message(

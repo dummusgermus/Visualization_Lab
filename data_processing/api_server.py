@@ -135,12 +135,10 @@ class SetModelRequest(BaseModel):
 
 
 ALLOWED_CHAT_MODELS = {
-    "gpt-4.1",
-    "gpt-4o",
-    "gpt-4o-mini",
-    "gpt-5.1",
+    "gpt-5.2",
+    "gpt-5.4-mini",
     "gpt-oss-120b",
-    "mistral-small-3.2-24B-instruct-2506",
+    "mistral-small-4-119b-2603",
 }
 
 

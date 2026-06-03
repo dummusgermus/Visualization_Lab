@@ -21,9 +21,7 @@ export type ChatState = {
 };
 
 // Global variable to store dynamically fetched models
-let availableChatModels: string[] = [
-    "gpt-4o", // fallback default
-];
+let availableChatModels: string[] = [];
 
 // Global flag to track if models have been fetched
 let modelsInitialized = false;
@@ -45,28 +43,10 @@ async function fetchAvailableModels(): Promise<string[]> {
         if (data.success && Array.isArray(data.models)) {
             return data.models;
         } else {
-            console.warn("API returned unexpected format or error:", data);
-            // Return fallback models 
-            return [
-                "gpt-4.1",
-                "gpt-4o",
-                "gpt-4o-mini",
-                "gpt-5.1", 
-                "gpt-oss-120b",
-                "mistral-small-3.2-24B-instruct-2506",
-            ];
+            throw new Error("API returned an unexpected model payload");
         }
     } catch (error) {
-        console.error("Failed to fetch available models:", error);
-        // Return fallback models on error
-        return [
-            "gpt-4.1",
-            "gpt-4o",
-            "gpt-4o-mini", 
-            "gpt-5.1",
-            "gpt-oss-120b",
-            "mistral-small-3.2-24B-instruct-2506",
-        ];
+        throw error;
     }
 }
 
@@ -75,12 +55,30 @@ async function fetchAvailableModels(): Promise<string[]> {
  */
 export async function initializeModels(): Promise<void> {
     if (modelsInitialized) return;
-    
-    availableChatModels = await fetchAvailableModels();
-    modelsInitialized = true;
-    
-    // Refresh the dropdown if it exists
-    refreshModelsDropdown();
+
+    const maxAttempts = 5;
+    let lastError: unknown = null;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+            const models = await fetchAvailableModels();
+            if (models.length === 0) {
+                throw new Error("Model list is empty");
+            }
+
+            availableChatModels = models;
+            modelsInitialized = true;
+            refreshModelsDropdown();
+            return;
+        } catch (error) {
+            lastError = error;
+            if (attempt < maxAttempts) {
+                await new Promise((resolve) => setTimeout(resolve, 1000 * attempt));
+            }
+        }
+    }
+
+    console.error("Failed to initialize available models after retries:", lastError);
 }
 
 /**
@@ -253,10 +251,12 @@ export function renderChatSection(
     selectedChatModel: string = "gpt-4o",
 ): string {
     const currentModels = getAvailableModels();
-    const modelOptions = currentModels.map(
-        (m) =>
-            `<option value="${m}" ${m === selectedChatModel ? "selected" : ""}>${m}</option>`,
-    ).join("");
+    const modelOptions = currentModels.length > 0
+        ? currentModels.map(
+            (m) =>
+                `<option value="${m}" ${m === selectedChatModel ? "selected" : ""}>${m}</option>`,
+        ).join("")
+        : `<option value="" selected disabled>Loading models...</option>`;
 
     return `
     <div class="chat-stack">
@@ -302,6 +302,7 @@ export function renderChatSection(
           id="chat-model-select"
           data-action="chat-model-select"
           class="chat-model-select"
+                    ${currentModels.length === 0 ? "disabled" : ""}
         >
           ${modelOptions}
         </select>

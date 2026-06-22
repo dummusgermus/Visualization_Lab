@@ -17452,6 +17452,8 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
             if (e.key === "Enter") { e.preventDefault(); commit(); }
         });
     });
+
+    syncAboutHintAnimations(root);
 }
 
 async function init() {
@@ -18077,8 +18079,6 @@ async function init() {
         if (persistentCanvas2) resizeWindow2Canvas(persistentCanvas2);
     });
     rangeResizeObserver.observe(document.documentElement);
-
-    syncAboutHintAnimations(root);
 }
 
 if (document.readyState === "loading") {

@@ -1391,6 +1391,7 @@ export type AppState = {
     } | null;
     configDescriptionEditorOpen: boolean;
     configDescriptionInfoOpen: boolean;
+    aboutPanelOpen: boolean;
     configDescriptionDraftTitle: string;
     configDescriptionDraftBody: string;
     saveDialogOpen: boolean;
@@ -1641,6 +1642,7 @@ const state: AppState = {
     configDescription: null,
     configDescriptionEditorOpen: false,
     configDescriptionInfoOpen: false,
+    aboutPanelOpen: false,
     configDescriptionDraftTitle: "",
     configDescriptionDraftBody: "",
     saveDialogOpen: false,
@@ -1867,6 +1869,20 @@ let mapInfoResizeStateW2: {
 };
 const LOCATION_SEARCH_DEBOUNCE_MS = 500;
 const CONFIG_CACHE_STORAGE_KEY = "polyoracle-saved-configs-v1";
+const PAPER_URL =
+    "https://diglib.eg.org/items/7591f12b-7d0a-4bd8-b441-505bf5ee108a";
+const FEEDBACK_EMAIL = "mail@polyoracle.live";
+const ABOUT_HINT_CYCLE_MS = 40_000;
+const aboutHintCycleStart = Date.now();
+
+function syncAboutHintAnimations(root: HTMLElement): void {
+    const hints = root.querySelectorAll<HTMLElement>(".sidebar-about-hint");
+    if (hints.length === 0) return;
+    const offset = (Date.now() - aboutHintCycleStart) % ABOUT_HINT_CYCLE_MS;
+    hints.forEach((el) => {
+        el.style.animationDelay = `-${offset}ms`;
+    });
+}
 
 type SavedConfigEntry = {
     name: string;
@@ -9193,6 +9209,87 @@ function setupSplitDivider() {
     });
 }
 
+function renderSidebarAboutButton(): string {
+    const activeClass = state.aboutPanelOpen ? " about-nav-btn--active" : "";
+    const wrapClass = state.aboutPanelOpen
+        ? "sidebar-about-btn-wrap sidebar-about-btn-wrap--paused"
+        : "sidebar-about-btn-wrap";
+
+    return `
+      <div class="${wrapClass}">
+        <div class="sidebar-about-hints" aria-hidden="true">
+          <span class="sidebar-about-hint sidebar-about-hint--paper">Read the paper</span>
+          <span class="sidebar-about-hint sidebar-about-hint--reach">Reach out</span>
+        </div>
+        <button
+          type="button"
+          class="about-nav-btn${activeClass}"
+          data-action="toggle-about-panel"
+          title="About Polyoracle"
+          aria-label="About Polyoracle"
+          aria-expanded="${state.aboutPanelOpen ? "true" : "false"}"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="12" y1="16" x2="12" y2="12"></line>
+            <line x1="12" y1="8" x2="12.01" y2="8"></line>
+          </svg>
+        </button>
+      </div>
+    `;
+}
+
+function renderAboutPanel(): string {
+    if (!state.aboutPanelOpen) return "";
+
+    const overlayStyle = mergeStyles(styles.infoModalOverlay, {
+        background: "rgba(3,7,18,0.35)",
+        backdropFilter: "blur(6px)",
+        zIndex: 20001,
+        pointerEvents: "auto",
+    });
+
+    return `
+      <div data-role="about-panel-overlay" style="${styleAttr(overlayStyle)}">
+        <div style="${styleAttr(
+            mergeStyles(styles.infoModal, { maxWidth: "420px" }),
+        )}" role="dialog" aria-modal="true" aria-label="About Polyoracle">
+          <div style="${styleAttr(styles.infoModalHeader)}">
+            <div style="${styleAttr(styles.infoModalTitle)}">About Polyoracle</div>
+            <button type="button" data-action="close-about-panel" style="${styleAttr(
+                styles.infoModalClose,
+            )}" aria-label="Close about dialog">✕</button>
+          </div>
+          <div style="${styleAttr(styles.infoModalBody)}">
+            <p style="display:block;margin:0;line-height:1.6;white-space:normal;word-break:break-word;">
+              Polyoracle has a corresponding research paper.
+            </p>
+            <a
+              href="${PAPER_URL}"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="about-paper-link"
+            >
+              Read the paper
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                <polyline points="15 3 21 3 21 9"/>
+                <line x1="10" y1="14" x2="21" y2="3"/>
+              </svg>
+            </a>
+            <p style="display:block;margin:18px 0 0 0;line-height:1.6;white-space:normal;word-break:break-word;">
+              If you encounter errors or have ideas, wishes, or feedback, please reach out:
+            </p>
+            <div class="about-email-row">
+              <span class="about-email-text" data-role="about-email-text">${FEEDBACK_EMAIL}</span>
+              <button type="button" class="about-copy-btn" data-action="copy-feedback-email">Copy</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+}
+
 function renderBranding() {
     const isLight = document.documentElement.dataset.theme === 'light';
     const themeBtnTitle = isLight ? 'Switch to dark mode' : 'Switch to light mode';
@@ -9524,6 +9621,7 @@ function render() {
               <aside data-role="sidebar" data-window="1" class="sidebar sidebar-in-pane" style="position:absolute;right:0;top:0;bottom:0;width:${SIDEBAR_WIDTH}px;transform:${state.sidebarOpen ? "translateX(0)" : `translateX(${SIDEBAR_WIDTH + 24}px)`};pointer-events:${state.sidebarOpen ? "auto" : "none"};" aria-hidden="${!state.sidebarOpen}">
                 <div class="sidebar-top">
                   <div class="sidebar-brand"><div class="logo-dot"></div></div>
+                  ${renderSidebarAboutButton()}
                   <div class="tab-switch" style="${styleAttr(styles.tabSwitch)}">
                     ${(["Manual", "Chat"] as const).map((v) => renderTabButton(v, state.panelTab === v ? styles.tabBtnActive : undefined, "panel-tab")).join("")}
                   </div>
@@ -9612,6 +9710,7 @@ function render() {
           <div class="sidebar-brand">
             <div class="logo-dot"></div>
           </div>
+          ${renderSidebarAboutButton()}
           <div class="tab-switch" style="${styleAttr(styles.tabSwitch)}">
             ${(["Manual", "Chat"] as const)
                 .map((value) =>
@@ -9712,6 +9811,7 @@ function render() {
 
       ${renderTutorialOverlay(getTutorialState())}
       ${renderApiOfflineModal(state)}
+      ${renderAboutPanel()}
       ${renderConfigDescriptionEditor(state)}
       ${renderConfigNotes(state)}
     </div>
@@ -16859,6 +16959,60 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         }),
     );
 
+    root.querySelectorAll<HTMLButtonElement>(
+        '[data-action="toggle-about-panel"]',
+    ).forEach((btn) =>
+        btn.addEventListener("click", () => {
+            state.aboutPanelOpen = !state.aboutPanelOpen;
+            render();
+        }),
+    );
+
+    root.querySelectorAll<HTMLButtonElement>(
+        '[data-action="close-about-panel"]',
+    ).forEach((btn) =>
+        btn.addEventListener("click", () => {
+            state.aboutPanelOpen = false;
+            render();
+        }),
+    );
+
+    const aboutOverlay = root.querySelector<HTMLElement>(
+        '[data-role="about-panel-overlay"]',
+    );
+    aboutOverlay?.addEventListener("click", (e) => {
+        if (e.target === aboutOverlay) {
+            state.aboutPanelOpen = false;
+            render();
+        }
+    });
+
+    const copyEmailBtn = root.querySelector<HTMLButtonElement>(
+        '[data-action="copy-feedback-email"]',
+    );
+    copyEmailBtn?.addEventListener("click", async () => {
+        try {
+            await navigator.clipboard.writeText(FEEDBACK_EMAIL);
+            copyEmailBtn.textContent = "Copied!";
+            copyEmailBtn.classList.add("about-copy-btn--copied");
+            window.setTimeout(() => {
+                copyEmailBtn.textContent = "Copy";
+                copyEmailBtn.classList.remove("about-copy-btn--copied");
+            }, 2000);
+        } catch {
+            const emailText = root.querySelector<HTMLElement>(
+                '[data-role="about-email-text"]',
+            );
+            if (emailText) {
+                const selection = window.getSelection();
+                const range = document.createRange();
+                range.selectNodeContents(emailText);
+                selection?.removeAllRanges();
+                selection?.addRange(range);
+            }
+        }
+    });
+
     const mapInfoCloseBtn = root.querySelector<HTMLButtonElement>(
         '[data-action="close-map-info"]',
     );
@@ -17923,6 +18077,8 @@ async function init() {
         if (persistentCanvas2) resizeWindow2Canvas(persistentCanvas2);
     });
     rangeResizeObserver.observe(document.documentElement);
+
+    syncAboutHintAnimations(root);
 }
 
 if (document.readyState === "loading") {

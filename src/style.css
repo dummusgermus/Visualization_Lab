@@ -598,6 +598,108 @@ input[type="date"]:hover::-webkit-calendar-picker-indicator {
     color: var(--text-secondary);
 }
 
+/* About / info button (top-right navbar) */
+.about-nav-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: 1px solid var(--border-subtle);
+    border-radius: 50%;
+    background: rgba(9, 11, 16, 0.45);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition:
+        opacity 0.2s ease,
+        border-color 0.2s ease,
+        color 0.2s ease,
+        background 0.2s ease;
+}
+
+.about-nav-btn:hover {
+    border-color: var(--border-default);
+    color: var(--text-primary);
+    background: rgba(18, 22, 28, 0.88);
+}
+
+.about-nav-btn--active {
+    border-color: var(--accent-border-bright);
+    color: white;
+    background: var(--gradient-primary);
+}
+
+.about-paper-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    margin-top: 12px;
+    padding: 10px 14px;
+    border-radius: 10px;
+    border: 1px solid var(--accent-border);
+    background: var(--gradient-primary);
+    color: white;
+    font-weight: 700;
+    font-size: 13px;
+    text-decoration: none;
+    cursor: pointer;
+    box-shadow: var(--shadow-combined);
+}
+
+.about-paper-link:hover {
+    filter: brightness(1.05);
+}
+
+.about-email-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 10px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--border-medium);
+    background: var(--bg-subtle);
+}
+
+.about-email-text {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: block;
+    font-family: var(--font-geist-mono);
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--text-primary);
+    white-space: nowrap;
+}
+
+.about-copy-btn {
+    flex-shrink: 0;
+    padding: 6px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border-default);
+    background: var(--bg-medium);
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition:
+        background 0.15s ease,
+        color 0.15s ease,
+        border-color 0.15s ease;
+}
+
+.about-copy-btn:hover {
+    background: var(--bg-strong);
+    color: var(--text-primary);
+}
+
+.about-copy-btn--copied {
+    border-color: rgba(34, 197, 94, 0.4);
+    color: var(--accent-green);
+}
+
 /* Custom scrollbar for dropdown */
 /* Map toolbar icon buttons */
 .map-icon-btn {

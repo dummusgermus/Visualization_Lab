@@ -19,8 +19,7 @@ class OpenVisusBackend(DataBackend):
     """Read NEX-GDDP-CMIP6 data from the OpenVisus server."""
 
     FALLBACK_URL = (
-        "https://us-east-1.gw.future-tech-holdings.com/nasa-t0/"
-        "nex-gddp-cmip6/nex-gddp-cmip6.idx"
+        "https://atlantis.sci.utah.edu/mod_visus?dataset=nex-gddp-cmip6"
     )
 
     def __init__(self, dataset_url: str = None):

@@ -150,7 +150,7 @@ RESOLUTION_QUALITY_MAP = {
 }
 
 # Dataset URL
-DATASET_URL = "http://atlantis.sci.utah.edu/mod_visus?dataset=nex-gddp-cmip6&cached=arco"
+DATASET_URL = "https://atlantis.sci.utah.edu/mod_visus?dataset=nex-gddp-cmip6&cached=arco"
 
 # Valid time ranges for each scenario
 TIME_RANGE = {

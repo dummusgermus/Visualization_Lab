@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import re
 
-DB_URL = "http://atlantis.sci.utah.edu/mod_visus?dataset=nex-gddp-cmip6"
+DB_URL = "https://atlantis.sci.utah.edu/mod_visus?dataset=nex-gddp-cmip6"
 DB = ov.LoadDataset(DB_URL)
 
 def plot_tasmax_pixel_42_ssp(

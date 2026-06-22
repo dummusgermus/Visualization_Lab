@@ -26,8 +26,7 @@ class DataLoadingError(Exception):
 _db = None
 
 _FALLBACK_URL = (
-    "https://us-east-1.gw.future-tech-holdings.com/nasa-t0/"
-    "nex-gddp-cmip6/nex-gddp-cmip6.idx"
+    "https://atlantis.sci.utah.edu/mod_visus?dataset=nex-gddp-cmip6"
 )
 
 # Cache initialization guard

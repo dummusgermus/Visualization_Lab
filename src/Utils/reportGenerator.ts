@@ -477,7 +477,13 @@ function buildSavedConfigLines(data: Record<string, any>): string[] {
             f("Variable",  "variable");
             f("Scenario",  "scenario");
             f("Model",     "model");
-            f("Date",      "date");
+            if (data["temporalAggEnabled"]) {
+                lines.push(
+                    `Date range: ${data["temporalAggStart"]} – ${data["temporalAggEnd"]}`,
+                );
+            } else {
+                f("Date", "date");
+            }
             f("Unit",      "selectedUnit");
             f("Palette",   "mapPalette");
         } else if (mode === "Compare") {
@@ -509,6 +515,15 @@ function buildSavedConfigLines(data: Record<string, any>): string[] {
         f("Date",         "chartDate");
         f("Unit",         "chartUnit");
         f("Location",     "chartLocationName");
+    }
+
+    if (data["temporalAggEnabled"]) {
+        const rate = data["temporalAggSampleRate"];
+        if (rate === "custom") {
+            lines.push(`Sample rate: every ${data["temporalAggCustomDays"]} days`);
+        } else if (rate) {
+            lines.push(`Sample rate: ${rate}`);
+        }
     }
 
     // Masks

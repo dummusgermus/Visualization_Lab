@@ -2200,6 +2200,11 @@ function buildDescriptionSnapshotFromState(state: AppState): Record<string, any>
         mapRangeEnd: state.mapRangeEnd,
         mapRangeNumSamples: state.mapRangeNumSamples,
         mapRangePreset: state.mapRangePreset,
+        temporalAggEnabled: state.temporalAggEnabled,
+        temporalAggStart: state.temporalAggStart,
+        temporalAggEnd: state.temporalAggEnd,
+        temporalAggSampleRate: state.temporalAggSampleRate,
+        temporalAggCustomDays: state.temporalAggCustomDays,
     };
     // Deep-clone so later in-place mutations (e.g. masks) don't mutate the snapshot.
     try {
@@ -14148,6 +14153,8 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         "mapShowBorders", "mapShowCities",
         "mapPolygon", "chartPolygon", "mapMarker",
         "mapRangeStart", "mapRangeEnd", "mapRangeNumSamples", "mapRangePreset",
+        "temporalAggEnabled", "temporalAggStart", "temporalAggEnd",
+        "temporalAggSampleRate", "temporalAggCustomDays",
         "configDescription",
     ];
 
@@ -14159,6 +14166,8 @@ function attachEventHandlers(_params: { resolutionFill: number }) {
         "compareModelA", "compareModelB", "compareDateStart", "compareDateEnd",
         "ensembleScenarios", "ensembleModels", "ensembleStatistic",
         "ensembleDate", "ensembleVariable", "ensembleUnit",
+        "temporalAggEnabled", "temporalAggStart", "temporalAggEnd",
+        "temporalAggSampleRate", "temporalAggCustomDays",
     ];
 
     function commitConfigDescriptionDraft() {

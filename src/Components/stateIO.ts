@@ -2,7 +2,19 @@ import type { AppState, EnsembleStatistic, ChartLocation, Window2State, MaskArra
 
 export type SavedWindow2State = Pick<
     Window2State,
-    "scenario" | "model" | "variable" | "date" | "mapPalette" | "selectedUnit" | "mode" | "resolution"
+    | "scenario"
+    | "model"
+    | "variable"
+    | "date"
+    | "mapPalette"
+    | "selectedUnit"
+    | "mode"
+    | "resolution"
+    | "temporalAggEnabled"
+    | "temporalAggStart"
+    | "temporalAggEnd"
+    | "temporalAggSampleRate"
+    | "temporalAggCustomDays"
 >;
 
 /** The subset of AppState that is saved/loaded */
@@ -59,6 +71,12 @@ export type SavedState = {
     splitView: AppState["splitView"];
     splitRatio: AppState["splitRatio"];
     window2: SavedWindow2State;
+    // Temporal aggregation
+    temporalAggEnabled: AppState["temporalAggEnabled"];
+    temporalAggStart: AppState["temporalAggStart"];
+    temporalAggEnd: AppState["temporalAggEnd"];
+    temporalAggSampleRate: AppState["temporalAggSampleRate"];
+    temporalAggCustomDays: AppState["temporalAggCustomDays"];
 };
 
 export function exportState(state: AppState): SavedState {
@@ -116,7 +134,17 @@ export function exportState(state: AppState): SavedState {
             selectedUnit: state.window2.selectedUnit,
             mode: state.window2.mode,
             resolution: state.window2.resolution,
+            temporalAggEnabled: state.window2.temporalAggEnabled,
+            temporalAggStart: state.window2.temporalAggStart,
+            temporalAggEnd: state.window2.temporalAggEnd,
+            temporalAggSampleRate: state.window2.temporalAggSampleRate,
+            temporalAggCustomDays: state.window2.temporalAggCustomDays,
         },
+        temporalAggEnabled: state.temporalAggEnabled,
+        temporalAggStart: state.temporalAggStart,
+        temporalAggEnd: state.temporalAggEnd,
+        temporalAggSampleRate: state.temporalAggSampleRate,
+        temporalAggCustomDays: state.temporalAggCustomDays,
     };
 }
 
@@ -174,6 +202,16 @@ export function applyImportedState(
     // Split view
     target.splitView = saved.splitView ?? false;
     target.splitRatio = saved.splitRatio ?? 0.5;
+    // Temporal aggregation (backward compat: older saves only had `date`)
+    target.temporalAggEnabled = saved.temporalAggEnabled ?? false;
+    if (saved.temporalAggStart) target.temporalAggStart = saved.temporalAggStart;
+    if (saved.temporalAggEnd) target.temporalAggEnd = saved.temporalAggEnd;
+    if (saved.temporalAggSampleRate) {
+        target.temporalAggSampleRate = saved.temporalAggSampleRate;
+    }
+    if (saved.temporalAggCustomDays != null) {
+        target.temporalAggCustomDays = saved.temporalAggCustomDays;
+    }
     if (saved.window2) {
         target.window2 = {
             ...target.window2,
@@ -185,6 +223,13 @@ export function applyImportedState(
             selectedUnit: saved.window2.selectedUnit,
             mode: saved.window2.mode,
             resolution: saved.window2.resolution,
+            temporalAggEnabled: saved.window2.temporalAggEnabled ?? false,
+            temporalAggStart: saved.window2.temporalAggStart ?? target.window2.temporalAggStart,
+            temporalAggEnd: saved.window2.temporalAggEnd ?? target.window2.temporalAggEnd,
+            temporalAggSampleRate:
+                saved.window2.temporalAggSampleRate ?? target.window2.temporalAggSampleRate,
+            temporalAggCustomDays:
+                saved.window2.temporalAggCustomDays ?? target.window2.temporalAggCustomDays,
             // Reset runtime state
             isLoading: false,
             loadingProgress: 0,

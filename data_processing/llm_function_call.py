@@ -355,7 +355,10 @@ class OpenAICompatibleClient:
             "model": self.model,
             "messages": messages,
             "tools": tools,
-            "stream": False
+            "stream": False,
+            # Reasoning models (gpt-5.x) spend part of this budget on hidden reasoning
+            # tokens before producing visible output, so keep it generous.
+            "max_completion_tokens": 4096,
         }
 
         print(f"[DEBUG] Sending request to {self.base_url}/chat/completions")
@@ -636,6 +639,12 @@ def get_llm_client():
         _llm_client = OpenAICompatibleClient(base_url=base_url, api_key=api_key, model=model)
         print(f"Using OpenAI-compatible endpoint at {base_url} with model {model}")
 
+        try:
+            available_models = get_available_models()
+            print(f"Available chat clients ({len(available_models)}): {available_models}")
+        except Exception as e:
+            print(f"[WARN] Could not fetch list of available chat clients: {e}")
+
     else:
         # Fallback: Ollama
         base_url = os.environ.get("OLLAMA_URL", "http://ollama.warhol.informatik.rwth-aachen.de")
@@ -682,6 +691,7 @@ def get_available_models() -> List[str]:
 
     # 1. List every model the provider exposes
     response = requests.get(f"{base_url}/models", headers=headers, timeout=10)
+    print(f"Raw /models response from {base_url}: {response.text}")
     response.raise_for_status()
     all_ids = [m.get("id") for m in response.json().get("data", []) if m.get("id")]
 
@@ -689,21 +699,28 @@ def get_available_models() -> List[str]:
     #    Models that respond with HTTP 2xx support the chat endpoint.
     #    Concurrency is kept low (3) to avoid triggering API rate limits.
     def _probe(model_id: str) -> str | None:
-        try:
-            r = requests.post(
-                f"{base_url}/chat/completions",
-                headers=headers,
-                json={
-                    "model": model_id,
-                    "messages": [{"role": "user", "content": "hi"}],
-                    "max_tokens": 1,
-                    "stream": False,
-                },
-                timeout=(10, 30),
-            )
-            return model_id if r.ok else None
-        except Exception:
-            return None
+        # Newer GPT/reasoning models reject "max_tokens" and require "max_completion_tokens".
+        # Reasoning models also burn part of that budget on hidden reasoning tokens, so 1 is too
+        # low and yields a "max output limit reached" error even for valid chat models.
+        for token_param, token_budget in (("max_tokens", 1), ("max_completion_tokens", 16)):
+            try:
+                r = requests.post(
+                    f"{base_url}/chat/completions",
+                    headers=headers,
+                    json={
+                        "model": model_id,
+                        "messages": [{"role": "user", "content": "hi"}],
+                        token_param: token_budget,
+                        "stream": False,
+                    },
+                    timeout=(10, 30),
+                )
+                if r.ok:
+                    return model_id
+                print(f"[PROBE] {model_id} rejected with {token_param}: {r.status_code} {r.text}")
+            except Exception as e:
+                print(f"[PROBE] {model_id} raised with {token_param}: {e}")
+        return None
 
     chat_models = []
     with ThreadPoolExecutor(max_workers=3) as pool:
